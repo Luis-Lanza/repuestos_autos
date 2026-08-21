@@ -51,6 +51,37 @@ Work Unit 2: `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/src/doma
 
 Feature-branch chain Work Unit 2 only, based on committed Work Unit 1 (`cda366f`). This slice adds 321 source/test/config lines before OpenSpec progress evidence and remains within the 400-line budget. No commit, push, PR, runtime attempt settlement, or Work Unit 3 changes were made.
 
+## Work Unit 3 — Atomic and Idempotent SQLite Confirmation (partial)
+
+- Completed and verified: 3.1–3.2.
+- Added SQLite sale, line, payment, and immutable inventory-movement tables with request-ID uniqueness, foreign keys, row checks, indexes, and triggers rejecting movement updates or deletes.
+- Added the initial transaction-owned confirmation implementation required to turn the 3.2 RED test green: it reserves a request ID, reloads current product data, validates the domain sale, persists records, conditionally decrements stock, appends negative movements, marks the sale confirmed, and reloads a persisted summary.
+- Stopped before 3.3 because completing the required transaction-scoped repository interfaces and SQLite adapters, plus their proof, would exceed this review slice's 400-line budget. Tasks 3.3–3.8 remain unchecked, including their required rollback, idempotency, and integrity matrices.
+
+## TDD Cycle Evidence (Work Unit 3)
+
+| Phase | Evidence | Outcome |
+| --- | --- | --- |
+| RED (3.2) | Added `confirm_sale_use_case.rs` before the application sales module existed. | Expected FAIL: unresolved `repuestos_autos::application::sales` import; `cargo test --manifest-path src-tauri/Cargo.toml --test confirm_sale_use_case` exited 101. |
+| GREEN | Added the minimal transaction-owned SQLite confirmation flow and schema support. | PASS: 1 multi-line cash confirmation test, including persisted minimum-price snapshot, conditional decrement, movement count, and reloaded summary. |
+| TRIANGULATE / REFACTOR | Deferred intentionally: these are tasks 3.3–3.8 and require the repository-adapter and failure/idempotency/integrity matrices. | Not run; budget guard. |
+
+## Verification (Work Unit 3)
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test confirm_sale_use_case` — PASS: 1 passed, 0 failed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test sale_domain` — PASS: 3 passed, 0 failed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test catalog_search` — PASS: 3 passed, 0 failed.
+- `cargo check --manifest-path src-tauri/Cargo.toml` — PASS.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS.
+
+## Files Changed (Work Unit 3)
+
+`src-tauri/src/application/mod.rs`, `src-tauri/src/application/sales/mod.rs`, `src-tauri/src/application/sales/confirm_sale.rs`, `src-tauri/src/infrastructure/sqlite/migrations/0001_confirm_sale.sql`, `src-tauri/tests/confirm_sale_use_case.rs`, `openspec/changes/confirm-sale/tasks.md`, and this file.
+
+## Delivery Boundary (Work Unit 3)
+
+Feature-branch chain Work Unit 3 only, based on committed Work Unit 2 (`d94332e`). The source/test/schema portion is 239 additions and 0 deletions before OpenSpec evidence; no commit, push, PR, runtime attempt settlement, or Work Unit 4 work was performed. Rollback boundary: remove the new sales application module, confirmation test, and sale schema additions, then recreate only the disposable development database.
+
 ## Remaining
 
-Work Units 1–2 are complete. Work Units 3–5 remain out of scope for this slice. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.
+Work Units 1–2 are complete. Work Unit 3 remains partial at tasks 3.3–3.8; Work Units 4–5 remain out of scope. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.
