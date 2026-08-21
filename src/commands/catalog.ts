@@ -12,7 +12,10 @@ export type ProductSearchResult = {
 type Invoke = (command: string, payload: unknown) => Promise<unknown>;
 
 export function createSearchProductsCommand(command: Invoke) {
-  return (query: string) => command("search_products_command", { request: { query } }) as Promise<ProductSearchResult[]>;
+  return (query: string) =>
+    command("search_products_command", { request: { query } }) as Promise<
+      ProductSearchResult[]
+    >;
 }
 
 export const searchProducts = createSearchProductsCommand(invoke as Invoke);

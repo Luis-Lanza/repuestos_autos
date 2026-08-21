@@ -38,13 +38,25 @@ export type PersistedSaleSummary = {
 };
 
 export type ConfirmSaleResponse =
-  | { kind: "success"; [key: string]: unknown; sale_id: number; request_id: string; status: "confirmed"; confirmed_at: string; outcome: "confirmed"; lines: PersistedSaleSummary["lines"]; payments: PersistedSaleSummary["payments"]; total_centavos: number }
+  | {
+      kind: "success";
+      [key: string]: unknown;
+      sale_id: number;
+      request_id: string;
+      status: "confirmed";
+      confirmed_at: string;
+      outcome: "confirmed";
+      lines: PersistedSaleSummary["lines"];
+      payments: PersistedSaleSummary["payments"];
+      total_centavos: number;
+    }
   | { kind: "error"; code: string; message: string };
 
 type Invoke = (command: string, payload: unknown) => Promise<unknown>;
 
 function assertSafeInteger(value: number): void {
-  if (!Number.isSafeInteger(value)) throw new Error("Confirmation payload values must be safe integers.");
+  if (!Number.isSafeInteger(value))
+    throw new Error("Confirmation payload values must be safe integers.");
 }
 
 function assertIntegerRequest(request: ConfirmSaleRequest): void {
@@ -65,7 +77,9 @@ function assertIntegerRequest(request: ConfirmSaleRequest): void {
 export function createConfirmSaleCommand(command: Invoke) {
   return async (request: ConfirmSaleRequest) => {
     assertIntegerRequest(request);
-    return command("confirm_sale_command", { request }) as Promise<ConfirmSaleResponse>;
+    return command("confirm_sale_command", {
+      request,
+    }) as Promise<ConfirmSaleResponse>;
   };
 }
 

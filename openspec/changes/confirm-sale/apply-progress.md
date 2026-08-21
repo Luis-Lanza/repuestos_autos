@@ -203,3 +203,53 @@ Work Unit 5 only. Desktop GTK and Windows packaging validation remain unavailabl
 - Files: `src/commands/{catalog,confirm-sale}.ts`, adapter/reducer tests, `src/ui/sales/sale-flow.ts`, `package.json`, `tsconfig.json`, `tasks.md`, and this progress file.
 - Delivery boundary: feature-branch-chain Work Unit 5 first slice, based on `ac91191`; 396 authored additions/deletions including OpenSpec evidence. No commit, push, PR, runtime attempt acquire/settlement/reset, or final verification. Rollback: remove only the new UI state/adapter modules, their tests, and test-script/config support.
 - Remaining: 5.4–5.8 (rendered keyboard flow, persisted-summary view, refactor, local smoke/retry, and scope review). Desktop GTK/Windows packaging remain unavailable on this Linux host.
+
+## Work Unit 5 — Confirm Sale UI Completion Slice
+
+- Completed and verified: 5.4–5.8. The React entry point now renders an accessible, keyboard-operable sales screen with labeled catalog search, cart quantity and negotiated-centavo edits, cash tender/change and QR entries, pending submit state, error-code feedback, discard, and new-sale actions.
+- Confirmation retains the reducer's request ID through pending/error retries and calls the existing replaceable typed command adapter. React does not calculate price floors, payment equality, stock, or persistence rules.
+- Added `persisted-summary.ts` and its focused test. The confirmed view is populated solely from `PersistedSaleSummary` fields and renders sale identity, retained request ID, status/outcome, timestamp, product SKU/name/whole quantity/negotiated price, payment details, and a display-only Bs total.
+- Added `index.html` so the Vite production build exercises the React entry point.
+- Smoke evidence: the Rust command-seam smoke (`confirms_a_persisted_sale_and_reuses_the_original_summary_for_a_retry`) confirms a seeded QR sale and retries the same request ID with a changed payload; it returns the original summary (total 2,500 centavos) without reapplying sale effects. The use-case suite separately proves stock decrement, one negative movement per line, and zero residual rows/stock changes on rollback. The full desktop-hosted React-to-Tauri process could not run because desktop-feature compilation requires unavailable Linux GTK/GLib packages; Windows packaging was not run.
+- Exclusion review: changed paths are limited to the React entry point and sales UI state/presentation. No product management, licensing, network, returns, cancellation, reporting, backup/restore, synchronization, or fractional-quantity workflow was added.
+
+## TDD Cycle Evidence (Work Unit 5 UI Completion)
+
+| Phase | Evidence | Outcome |
+| --- | --- | --- |
+| RED (5.5) | Added `persisted-summary.test.ts` before `persisted-summary.ts`. | Expected failure: `ERR_MODULE_NOT_FOUND` for the missing summary module (exit 1). |
+| GREEN | Added display-only Bs formatting and persisted-summary detail mapping, then wired the reducer/screen to the typed confirmation response. | PASS: focused summary test and all 9 frontend tests. |
+| TRIANGULATE | The test asserts identity, UUID request ID, timestamp, product, whole quantity, negotiated price, cash tender/change, outcome, and total from a known persisted response. | PASS. |
+| REFACTOR | Preserved the existing typed command adapter seam; React holds draft/presentation state only and sends all rule decisions to Rust. | PASS: frontend suite and TypeScript check. |
+
+## Verification (Work Unit 5 UI Completion)
+
+- `npm test` — PASS: 9 passed, 0 failed.
+- `npx tsc --noEmit` — PASS.
+- `npx vite build` — PASS after adding the missing Vite `index.html` entry point.
+- `cargo test --manifest-path src-tauri/Cargo.toml` — PASS: 17 integration tests passed.
+- `cargo check --manifest-path src-tauri/Cargo.toml` — PASS.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS.
+- `git diff --check` — PASS.
+- `cargo check --manifest-path src-tauri/Cargo.toml --features desktop` — UNAVAILABLE: this Linux host lacks GTK/GLib development packages, so desktop React-to-Tauri runtime and Windows packaging were not exercised.
+
+## Files Changed (Work Unit 5 UI Completion)
+
+`index.html`, `src/main.ts`, `src/ui/sales/sale-flow.ts`, `src/ui/sales/sale-screen.ts`, `src/ui/sales/persisted-summary.ts`, `src/ui/sales/persisted-summary.test.ts`, `openspec/changes/confirm-sale/tasks.md`, and this file.
+
+## Delivery Boundary (Work Unit 5 UI Completion)
+
+Feature-branch-chain Work Unit 5 completion slice, based on committed Work Unit 5 state `0f82d01`. This slice adds approximately 221 authored implementation/test lines before OpenSpec evidence and remains within the 400-line budget. No commit, push, PR, runtime-attempt acquire/settlement/reset, or final SDD verification was performed. Rollback boundary: remove the React screen, summary presentation/test, entry HTML, and reducer success state; retain the independently tested Rust command/application/persistence path.
+
+## Remaining
+
+All Confirm Sale implementation tasks (1.1–5.8) are checked. Final independent SDD verification and platform desktop/Windows packaging evidence remain outside this apply slice.
+
+## Work Unit 5 — Authorized TypeScript Correction
+
+- Authorized scope: resolve the reported TypeScript module-resolution blocker at `src/ui/sales/persisted-summary.test.ts:5` only.
+- The sibling module `src/ui/sales/persisted-summary.ts` is present at the imported path, and `tsconfig.json` enables `allowImportingTsExtensions` with bundler resolution. No source edit was necessary: the exact import resolves and the focused summary test passes as part of the frontend suite.
+- Verification: `npm test` — PASS: 9 passed, 0 failed; `npx tsc --noEmit` — PASS; `cargo test --manifest-path src-tauri/Cargo.toml` — PASS: 17 integration tests passed; `cargo check --manifest-path src-tauri/Cargo.toml` — PASS; `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS; `git diff --check` — PASS.
+- The root-level `cargo test`, `cargo check`, and `cargo fmt --check` commands were unavailable because the Rust manifest is intentionally located at `src-tauri/Cargo.toml`; the manifest-qualified equivalents above passed.
+- Files changed by this correction: `openspec/changes/confirm-sale/apply-progress.md` only. Existing untracked summary source/test files were not modified.
+- Delivery boundary: final Work Unit 5 correction only. No runtime attempt acquire, settlement, reset, commit, push, or PR operation was performed.

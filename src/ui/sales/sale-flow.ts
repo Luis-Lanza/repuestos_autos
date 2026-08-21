@@ -1,4 +1,5 @@
 import type { ProductSearchResult } from "../../commands/catalog.ts";
+import type { PersistedSaleSummary } from "../../commands/confirm-sale.ts";
 
 export type DraftLine = {
   product_id: number;
@@ -25,6 +26,7 @@ export type SaleState = {
   feedback: string | null;
   request_id: string | null;
   confirmation: "idle" | "pending" | "error" | "confirmed";
+  persisted_summary: PersistedSaleSummary | null;
 };
 
 export const initialSaleState: SaleState = {
@@ -34,6 +36,7 @@ export const initialSaleState: SaleState = {
   feedback: null,
   request_id: null,
   confirmation: "idle",
+  persisted_summary: null,
 };
 
 export type SaleAction =
@@ -45,6 +48,7 @@ export type SaleAction =
   | { type: "cash_payment_changed"; amount_applied_centavos: string; amount_tendered_centavos: string; change_given_centavos: string }
   | { type: "qr_payment_changed"; amount_applied_centavos: string }
   | { type: "confirmation_started"; request_id: string }
+  | { type: "confirmation_succeeded"; summary: PersistedSaleSummary }
   | { type: "confirmation_failed"; message: string }
   | { type: "discard" };
 
@@ -105,6 +109,14 @@ export function createSaleFlow(state: SaleState, action: SaleAction): SaleState 
     }
     case "confirmation_started":
       return { ...state, request_id: state.request_id ?? action.request_id, confirmation: "pending", feedback: null };
+    case "confirmation_succeeded":
+      return {
+        ...state,
+        request_id: action.summary.request_id,
+        confirmation: "confirmed",
+        persisted_summary: action.summary,
+        feedback: null,
+      };
     case "confirmation_failed":
       return { ...state, confirmation: "error", feedback: action.message };
     case "discard":
