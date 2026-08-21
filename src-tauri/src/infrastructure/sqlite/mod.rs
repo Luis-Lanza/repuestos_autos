@@ -1,5 +1,7 @@
 use rusqlite::{Connection, Result};
 
+pub mod sale_repository;
+
 pub fn open_seeded_catalog() -> Result<Connection> {
     let connection = Connection::open_in_memory()?;
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;

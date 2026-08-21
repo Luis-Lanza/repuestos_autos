@@ -82,6 +82,40 @@ Feature-branch chain Work Unit 2 only, based on committed Work Unit 1 (`cda366f`
 
 Feature-branch chain Work Unit 3 only, based on committed Work Unit 2 (`d94332e`). The source/test/schema portion is 239 additions and 0 deletions before OpenSpec evidence; no commit, push, PR, runtime attempt settlement, or Work Unit 4 work was performed. Rollback boundary: remove the new sales application module, confirmation test, and sale schema additions, then recreate only the disposable development database.
 
+## Work Unit 3 — Feature-Chain Continuation
+
+- Completed and verified: 3.3, 3.4, and 3.6.
+- Added the `SaleRepository` application interface and `SqliteSaleRepository` adapter. Every repository operation receives the use-case-owned `rusqlite::Transaction`; no adapter opens or commits a transaction.
+- `confirm_sale` still exclusively opens and commits the transaction. It delegates request-ID reservation, current product/minimum-price lookup, and persisted-summary reconstruction to the SQLite adapter.
+- Added a changed-payload repeated-request test. The retry returns the original persisted summary and leaves sale, line, movement, and stock effects unchanged.
+- Added a rollback test that exhausts a later line after prior writes. It proves that no sale, lines, payments, movements, or earlier stock decrement remains. Added incomplete-reservation evidence: a same-ID pending sale returns `persistence integrity failure` rather than a partial success.
+- Stopped before tasks 3.5, 3.7, and 3.8 to keep this feature-chain slice below 400 changed lines. The QR/mixed/rejection matrix, full SQLite constraint/immutability matrix, and final rollback/error-mapping refactor remain for the next Work Unit 3 slice.
+
+## TDD Cycle Evidence (Work Unit 3 Continuation)
+
+| Phase | Evidence | Outcome |
+| --- | --- | --- |
+| RED | Added a public use-case test for a repeated ID pointing to an incomplete pending aggregate. | Expected FAIL: `Query returned no rows`; focused test command exited 101. |
+| GREEN | Introduced transaction-scoped repository seam and SQLite adapter, mapping incomplete persisted aggregates to `persistence integrity failure`. | PASS: 4 confirmation use-case tests. |
+| TRIANGULATE | Added changed-payload idempotency and later-line stock rollback cases alongside the existing successful multi-line cash case. | PASS: original summary/effects remain unchanged; rollback leaves zero persisted sale effects. |
+| REFACTOR | Moved current-product lookup and persisted-summary mapping from the use case into `SqliteSaleRepository`; transaction ownership remains in `confirm_sale`. | PASS: focused Rust suites, `cargo check`, and format check. |
+
+## Verification (Work Unit 3 Continuation)
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test confirm_sale_use_case` — PASS: 4 passed, 0 failed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test sale_domain` — PASS: 3 passed, 0 failed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test catalog_search` — PASS: 3 passed, 0 failed.
+- `cargo check --manifest-path src-tauri/Cargo.toml` — PASS.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS.
+
+## Files Changed (Work Unit 3 Continuation)
+
+`src-tauri/src/application/sales/confirm_sale.rs`, `src-tauri/src/application/sales/mod.rs`, `src-tauri/src/application/sales/repository.rs`, `src-tauri/src/infrastructure/sqlite/mod.rs`, `src-tauri/src/infrastructure/sqlite/sale_repository.rs`, `src-tauri/tests/confirm_sale_use_case.rs`, `openspec/changes/confirm-sale/tasks.md`, and this file.
+
+## Delivery Boundary (Work Unit 3 Continuation)
+
+Feature-branch chain Work Unit 3 continuation, based on committed foundation `264650d`. Current slice is 334 source/test changes before OpenSpec evidence; the remaining required matrices would cross the 400-line boundary. No commit, push, PR, runtime-attempt acquire/settlement/reset, or Work Unit 4 work was performed. Rollback boundary: remove the new application repository interface, SQLite adapter, and continuation tests; restore the earlier use-case-local persistence helpers and recreate only the disposable development database.
+
 ## Remaining
 
-Work Units 1–2 are complete. Work Unit 3 remains partial at tasks 3.3–3.8; Work Units 4–5 remain out of scope. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.
+Work Units 1–2 are complete. Work Unit 3 remains partial at tasks 3.5, 3.7, and 3.8; Work Units 4–5 remain out of scope. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.
