@@ -154,3 +154,34 @@ Feature-branch chain final Work Unit 3 slice, based on committed prior slices `2
 ## Remaining
 
 Work Units 1–3 are complete. Work Units 4–5 remain out of scope. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.
+
+## Work Unit 4 — Typed Tauri Command Seam
+
+- Completed: 4.1–4.4. Added typed search/confirmation DTOs, stable discriminated command errors, persisted summary mapping (including timestamp/outcome), and desktop-feature command registration.
+- Integer `i64` centavos and quantities cross the command seam unchanged. The adapter parses shapes and maps errors only; confirmation still delegates once to application/domain code.
+- Files: `src-tauri/src/commands/**`, `src-tauri/src/lib.rs`, domain serialization support, persisted-summary timestamp mapping, `src-tauri/tests/command_seam.rs`, Cargo manifests, and `tasks.md`.
+
+## TDD Cycle Evidence (Work Unit 4)
+
+| Phase | Evidence | Outcome |
+| --- | --- | --- |
+| RED | `command_seam.rs` preceded the command modules. | Expected fail: unresolved `commands` module and missing `serde_json` (exit 101). |
+| GREEN | Added typed DTO parsing, application delegation, summary/error mapping, and registration. | PASS: command seam, 4 tests. |
+| TRIANGULATE | Covered search, persisted retry, malformed UUID, invalid quantity, below-floor price, and JSON fractional/out-of-range rejection. | PASS. |
+| REFACTOR | Shared only command mapping helpers; rules remain application/domain-owned. | PASS: full Rust suite and format check. |
+
+## Verification (Work Unit 4)
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test command_seam` — PASS: 4 passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml` — PASS: 17 passed.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS.
+- `cargo check --manifest-path src-tauri/Cargo.toml --features desktop` — UNAVAILABLE: Linux host lacks GTK/GLib development packages.
+- `git diff --check` — PASS.
+
+## Delivery Boundary (Work Unit 4)
+
+Feature-branch-chain Work Unit 4 only, based on `4f936de`. Source/test/config changes remain below the 400-line budget before OpenSpec evidence. No commit, push, PR, runtime-attempt acquire/settlement/reset, or Work Unit 5 work was performed. Rollback: remove command DTO/adapters, command registration, seam test, and serialization-only support; retain the independently tested application/domain modules.
+
+## Remaining
+
+Work Unit 5 only. Desktop GTK and Windows packaging validation remain unavailable on this Linux host.

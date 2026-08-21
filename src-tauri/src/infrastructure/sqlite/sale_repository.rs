@@ -54,11 +54,18 @@ impl SaleRepository for SqliteSaleRepository {
         transaction: &Transaction,
         request_id: &str,
     ) -> Result<PersistedSaleSummary, String> {
-        let (sale_id, status, total) = transaction
+        let (sale_id, status, confirmed_at, total) = transaction
             .query_row(
-                "SELECT id, status, total_centavos FROM sales WHERE request_id = ?1 AND status = 'confirmed'",
+                "SELECT id, status, confirmed_at, total_centavos FROM sales WHERE request_id = ?1 AND status = 'confirmed'",
                 [request_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get(3)?,
+                        ))
+                    },
             )
             .map_err(|_| integrity_error())?;
         let lines = transaction
@@ -102,6 +109,7 @@ impl SaleRepository for SqliteSaleRepository {
             sale_id,
             request_id: RequestId::parse(request_id).map_err(|_| integrity_error())?,
             status,
+            confirmed_at: confirmed_at.ok_or_else(integrity_error)?,
             lines,
             payments,
             total: MoneyCentavos::new(total).map_err(|_| integrity_error())?,

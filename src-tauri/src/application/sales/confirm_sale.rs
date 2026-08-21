@@ -34,6 +34,7 @@ pub struct PersistedSaleSummary {
     pub sale_id: i64,
     pub request_id: RequestId,
     pub status: String,
+    pub confirmed_at: String,
     pub lines: Vec<PersistedLine>,
     pub payments: Vec<Payment>,
     pub total: MoneyCentavos,

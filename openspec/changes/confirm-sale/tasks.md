@@ -62,10 +62,10 @@ Verification boundary: the use-case seam proves success, rollback, stock integri
 
 Start: Work Unit 3 use-case tests are green. Finish: typed `search_products` and `confirm_sale` commands expose stable request/response/error contracts and exercise the complete Rust-to-SQLite path. Rollback: unregister and remove command adapters/DTOs while retaining the independently tested application modules.
 
-- [ ] 4.1 **RED:** add command-seam integration tests in `src-tauri/tests/command_seam.rs` for search DTOs and the complete confirmation behavior matrix, including malformed UUIDs, unsafe/non-integer-compatible shapes, stable error codes, successful persisted summaries, and same-request retry.
-- [ ] 4.2 **GREEN:** implement DTOs and thin adapters in `src-tauri/src/commands/catalog.rs` and `src-tauri/src/commands/confirm_sale.rs`; perform shape parsing/error mapping only, delegate once to application modules, and expose integer centavo/quantity fields without floating-point conversion.
-- [ ] 4.3 **TRIANGULATE:** assert every specified rejection maps to a stable discriminated code and leaks no SQLite/internal branching details; verify successful results contain sale ID, request ID, status, timestamp, lines, prices/snapshots, payments, total, and outcome from persisted records.
-- [ ] 4.4 **REFACTOR:** share only contract/error-mapping helpers that reduce duplication, register both commands in `src-tauri/src/lib.rs`, and rerun all Rust suites plus a check/build command present in `src-tauri/Cargo.toml`.
+- [x] 4.1 **RED:** add command-seam integration tests in `src-tauri/tests/command_seam.rs` for search DTOs and the complete confirmation behavior matrix, including malformed UUIDs, unsafe/non-integer-compatible shapes, stable error codes, successful persisted summaries, and same-request retry.
+- [x] 4.2 **GREEN:** implement DTOs and thin adapters in `src-tauri/src/commands/catalog.rs` and `src-tauri/src/commands/confirm_sale.rs`; perform shape parsing/error mapping only, delegate once to application modules, and expose integer centavo/quantity fields without floating-point conversion.
+- [x] 4.3 **TRIANGULATE:** assert every specified rejection maps to a stable discriminated code and leaks no SQLite/internal branching details; verify successful results contain sale ID, request ID, status, timestamp, lines, prices/snapshots, payments, total, and outcome from persisted records.
+- [x] 4.4 **REFACTOR:** share only contract/error-mapping helpers that reduce duplication, register both commands in `src-tauri/src/lib.rs`, and rerun all Rust suites plus a check/build command present in `src-tauri/Cargo.toml`.
 
 Verification boundary: command tests prove the typed React-facing seam through real application and SQLite adapters; no UI behavior is required.
 

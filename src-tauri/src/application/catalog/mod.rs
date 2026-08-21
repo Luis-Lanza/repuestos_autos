@@ -1,6 +1,7 @@
 use rusqlite::{Connection, Result};
+use serde::Serialize;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct ProductSearchResult {
     pub product_id: i64,
     pub sku: String,

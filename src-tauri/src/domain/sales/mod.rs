@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::domain::{MoneyCentavos, Quantity};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,14 +52,19 @@ impl SaleLine {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "method", rename_all = "lowercase")]
 pub enum Payment {
     Cash {
+        #[serde(rename = "amount_applied_centavos")]
         amount_applied: MoneyCentavos,
+        #[serde(rename = "amount_tendered_centavos")]
         amount_tendered: MoneyCentavos,
+        #[serde(rename = "change_given_centavos")]
         change_given: MoneyCentavos,
     },
     Qr {
+        #[serde(rename = "amount_applied_centavos")]
         amount_applied: MoneyCentavos,
     },
 }
