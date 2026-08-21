@@ -116,6 +116,41 @@ Feature-branch chain Work Unit 3 only, based on committed Work Unit 2 (`d94332e`
 
 Feature-branch chain Work Unit 3 continuation, based on committed foundation `264650d`. Current slice is 334 source/test changes before OpenSpec evidence; the remaining required matrices would cross the 400-line boundary. No commit, push, PR, runtime-attempt acquire/settlement/reset, or Work Unit 4 work was performed. Rollback boundary: remove the new application repository interface, SQLite adapter, and continuation tests; restore the earlier use-case-local persistence helpers and recreate only the disposable development database.
 
+## Work Unit 3 — Final Feature-Chain Slice
+
+- Completed and verified: 3.5, 3.7, and 3.8. Work Unit 3 is now complete; Work Unit 4 was not started.
+- Expanded the disposable SQLite use-case seam matrix for QR-only and mixed payments, plus inactive, missing-product, stale-below-minimum, and unequal-payment rejection. Each rejected request leaves sales, lines, payments, movements, and stock unchanged. Existing seam coverage proves insufficient stock and later-line rollback; existing domain coverage proves inconsistent-cash rejection before a request can be constructed.
+- Added SQLite integrity evidence for negative-total row checks, request-ID uniqueness, foreign-key enforcement, and immutable movement update/delete triggers. The existing incomplete-reservation test proves incomplete aggregate reconstruction returns `persistence integrity failure` rather than a partial summary.
+- Refactored `confirm_sale` through a single transaction helper that explicitly commits successful work and rolls back every operation error. Domain validation remains in `Sale`, and persisted-summary mapping remains in `SqliteSaleRepository`.
+
+## TDD Cycle Evidence (Work Unit 3 Final Slice)
+
+| Phase | Evidence | Outcome |
+| --- | --- | --- |
+| RED | Added the QR/mixed, rejection, and SQLite-integrity matrix at the public `confirm_sale` seam before refactoring production code. The already-implemented prior slice satisfied the new cases on the first run, so no failing production gap was observed. | PASS: 7 confirmation tests; no production behavior was added before the tests. |
+| GREEN | No new behavior was needed: the existing use case, domain constructors, schema constraints, and movement triggers satisfied the expanded matrix. | PASS: 7 confirmation tests. |
+| TRIANGULATE | Exercised QR-only/mixed success; inactive, missing, stale-price, and unequal-payment rollback; existing one-line/later-line insufficient-stock rollback; incomplete aggregate; foreign keys, unique IDs, row checks, and immutable movements. | PASS. |
+| REFACTOR | Centralized explicit transaction commit/rollback and database-error conversion in `in_transaction`; retained business rules in the domain and persisted-summary mapping in the SQLite repository. | PASS: focused Rust suites, check, and format check. |
+
+## Verification (Work Unit 3 Final Slice)
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --test confirm_sale_use_case` — PASS: 7 passed, 0 failed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test sale_domain` — PASS: 3 passed, 0 failed.
+- `cargo test --manifest-path src-tauri/Cargo.toml --test catalog_search` — PASS: 3 passed, 0 failed.
+- `cargo check --manifest-path src-tauri/Cargo.toml` — PASS.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS.
+- `npm test` — PASS: 1 passed, 0 failed.
+- `npx tsc --noEmit` — PASS.
+- `git diff --check` — PASS.
+
+## Files Changed (Work Unit 3 Final Slice)
+
+`src-tauri/src/application/sales/confirm_sale.rs`, `src-tauri/tests/confirm_sale_use_case.rs`, `openspec/changes/confirm-sale/tasks.md`, and this file.
+
+## Delivery Boundary (Work Unit 3 Final Slice)
+
+Feature-branch chain final Work Unit 3 slice, based on committed prior slices `264650d` and `99a4f73`. This uncommitted source/test refactor adds 219 and deletes 37 lines before OpenSpec evidence, remaining below the native 400-line limit. No commit, push, PR, runtime-attempt acquire/settlement/reset, or Work Unit 4 work was performed. Rollback boundary: restore `confirm_sale`'s prior transaction handling and remove only this final rejection/integrity test matrix; recreate only the disposable development database.
+
 ## Remaining
 
-Work Units 1–2 are complete. Work Unit 3 remains partial at tasks 3.5, 3.7, and 3.8; Work Units 4–5 remain out of scope. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.
+Work Units 1–3 are complete. Work Units 4–5 remain out of scope. Desktop GTK validation remains unavailable on this Linux host because required GTK/GLib development packages are missing; Windows packaging was not run. Rust formatting is installed and passes its final check.

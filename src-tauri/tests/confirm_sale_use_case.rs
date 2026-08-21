@@ -23,6 +23,51 @@ fn request() -> ConfirmSaleRequest {
     }
 }
 
+fn single_line_request(
+    request_id: &str,
+    product_id: i64,
+    price: i64,
+    payments: Vec<Payment>,
+) -> ConfirmSaleRequest {
+    ConfirmSaleRequest {
+        request_id: RequestId::parse(request_id).unwrap(),
+        lines: vec![RequestedLine {
+            product_id,
+            quantity: Quantity::new(1).unwrap(),
+            negotiated_unit_price: MoneyCentavos::new(price).unwrap(),
+        }],
+        payments,
+    }
+}
+
+fn assert_no_sale_effects(connection: &rusqlite::Connection) {
+    for table in [
+        "sales",
+        "sale_lines",
+        "sale_payments",
+        "inventory_movements",
+    ] {
+        assert_eq!(
+            connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "{table} must be empty after rejection"
+        );
+    }
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT quantity FROM stock_balances WHERE product_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        8
+    );
+}
+
 #[test]
 fn confirms_a_multi_line_cash_sale_with_persisted_stock_movements_and_summary() {
     let mut connection = open_seeded_catalog().unwrap();
@@ -165,6 +210,96 @@ fn returns_the_original_summary_without_reapplying_a_changed_retry() {
 }
 
 #[test]
+fn confirms_qr_only_and_mixed_payment_sales() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let qr_sale = confirm_sale(
+        &mut connection,
+        single_line_request(
+            "550e8400-e29b-41d4-a716-446655440010",
+            1,
+            2_500,
+            vec![Payment::qr(MoneyCentavos::new(2_500).unwrap())],
+        ),
+    )
+    .unwrap();
+    let mixed_sale = confirm_sale(
+        &mut connection,
+        single_line_request(
+            "550e8400-e29b-41d4-a716-446655440011",
+            1,
+            2_500,
+            vec![
+                Payment::cash(
+                    MoneyCentavos::new(1_000).unwrap(),
+                    MoneyCentavos::new(1_000).unwrap(),
+                    MoneyCentavos::new(0).unwrap(),
+                )
+                .unwrap(),
+                Payment::qr(MoneyCentavos::new(1_500).unwrap()),
+            ],
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(qr_sale.payments.len(), 1);
+    assert_eq!(mixed_sale.payments.len(), 2);
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM sale_payments", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+}
+
+#[test]
+fn rejects_inactive_missing_stale_and_unequal_payment_requests_without_effects() {
+    let cases = [
+        (
+            2,
+            1_800,
+            vec![Payment::qr(MoneyCentavos::new(1_800).unwrap())],
+            "product is inactive",
+        ),
+        (
+            99,
+            2_500,
+            vec![Payment::qr(MoneyCentavos::new(2_500).unwrap())],
+            "product is missing",
+        ),
+        (
+            1,
+            2_499,
+            vec![Payment::qr(MoneyCentavos::new(2_499).unwrap())],
+            "negotiated price is below the current minimum",
+        ),
+        (
+            1,
+            2_500,
+            vec![Payment::qr(MoneyCentavos::new(2_499).unwrap())],
+            "applied payments must equal the sale total",
+        ),
+    ];
+
+    for (index, (product_id, price, payments, expected)) in cases.into_iter().enumerate() {
+        let mut connection = open_seeded_catalog().unwrap();
+        assert_eq!(
+            confirm_sale(
+                &mut connection,
+                single_line_request(
+                    &format!("550e8400-e29b-41d4-a716-44665544002{index}"),
+                    product_id,
+                    price,
+                    payments,
+                ),
+            ),
+            Err(expected.into())
+        );
+        assert_no_sale_effects(&connection);
+    }
+}
+
+#[test]
 fn reports_persistence_integrity_for_an_incomplete_reserved_sale() {
     let mut connection = open_seeded_catalog().unwrap();
     connection
@@ -178,4 +313,38 @@ fn reports_persistence_integrity_for_an_incomplete_reserved_sale() {
         confirm_sale(&mut connection, request()),
         Err("persistence integrity failure".into())
     );
+}
+
+#[test]
+fn sqlite_enforces_foreign_keys_request_id_row_checks_and_immutable_movements() {
+    let mut connection = open_seeded_catalog().unwrap();
+    assert!(connection
+        .execute("INSERT INTO sales (request_id, status, total_centavos) VALUES ('duplicate', 'confirmed', -1)", [])
+        .is_err());
+    connection
+        .execute("INSERT INTO sales (request_id, status, total_centavos) VALUES ('duplicate', 'confirmed', 0)", [])
+        .unwrap();
+    assert!(connection
+        .execute("INSERT INTO sales (request_id, status, total_centavos) VALUES ('duplicate', 'confirmed', 0)", [])
+        .is_err());
+    assert!(connection
+        .execute("INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (999, 1, 1, 2500, 2500, 2500)", [])
+        .is_err());
+
+    confirm_sale(
+        &mut connection,
+        single_line_request(
+            "550e8400-e29b-41d4-a716-446655440030",
+            1,
+            2_500,
+            vec![Payment::qr(MoneyCentavos::new(2_500).unwrap())],
+        ),
+    )
+    .unwrap();
+    assert!(connection
+        .execute("UPDATE inventory_movements SET quantity_delta = -2", [])
+        .is_err());
+    assert!(connection
+        .execute("DELETE FROM inventory_movements", [])
+        .is_err());
 }
