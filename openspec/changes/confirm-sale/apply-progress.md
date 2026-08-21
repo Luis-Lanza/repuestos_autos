@@ -185,3 +185,21 @@ Feature-branch-chain Work Unit 4 only, based on `4f936de`. Source/test/config ch
 ## Remaining
 
 Work Unit 5 only. Desktop GTK and Windows packaging validation remain unavailable on this Linux host.
+
+## Work Unit 5 — React State and Command-Seam Slice
+
+- Completed and verified: 5.1–5.3. Added replaceable typed catalog/confirmation adapters plus a pure sale-flow reducer for search results, draft lines, centavo/quantity feedback, payment drafts, and retained request IDs.
+- The reducer deliberately provides feedback only; it does not reproduce Rust price, payment, or stock authority. No persistence call occurs for remove/discard.
+- Stopped before 5.4 to remain within the 400-line feature-chain boundary. No React screen, confirmation orchestration, summary view, smoke sale, or excluded workflow was added.
+
+| TDD Cycle Evidence | Result |
+| --- | --- |
+| RED | `node --test src/ui/sales/sale-flow.test.ts` failed with missing `sale-flow.ts` (exit 1). |
+| GREEN | Added adapters/reducer; focused tests passed after removing an action-field leak from cash draft state. |
+| TRIANGULATE | Added mixed cash/QR payload and retained-request-ID retry/new-intent cases. |
+| REFACTOR | Kept Tauri invocation at the typed adapter seam and React draft state pure. |
+
+- Verification: `npm test` PASS (8); `npx tsc --noEmit` PASS; `cargo test --manifest-path src-tauri/Cargo.toml` PASS (17); `cargo fmt --manifest-path src-tauri/Cargo.toml --check` PASS; `cargo check --manifest-path src-tauri/Cargo.toml` PASS; `git diff --check` PASS.
+- Files: `src/commands/{catalog,confirm-sale}.ts`, adapter/reducer tests, `src/ui/sales/sale-flow.ts`, `package.json`, `tsconfig.json`, `tasks.md`, and this progress file.
+- Delivery boundary: feature-branch-chain Work Unit 5 first slice, based on `ac91191`; 396 authored additions/deletions including OpenSpec evidence. No commit, push, PR, runtime attempt acquire/settlement/reset, or final verification. Rollback: remove only the new UI state/adapter modules, their tests, and test-script/config support.
+- Remaining: 5.4–5.8 (rendered keyboard flow, persisted-summary view, refactor, local smoke/retry, and scope review). Desktop GTK/Windows packaging remain unavailable on this Linux host.

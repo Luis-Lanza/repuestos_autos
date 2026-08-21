@@ -2,7 +2,7 @@
   "name": "repuestos-autos",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test src/**/*.test.js" },
+  "scripts": { "test": "node --test $(find src -name '*.test.js' -o -name '*.test.ts')" },
   "dependencies": { "@tauri-apps/api": "^2.0.0", "react": "^18.3.1", "react-dom": "^18.3.1" },
   "devDependencies": { "@types/react": "^18.3.0", "@types/react-dom": "^18.3.0", "typescript": "^5.0.0", "vite": "^5.0.0" }
 }
