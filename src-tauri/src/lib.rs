@@ -1,3 +1,6 @@
+#[cfg(feature = "desktop")]
+use tauri::Manager;
+
 pub mod application;
 pub mod commands;
 pub mod domain;
@@ -8,10 +11,16 @@ struct AppState(std::sync::Mutex<rusqlite::Connection>);
 
 #[cfg(feature = "desktop")]
 pub fn run() -> Result<(), tauri::Error> {
-    let connection =
-        infrastructure::sqlite::open_seeded_catalog().expect("database initialization");
     tauri::Builder::default()
-        .manage(AppState(std::sync::Mutex::new(connection)))
+        .setup(|app| {
+            let app_data_directory = app.path().app_data_dir()?;
+            let database_config =
+                infrastructure::sqlite::production_database_config(app_data_directory);
+            let connection = infrastructure::sqlite::open_database(&database_config)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            app.manage(AppState(std::sync::Mutex::new(connection)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             search_products_command,
             confirm_sale_command

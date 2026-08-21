@@ -253,3 +253,66 @@ All Confirm Sale implementation tasks (1.1–5.8) are checked. Final independent
 - The root-level `cargo test`, `cargo check`, and `cargo fmt --check` commands were unavailable because the Rust manifest is intentionally located at `src-tauri/Cargo.toml`; the manifest-qualified equivalents above passed.
 - Files changed by this correction: `openspec/changes/confirm-sale/apply-progress.md` only. Existing untracked summary source/test files were not modified.
 - Delivery boundary: final Work Unit 5 correction only. No runtime attempt acquire, settlement, reset, commit, push, or PR operation was performed.
+
+## Final-Verification Diagnostic Reconciliation
+
+- Replaced the persisted-summary test and screen's explicit `.ts` local-module specifier with the normal extensionless TypeScript form. Added `tsx` as the test runner so Node executes those TypeScript imports using the same resolver convention as the TypeScript/Vite configuration.
+- Verified evidence: `npm test` — PASS: 9 passed, 0 failed; `npx tsc --noEmit` — PASS; `cargo test --manifest-path src-tauri/Cargo.toml` — PASS: 17 integration tests passed; `cargo check --manifest-path src-tauri/Cargo.toml` — PASS; `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS; `git diff --check` — PASS.
+- Files changed for this reconciliation: `package.json`, `package-lock.json`, `src/ui/sales/persisted-summary.test.ts`, `src/ui/sales/sale-screen.ts`, and this progress record. The separate SQLite/catalog/Tauri final-verification blockers were not inspected or changed.
+- Delivery boundary: diagnostic reconciliation only. No runtime attempt acquire, settlement, reset, commit, push, or PR operation was performed.
+
+## Persistent SQLite Remediation Slice
+
+- Completed: added a production database configuration that resolves to `repuestos-autos.sqlite3` beneath the supplied application-data directory, creates its parent directory, enables foreign keys, and applies the initial migration once through SQLite `user_version` before returning a file-backed connection.
+- Added reopen-survival coverage at the public confirmation seam: a confirmed sale is written through the production configuration, the connection is closed, the database is reopened, and a changed same-ID retry returns the original summary without a second sale or stock deduction.
+- Deliberate scope: catalog metadata and Tauri target wiring were not changed. The persistent configuration is ready for the existing desktop composition layer to supply its application-data directory in its dedicated slice.
+
+## Verification (Persistent SQLite Remediation)
+
+- RED: `cargo test --manifest-path src-tauri/Cargo.toml --test confirm_sale_use_case` failed with unresolved `open_database` and `production_database_config` imports (exit 101) after the reopen-survival test was added.
+- GREEN: the same focused test passed: 8 passed, 0 failed.
+- `cargo check --manifest-path src-tauri/Cargo.toml` — PASS.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS.
+- `git diff --check` — PASS.
+
+## Files Changed (Persistent SQLite Remediation)
+
+`src-tauri/src/infrastructure/sqlite/mod.rs`, `src-tauri/tests/confirm_sale_use_case.rs`, and this progress record.
+
+## Delivery Boundary (Persistent SQLite Remediation)
+
+Approved feature-branch-chain remediation slice only. The implementation/test delta is 103 added lines before OpenSpec evidence, within the 400-line limit. No catalog metadata, Tauri target, runtime attempt acquire/settlement/reset, commit, push, or PR operation was performed. Rollback: remove the persistent configuration/open helper and reopen-survival test; delete any disposable local `repuestos-autos.sqlite3` created for manual testing.
+
+## Authorized Node Type/Module Diagnostic Correction
+
+- Added `@types/node` as a development dependency so the Node built-in `node:assert/strict` and `node:test` imports in `catalog-result.test.ts` resolve under TypeScript.
+- Changed the test-runner import to the named Node ESM convention: `import { test } from "node:test"`.
+- Focused type evidence: `npx tsc --noEmit --allowImportingTsExtensions --moduleResolution bundler --module esnext --target es2022 --strict --types node src/ui/sales/catalog-result.test.ts` — PASS.
+- Verification: `npm test` — PASS: 10 passed; `npx tsc --noEmit` — PASS; `npx vite build` — PASS; `git diff --check` — PASS.
+- Files changed: `package.json`, `package-lock.json`, `src/ui/sales/catalog-result.test.ts`, and this progress record. No lifecycle, runtime-attempt, commit, push, or PR action was performed.
+- Workload / PR boundary: authorized diagnostic correction only; no task scope or delivery boundary changed.
+
+## Final Verification — Catalog Metadata Remediation
+
+- Completed the catalog-display portion of the final-verification remediation. The existing typed `ProductSearchResult` contract already carries `category_name` and `minimum_unit_price_centavos`; the sales screen now renders both values for every search result.
+- Added a focused catalog presentation seam and test. It verifies the typed result's category and 2,500-centavo minimum price are displayed as `Brakes` and `Bs 25.00`, alongside the existing SKU, name, and stock information.
+- TDD evidence: the new test was run before `catalog-result.ts` existed and failed with `ERR_MODULE_NOT_FOUND`; adding the minimal formatter made the focused test pass.
+- Verification: `npx tsx --test src/ui/sales/catalog-result.test.ts` — PASS; `npx tsc --noEmit` — PASS; `npm test` — PASS: 10 passed; `npx vite build` — PASS; `git diff --check` — PASS.
+- Files changed in this slice: `src/ui/sales/catalog-result.ts`, `src/ui/sales/catalog-result.test.ts`, `src/ui/sales/sale-screen.ts`, and this progress record.
+- Delivery boundary: feature-branch-chain final-verification catalog metadata slice only; approximately 32 authored source/test lines, below the assigned 250-line boundary. No Tauri window, SQLite/Tauri target, runtime attempt acquire/settlement/reset, commit, push, or PR operation was performed.
+
+## Final Verification — Desktop Target and Persistent Database Wiring
+
+- Completed the remaining production-path remediation: added the feature-gated `repuestos-autos` binary target, Tauri build script, and `src-tauri/src/main.rs`, configured one initial Tauri window, and changed desktop startup to open the existing migration-backed SQLite database beneath Tauri's application-data directory instead of creating an in-memory catalog.
+- The desktop setup obtains Tauri's platform-specific application-data directory, passes it to `production_database_config`, and manages the resulting file-backed connection for the existing command handlers. That configuration creates parent directories, enables foreign keys, and migrates once before the window can invoke commands.
+- Feasible checks passed: full headless Rust suite (18 integration tests, including reopen-survival persistence), headless Cargo check, Rust format check, frontend suite (10 tests), TypeScript check, Vite build, JSON window-config assertion, Cargo metadata target discovery, and `git diff --check`.
+- `cargo metadata` now reports both the library and the `repuestos-autos` binary target. The desktop-feature compile remains unavailable on this Linux host: missing Cairo/GDK/GTK/GLib/WebKit/libsoup development packages cause `cargo check --features desktop` to stop in native dependency build scripts before the Tauri runtime can compile. No desktop-hosted smoke run or Windows packaging was claimed.
+- Files changed: `src-tauri/Cargo.toml`, `src-tauri/build.rs`, `src-tauri/src/main.rs`, `src-tauri/src/lib.rs`, `src-tauri/tauri.conf.json`, and this progress record.
+- Workload / PR boundary: authorized final-verification remediation only; 55 authored implementation/config lines before OpenSpec evidence, within the 400-line limit. No runtime attempt acquire/settlement/reset, commit, push, or PR operation was performed.
+
+## Final Remediation — Rust LSP cfg Visibility
+
+- Scoped `src-tauri/src/main.rs` to call `repuestos_autos::run()` only when the `desktop` feature is enabled, matching the public function's existing cfg gate. A no-op non-desktop `main` keeps default-feature Rust analysis and checks free of an unresolved cfg-gated symbol while preserving desktop startup behavior.
+- Verification: `cargo check --manifest-path src-tauri/Cargo.toml` — PASS; `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — PASS; `git diff --check` — PASS.
+- Files changed: `src-tauri/src/main.rs`, `openspec/changes/confirm-sale/apply-progress.md`.
+- Workload / PR boundary: approved feature-branch-chain final remediation only; 7 source lines plus progress evidence, within the assigned 50-line limit. No runtime attempt acquire/settlement/reset, commit, push, or PR operation was performed.

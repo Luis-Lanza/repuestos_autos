@@ -2,6 +2,7 @@ use repuestos_autos::application::sales::{confirm_sale, ConfirmSaleRequest, Requ
 use repuestos_autos::catalog::open_seeded_catalog;
 use repuestos_autos::domain::sales::Payment;
 use repuestos_autos::domain::{MoneyCentavos, Quantity, RequestId};
+use repuestos_autos::infrastructure::sqlite::{open_database, production_database_config};
 
 fn request() -> ConfirmSaleRequest {
     ConfirmSaleRequest {
@@ -313,6 +314,66 @@ fn reports_persistence_integrity_for_an_incomplete_reserved_sale() {
         confirm_sale(&mut connection, request()),
         Err("persistence integrity failure".into())
     );
+}
+
+#[test]
+fn persists_confirmed_sales_when_reopening_the_production_database() {
+    let directory = std::env::temp_dir().join(format!(
+        "repuestos-autos-persistence-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let config = production_database_config(&directory);
+    assert_eq!(config.path(), directory.join("repuestos-autos.sqlite3"));
+
+    let first = {
+        let mut connection = open_database(&config).unwrap();
+        confirm_sale(
+            &mut connection,
+            single_line_request(
+                "550e8400-e29b-41d4-a716-446655440031",
+                1,
+                2_500,
+                vec![Payment::qr(MoneyCentavos::new(2_500).unwrap())],
+            ),
+        )
+        .unwrap()
+    };
+
+    let mut reopened = open_database(&config).unwrap();
+    let retry = confirm_sale(
+        &mut reopened,
+        single_line_request(
+            "550e8400-e29b-41d4-a716-446655440031",
+            1,
+            9_999,
+            vec![Payment::qr(MoneyCentavos::new(9_999).unwrap())],
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(retry, first);
+    assert_eq!(
+        reopened
+            .query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        reopened
+            .query_row(
+                "SELECT quantity FROM stock_balances WHERE product_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        7
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

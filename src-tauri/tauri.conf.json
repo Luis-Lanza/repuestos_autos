@@ -1,1 +1,20 @@
-{ "$schema": "https://schema.tauri.app/config/2", "productName": "Repuestos Autos", "version": "0.1.0", "identifier": "com.repuestosautos.app", "build": { "frontendDist": "../dist" }, "app": { "windows": [] } }
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Repuestos Autos",
+  "version": "0.1.0",
+  "identifier": "com.repuestosautos.app",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Repuestos Autos",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ]
+  }
+}

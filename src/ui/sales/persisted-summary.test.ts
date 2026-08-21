@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PersistedSaleSummary } from "../../commands/confirm-sale.ts";
-import { formatBs, persistedSummaryDetails } from "./persisted-summary.ts";
+import { formatBs, persistedSummaryDetails } from "./persisted-summary";
 
 const summary: PersistedSaleSummary = {
   sale_id: 42,
@@ -10,16 +10,25 @@ const summary: PersistedSaleSummary = {
   status: "confirmed",
   confirmed_at: "2026-03-10T12:30:00Z",
   outcome: "confirmed",
-  lines: [{
-    product_id: 1,
-    sku: "BP-100",
-    product_name: "Brake Pad",
-    quantity: 2,
-    negotiated_unit_price_centavos: 2_750,
-    minimum_unit_price_snapshot_centavos: 2_500,
-    line_total_centavos: 5_500,
-  }],
-  payments: [{ method: "cash", amount_applied_centavos: 5_500, amount_tendered_centavos: 6_000, change_given_centavos: 500 }],
+  lines: [
+    {
+      product_id: 1,
+      sku: "BP-100",
+      product_name: "Brake Pad",
+      quantity: 2,
+      negotiated_unit_price_centavos: 2_750,
+      minimum_unit_price_snapshot_centavos: 2_500,
+      line_total_centavos: 5_500,
+    },
+  ],
+  payments: [
+    {
+      method: "cash",
+      amount_applied_centavos: 5_500,
+      amount_tendered_centavos: 6_000,
+      change_given_centavos: 500,
+    },
+  ],
   total_centavos: 5_500,
 };
 

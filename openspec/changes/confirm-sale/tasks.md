@@ -8,15 +8,15 @@
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
 | Suggested split | PR 1 bootstrap + catalog → PR 2 domain rules → PR 3 atomic persistence → PR 4 typed command seam → PR 5 React flow + integration |
-| Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Delivery strategy | feature-branch-chain |
+| Chain strategy | feature-branch-chain |
 
-Decision needed before apply: Yes
+Decision needed before apply: No
 Chained PRs recommended: Yes
-Chain strategy: pending
+Chain strategy: feature-branch-chain
 400-line budget risk: High
 
-The forecast exceeds both the configured 350-line review budget and the 400-line guard. Apply must stop for a delivery decision and chain-strategy selection before starting the first work unit.
+The forecast exceeds the review budget. Delivery proceeds through the approved feature-branch chain, with each bounded slice committed independently.
 
 ## 1. Work Unit 1 — Bootstrap and Searchable Seeded Catalog
 
