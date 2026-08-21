@@ -10,5 +10,6 @@ desktop = ["dep:tauri"]
 [dependencies]
 tauri = { version = "2", default-features = false, optional = true }
 rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = "1"
 
 [dev-dependencies]

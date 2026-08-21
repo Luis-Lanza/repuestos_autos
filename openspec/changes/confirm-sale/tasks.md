@@ -35,11 +35,11 @@ Verification boundary: a fresh disposable database migrates successfully, foreig
 
 Start: Work Unit 1 catalog/bootstrap is green. Finish: framework-independent Rust domain rules validate sale lines and cash/QR/mixed payments using checked integer arithmetic. Rollback: remove only `src-tauri/src/domain/` sale modules and their tests.
 
-- [ ] 2.1 **RED:** add public-interface tests in `src-tauri/src/domain/` for `MoneyCentavos`, `Quantity`, `RequestId`, sale-line totals, current-minimum snapshots, and cash/QR payment values; cover positive examples and rejected fractional/zero/negative or overflow-prone inputs.
-- [ ] 2.2 **GREEN:** implement the smallest explicit value types and tagged payment interface in `src-tauri/src/domain/` using UUID parsing, checked `i64` arithmetic, positive whole quantities, and non-negative centavos.
-- [ ] 2.3 **TRIANGULATE:** add tests for below-current-minimum rejection, exact applied-payment equality, negative/inconsistent cash values, QR-only, cash-only, mixed payment, empty lines, and multi-line totals.
-- [ ] 2.4 **GREEN:** implement sale construction/validation in `src-tauri/src/domain/sales/` so authoritative rules are independent of React, Tauri, and SQLite.
-- [ ] 2.5 **REFACTOR:** reduce the domain interface to the values and operations required by `ConfirmSaleUseCase`, remove primitive mixing/duplicated calculations, and rerun the focused Rust domain suite.
+- [x] 2.1 **RED:** add public-interface tests in `src-tauri/src/domain/` for `MoneyCentavos`, `Quantity`, `RequestId`, sale-line totals, current-minimum snapshots, and cash/QR payment values; cover positive examples and rejected fractional/zero/negative or overflow-prone inputs.
+- [x] 2.2 **GREEN:** implement the smallest explicit value types and tagged payment interface in `src-tauri/src/domain/` using UUID parsing, checked `i64` arithmetic, positive whole quantities, and non-negative centavos.
+- [x] 2.3 **TRIANGULATE:** add tests for below-current-minimum rejection, exact applied-payment equality, negative/inconsistent cash values, QR-only, cash-only, mixed payment, empty lines, and multi-line totals.
+- [x] 2.4 **GREEN:** implement sale construction/validation in `src-tauri/src/domain/sales/` so authoritative rules are independent of React, Tauri, and SQLite.
+- [x] 2.5 **REFACTOR:** reduce the domain interface to the values and operations required by `ConfirmSaleUseCase`, remove primitive mixing/duplicated calculations, and rerun the focused Rust domain suite.
 
 Verification boundary: domain tests prove quantity, price-floor, total, and payment invariants without a database or command adapter.
 
