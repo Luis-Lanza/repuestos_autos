@@ -1,0 +1,6 @@
+# Local Pi runtime state
+.atl/
+
+# Generated dependencies and build output
+node_modules/
+src-tauri/target/

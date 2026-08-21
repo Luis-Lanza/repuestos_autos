@@ -1,0 +1,113 @@
+schema: spec-driven
+
+context: |
+  Project: repuestos_autos
+  Product: Offline-first Windows inventory and point-of-sale desktop
+  application for one auto-parts store and one shared computer.
+  Architecture: Local modular monolith with a React and TypeScript UI,
+  Tauri 2 command boundary, Rust application and domain layers, and
+  SQLite persistence.
+  Domain constraints: Money uses integer centavos of Bs. Inventory uses
+  positive whole units. Stock mutations require immutable movements.
+  SQLite transactions and constraints protect data integrity.
+  Current state: Product and architecture documentation exists, but
+  application source, package manifests, Rust manifests, migrations,
+  and executable test configuration have not been scaffolded.
+  Product docs: docs/PRD.md, docs/ARCHITECTURE.md,
+  docs/TECHNICAL_RECOMMENDATION.md, and
+  docs/DEPLOYMENT_AND_LICENSING.md.
+  Issue tracker: Local Markdown under .scratch/<feature>/ as configured
+  in docs/agents/issue-tracker.md.
+  Domain docs: Single-context conventions are configured in
+  docs/agents/domain.md. No CONTEXT.md or ADR is currently required.
+  First slice: confirm-sale spans React -> Tauri -> Rust -> SQLite. It
+  uses seeded products and stock, prefills the minimum sale price,
+  supports cash, QR, and mixed payments, confirms atomically and
+  idempotently with a retained UUID request ID, and returns a persisted
+  sale summary.
+  Slice exclusions: Licensing enforcement and product-management
+  workflows are outside confirm-sale.
+
+sdd:
+  artifact_store: hybrid
+  execution_mode: auto
+  delivery_strategy: ask-on-risk
+  review_budget_changed_lines: 350
+  strict_tdd: false
+
+testing:
+  capability: not-configured
+  strict_tdd_reason: >-
+    No package.json, Cargo.toml, application source, or executable test
+    runner configuration exists yet.
+  runners:
+    frontend:
+      detected: false
+      command: null
+    rust:
+      detected: false
+      command: null
+    end_to_end:
+      detected: false
+      command: null
+  policy: >-
+    Standard mode applies until executable runners are added and
+    detected. Planning phases must name intended verification without
+    claiming runnable tests. Apply and verify must use only commands
+    present in the repository at execution time.
+
+rules:
+  init:
+    - >-
+      Maintain project-wide SDD and testing context only; do not create
+      change artifacts.
+    - >-
+      Preserve user-maintained configuration on future initialization
+      runs.
+  proposal:
+    - >-
+      Keep confirm-sale limited to the agreed first end-to-end slice and
+      its explicit exclusions.
+    - >-
+      Derive product behavior from docs/PRD.md and architecture boundaries
+      from docs/ARCHITECTURE.md.
+  specs:
+    - >-
+      Express observable acceptance criteria for price-floor validation,
+      payment integrity, stock integrity, idempotency, atomic persistence,
+      and the returned persisted sale summary.
+    - >-
+      Do not add licensing enforcement or product-management requirements.
+  design:
+    - >-
+      Preserve the React -> Tauri -> Rust application/domain -> SQLite
+      dependency direction.
+    - >-
+      Keep business-rule authority in Rust and transaction ownership in
+      ConfirmSaleUseCase.
+    - >-
+      Store money as integer centavos and enforce request_id uniqueness in
+      SQLite.
+  tasks:
+    - >-
+      Organize work into reviewable vertical work units and include testing
+      work beside the behavior it proves.
+    - >-
+      Forecast changed lines against the 350-line review budget and surface
+      delivery risk before apply.
+  apply:
+    - Follow the approved tasks and do not expand scope implicitly.
+    - >-
+      Use strict TDD only after an executable runner is configured and
+      strict_tdd is explicitly enabled. Otherwise use detected test commands
+      in standard mode.
+  verify:
+    - >-
+      Verify every acceptance criterion against implementation evidence.
+    - >-
+      Report unavailable runtime checks honestly; never claim tests ran when
+      no runner exists.
+  archive:
+    - >-
+      Archive only after implementation and verification state are complete
+      and blockers are resolved.
