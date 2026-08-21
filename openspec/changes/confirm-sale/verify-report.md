@@ -4,7 +4,7 @@
 
 **PASS WITH UNAVAILABLE PLATFORM FOLLOW-UP**
 
-All feasible frontend, TypeScript, Vite, headless Rust, SQLite, formatting, metadata, configuration, and whitespace checks pass. The three prior critical blockers are remediated: the desktop binary/window target exists, desktop startup opens a migration-backed file database under the Tauri application-data directory, and catalog results display category and minimum sale price.
+Current committed HEAD `9e58995384eef531ec73ccc9037e75f50722753a` was independently re-verified before archive. All feasible frontend, TypeScript, Vite, headless Rust, SQLite, formatting, metadata, configuration, and whitespace checks pass. The three prior critical blockers are remediated: the desktop binary/window target exists, desktop startup opens a migration-backed file database under the Tauri application-data directory, and catalog results display category and minimum sale price.
 
 A desktop-hosted/Windows smoke run remains explicitly unavailable evidence and is **not** marked PASS. Per the approved verification boundary, it is a follow-up rather than a release blocker for this SDD verification.
 
@@ -17,7 +17,15 @@ A desktop-hosted/Windows smoke run remains explicitly unavailable evidence and i
 - Desktop composition remediation: **structurally verified**. Cargo metadata exposes the feature-gated `repuestos-autos` binary, Tauri configuration declares an initial window, and startup resolves Tauri's application-data directory and opens the production database before managing command state.
 - Platform evidence: `cargo check --manifest-path src-tauri/Cargo.toml --features desktop` is **UNAVAILABLE** on this Linux host because required native GTK/WebKit libraries are absent. No Windows packaging or desktop-hosted smoke run is claimed.
 - No critical blocker remains in feasible evidence.
-- Runtime-attempt settlement was not performed; the parent owns settlement for token `sha256:4b2a13270e5b0b00832b52148155d3e6ea5eecb035987bf50e25b6460d4b722a`.
+- Runtime-attempt settlement was not performed; the parent owns settlement for token `sha256:732190d2687165ef8eb885fc4f0c50978a8adca0544e84b74ed03f5c9c870b7a`.
+
+## Re-verification Context
+
+- Verified target: committed HEAD `9e58995384eef531ec73ccc9037e75f50722753a` (`9e58995`).
+- Source/config changes made by verification: none.
+- Permitted artifact write: this verify report only.
+- Existing unrelated untracked paths remained outside the verification target; no tracked implementation drift was present before the report update.
+- Windows packaging and desktop-hosted smoke remain unavailable follow-up evidence by the approved boundary.
 
 ## Spec Coverage
 
@@ -72,7 +80,7 @@ A desktop-hosted/Windows smoke run remains explicitly unavailable evidence and i
 | `cargo fmt --manifest-path src-tauri/Cargo.toml --check` | **PASS**. |
 | `git diff --check` | **PASS**. |
 | `cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 \| python3 -c 'import json,sys; d=json.load(sys.stdin); print([(t["name"], t["kind"], t.get("required-features", [])) for p in d["packages"] for t in p["targets"]])' && node -e 'const c=require("./src-tauri/tauri.conf.json"); if (!c.app?.windows?.length) process.exit(1); console.log(c.app.windows)'` | **PASS** — library and `repuestos-autos` desktop binary reported; one initial window configured. |
-| `cargo check --manifest-path src-tauri/Cargo.toml --features desktop` | **UNAVAILABLE / exit 101** — native build scripts cannot find Linux host packages including `libsoup-3.0`, `atk`, `javascriptcoregtk-4.1`, `glib-2.0`, `cairo`, `gdk-3.0`, `gdk-pixbuf-2.0`, `pango`, `gobject-2.0`, and `gio-2.0`. |
+| `cargo check --manifest-path src-tauri/Cargo.toml --features desktop` | **UNAVAILABLE / exit 101** — rerun at HEAD; native build scripts cannot find Linux host packages including `libsoup-3.0`, `atk`, `javascriptcoregtk-4.1`, `glib-2.0`, `cairo`, `gdk-3.0`, `gdk-pixbuf-2.0`, `pango`, `gobject-2.0`, and `gio-2.0`. |
 
 Windows packaging and a desktop-hosted React → Tauri smoke sale/retry were not run. The passing command seam is Rust → application/domain → SQLite integration evidence, not a full desktop E2E run.
 
