@@ -6,12 +6,30 @@ use crate::domain::{MoneyCentavos, Quantity};
 pub struct SaleLine {
     product_id: i64,
     quantity: Quantity,
-    negotiated_unit_price: MoneyCentavos,
+    unit_price: MoneyCentavos,
     minimum_unit_price_snapshot: MoneyCentavos,
     total: MoneyCentavos,
 }
 
 impl SaleLine {
+    pub fn priced(
+        product_id: i64,
+        quantity: Quantity,
+        unit_price: MoneyCentavos,
+    ) -> Result<Self, SaleError> {
+        let total = unit_price
+            .checked_multiply(quantity.value())
+            .map_err(|_| SaleError::MoneyOverflow)?;
+        Ok(Self {
+            product_id,
+            quantity,
+            unit_price,
+            minimum_unit_price_snapshot: unit_price,
+            total,
+        })
+    }
+
+    // Retained until the repository is migrated to resolve catalog prices itself.
     pub fn new(
         product_id: i64,
         quantity: Quantity,
@@ -25,7 +43,7 @@ impl SaleLine {
         Ok(Self {
             product_id,
             quantity,
-            negotiated_unit_price,
+            unit_price: negotiated_unit_price,
             minimum_unit_price_snapshot,
             total,
         })
@@ -39,8 +57,13 @@ impl SaleLine {
         self.quantity
     }
 
+    pub fn unit_price(self) -> MoneyCentavos {
+        self.unit_price
+    }
+
+    // Retained for legacy SQLite mapping until PR 3 changes the persistence contract.
     pub fn negotiated_unit_price(self) -> MoneyCentavos {
-        self.negotiated_unit_price
+        self.unit_price()
     }
 
     pub fn total(self) -> MoneyCentavos {
@@ -50,6 +73,90 @@ impl SaleLine {
     pub fn minimum_unit_price_snapshot(self) -> MoneyCentavos {
         self.minimum_unit_price_snapshot
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaleError {
+    EmptyLines,
+    MoneyOverflow,
+    AppliedPaymentsDoNotEqualTotal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaymentInput {
+    pub amount_tendered: Option<MoneyCentavos>,
+    pub qr_applied: Option<MoneyCentavos>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaymentError {
+    QrExceedsTotal,
+    CashTenderRequired,
+    InsufficientCashTender,
+    UnexpectedCashTender,
+    MoneyOverflow,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaymentBreakdown {
+    payments: Vec<Payment>,
+}
+
+impl PaymentBreakdown {
+    pub fn derive(total: MoneyCentavos, input: PaymentInput) -> Result<Self, PaymentError> {
+        let qr_applied = input
+            .qr_applied
+            .unwrap_or(MoneyCentavos::new(0).map_err(|_| PaymentError::MoneyOverflow)?);
+        if qr_applied.value() > total.value() {
+            return Err(PaymentError::QrExceedsTotal);
+        }
+
+        let cash_applied = subtract(total, qr_applied)?;
+        let mut payments = Vec::with_capacity(2);
+        if qr_applied.value() > 0 {
+            payments.push(Payment::qr(qr_applied));
+        }
+
+        if cash_applied.value() == 0 {
+            if input
+                .amount_tendered
+                .is_some_and(|tendered| tendered.value() > 0)
+            {
+                return Err(PaymentError::UnexpectedCashTender);
+            }
+            return Ok(Self { payments });
+        }
+
+        let amount_tendered = input
+            .amount_tendered
+            .ok_or(PaymentError::CashTenderRequired)?;
+        if amount_tendered.value() < cash_applied.value() {
+            return Err(PaymentError::InsufficientCashTender);
+        }
+        let change_given = subtract(amount_tendered, cash_applied)?;
+        payments.push(Payment::Cash {
+            amount_applied: cash_applied,
+            amount_tendered,
+            change_given,
+        });
+
+        Ok(Self { payments })
+    }
+
+    pub fn payments(&self) -> &[Payment] {
+        &self.payments
+    }
+}
+
+fn subtract(
+    minuend: MoneyCentavos,
+    subtrahend: MoneyCentavos,
+) -> Result<MoneyCentavos, PaymentError> {
+    minuend
+        .value()
+        .checked_sub(subtrahend.value())
+        .ok_or(PaymentError::MoneyOverflow)
+        .and_then(|value| MoneyCentavos::new(value).map_err(|_| PaymentError::MoneyOverflow))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
