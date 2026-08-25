@@ -13,8 +13,8 @@ function requestId(): string {
   return crypto.randomUUID();
 }
 
-function asCentavos(value: string): number {
-  return Number(value);
+function optionalCentavos(value: string): number | null {
+  return value === "" ? null : Number(value);
 }
 
 export function SaleScreen() {
@@ -36,58 +36,23 @@ export function SaleScreen() {
     }
   }
 
-  const cashPayment = state.payments.find(
-    (payment) => payment.method === "cash",
-  );
-
-  function changeCash(
-    field:
-      | "amount_applied_centavos"
-      | "amount_tendered_centavos"
-      | "change_given_centavos",
-    value: string,
-  ) {
-    const current =
-      cashPayment?.method === "cash"
-        ? cashPayment
-        : {
-            method: "cash" as const,
-            amount_applied_centavos: "0",
-            amount_tendered_centavos: "0",
-            change_given_centavos: "0",
-          };
-    dispatch({ type: "cash_payment_changed", ...current, [field]: value });
-  }
-
   async function confirm() {
     const currentRequestId = state.request_id ?? requestId();
     dispatch({ type: "confirmation_started", request_id: currentRequestId });
     const request: ConfirmSaleRequest = {
       request_id: currentRequestId,
-      lines: state.lines.map((line) => ({
-        product_id: line.product_id,
-        quantity: line.quantity,
-        negotiated_unit_price_centavos: line.negotiated_unit_price_centavos,
+      lines: state.lines.map(({ product_id, quantity }) => ({
+        product_id,
+        quantity,
       })),
-      payments: state.payments.map((payment) =>
-        payment.method === "cash"
-          ? {
-              method: "cash" as const,
-              amount_applied_centavos: asCentavos(
-                payment.amount_applied_centavos,
-              ),
-              amount_tendered_centavos: asCentavos(
-                payment.amount_tendered_centavos,
-              ),
-              change_given_centavos: asCentavos(payment.change_given_centavos),
-            }
-          : {
-              method: "qr" as const,
-              amount_applied_centavos: asCentavos(
-                payment.amount_applied_centavos,
-              ),
-            },
-      ),
+      payment: {
+        amount_tendered_centavos: optionalCentavos(
+          state.payment.amount_tendered_centavos,
+        ),
+        qr_applied_centavos: optionalCentavos(
+          state.payment.qr_applied_centavos,
+        ),
+      },
     };
     try {
       const response = await confirmSale(request);
@@ -211,31 +176,11 @@ export function SaleScreen() {
             }),
           ),
           createElement(
-            "label",
-            null,
-            " Unit price (centavos) ",
-            createElement("input", {
-              type: "number",
-              min: 0,
-              step: 1,
-              value: line.negotiated_unit_price_centavos,
-              onChange: (event) =>
-                dispatch({
-                  type: "line_price_changed",
-                  product_id: line.product_id,
-                  value: event.target.value,
-                }),
-            }),
-          ),
-          createElement(
             "button",
             {
               type: "button",
               onClick: () =>
-                dispatch({
-                  type: "remove_product",
-                  product_id: line.product_id,
-                }),
+                dispatch({ type: "remove_product", product_id: line.product_id }),
             },
             "Remove",
           ),
@@ -245,23 +190,7 @@ export function SaleScreen() {
     createElement(
       "fieldset",
       null,
-      createElement("legend", null, "Payments (centavos)"),
-      createElement(
-        "label",
-        null,
-        "Cash applied",
-        createElement("input", {
-          type: "number",
-          min: 0,
-          step: 1,
-          value:
-            cashPayment?.method === "cash"
-              ? cashPayment.amount_applied_centavos
-              : "",
-          onChange: (event) =>
-            changeCash("amount_applied_centavos", event.target.value),
-        }),
-      ),
+      createElement("legend", null, "Payment (centavos)"),
       createElement(
         "label",
         null,
@@ -270,28 +199,13 @@ export function SaleScreen() {
           type: "number",
           min: 0,
           step: 1,
-          value:
-            cashPayment?.method === "cash"
-              ? cashPayment.amount_tendered_centavos
-              : "",
+          value: state.payment.amount_tendered_centavos,
           onChange: (event) =>
-            changeCash("amount_tendered_centavos", event.target.value),
-        }),
-      ),
-      createElement(
-        "label",
-        null,
-        "Cash change",
-        createElement("input", {
-          type: "number",
-          min: 0,
-          step: 1,
-          value:
-            cashPayment?.method === "cash"
-              ? cashPayment.change_given_centavos
-              : "",
-          onChange: (event) =>
-            changeCash("change_given_centavos", event.target.value),
+            dispatch({
+              type: "payment_changed",
+              field: "amount_tendered_centavos",
+              value: event.target.value,
+            }),
         }),
       ),
       createElement(
@@ -302,10 +216,12 @@ export function SaleScreen() {
           type: "number",
           min: 0,
           step: 1,
+          value: state.payment.qr_applied_centavos,
           onChange: (event) =>
             dispatch({
-              type: "qr_payment_changed",
-              amount_applied_centavos: event.target.value,
+              type: "payment_changed",
+              field: "qr_applied_centavos",
+              value: event.target.value,
             }),
         }),
       ),

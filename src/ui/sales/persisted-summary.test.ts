@@ -16,7 +16,7 @@ const summary: PersistedSaleSummary = {
       sku: "BP-100",
       product_name: "Brake Pad",
       quantity: 2,
-      negotiated_unit_price_centavos: 2_750,
+      unit_price_centavos: 2_750,
       minimum_unit_price_snapshot_centavos: 2_500,
       line_total_centavos: 5_500,
     },
