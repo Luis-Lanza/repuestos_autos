@@ -10,10 +10,10 @@ const brakePad: ProductSearchResult = {
   name: "Brake Pad",
   category_name: "Brakes",
   available_quantity: 4,
-  minimum_unit_price_centavos: 2_500,
+  catalog_unit_price_centavos: 2_500,
 };
 
-test("adds active search results with minimum-price and whole-unit defaults", () => {
+test("adds active search results with catalog-price guidance and whole-unit defaults", () => {
   const state = createSaleFlow(initialSaleState, {
     type: "search_succeeded",
     results: [brakePad],
@@ -29,13 +29,40 @@ test("adds active search results with minimum-price and whole-unit defaults", ()
       sku: "BP-100",
       product_name: "Brake Pad",
       quantity: 1,
-      negotiated_unit_price_centavos: 2_500,
-      minimum_unit_price_centavos: 2_500,
+      catalog_unit_price_centavos: 2_500,
     },
   ]);
 });
 
-test("draft edits give local integer feedback and discard has no command effect", () => {
+test("keeps cash, QR, and mixed tender inputs as draft strings", () => {
+  const cash = createSaleFlow(initialSaleState, {
+    type: "tendered_cash_changed",
+    value: "3000",
+  });
+  const qr = createSaleFlow(initialSaleState, {
+    type: "qr_applied_changed",
+    value: "2500",
+  });
+  const mixed = createSaleFlow(cash, {
+    type: "qr_applied_changed",
+    value: "1000",
+  });
+
+  assert.deepEqual(cash.payment, {
+    amount_tendered_centavos: "3000",
+    qr_applied_centavos: "",
+  });
+  assert.deepEqual(qr.payment, {
+    amount_tendered_centavos: "",
+    qr_applied_centavos: "2500",
+  });
+  assert.deepEqual(mixed.payment, {
+    amount_tendered_centavos: "3000",
+    qr_applied_centavos: "1000",
+  });
+});
+
+test("rejects invalid quantity without editable price or derived-cash actions", () => {
   const withLine = createSaleFlow(initialSaleState, {
     type: "add_product",
     product: brakePad,
@@ -45,65 +72,51 @@ test("draft edits give local integer feedback and discard has no command effect"
     product_id: 1,
     value: "1.5",
   });
-  const validPrice = createSaleFlow(invalidQuantity, {
-    type: "line_price_changed",
-    product_id: 1,
-    value: "2750",
-  });
-  const discarded = createSaleFlow(validPrice, { type: "discard" });
 
   assert.equal(
     invalidQuantity.feedback,
     "Quantity must be a positive whole number.",
   );
-  assert.equal(validPrice.lines[0].negotiated_unit_price_centavos, 2_750);
-  assert.deepEqual(discarded.lines, []);
-  assert.deepEqual(discarded.payments, []);
+  assert.deepEqual(Object.keys(invalidQuantity.lines[0]), [
+    "product_id",
+    "sku",
+    "product_name",
+    "quantity",
+    "catalog_unit_price_centavos",
+  ]);
+  assert.equal("payments" in invalidQuantity, false);
 });
 
-test("retains one request ID through pending and error retry, then replaces it after discard", () => {
+test("retains one request ID through failed retries and starts a new intent after success or discard", () => {
+  const firstRequestId = "550e8400-e29b-41d4-a716-446655440060";
+  const secondRequestId = "550e8400-e29b-41d4-a716-446655440061";
+  const thirdRequestId = "550e8400-e29b-41d4-a716-446655440062";
   const pending = createSaleFlow(initialSaleState, {
     type: "confirmation_started",
-    request_id: "550e8400-e29b-41d4-a716-446655440060",
+    request_id: firstRequestId,
   });
   const retry = createSaleFlow(
     createSaleFlow(pending, {
       type: "confirmation_failed",
       message: "Retry the sale.",
     }),
-    {
-      type: "confirmation_started",
-      request_id: "550e8400-e29b-41d4-a716-446655440061",
-    },
+    { type: "confirmation_started", request_id: secondRequestId },
   );
-  const newIntent = createSaleFlow(createSaleFlow(retry, { type: "discard" }), {
+  const succeeded = createSaleFlow(retry, {
+    type: "confirmation_succeeded",
+    summary: { request_id: firstRequestId } as never,
+  });
+  const afterSuccess = createSaleFlow(succeeded, { type: "discard" });
+  const newIntent = createSaleFlow(afterSuccess, {
     type: "confirmation_started",
-    request_id: "550e8400-e29b-41d4-a716-446655440061",
+    request_id: thirdRequestId,
   });
 
-  assert.equal(retry.request_id, "550e8400-e29b-41d4-a716-446655440060");
-  assert.equal(newIntent.request_id, "550e8400-e29b-41d4-a716-446655440061");
-});
-
-test("keeps payment draft state for cash and QR", () => {
-  const cash = createSaleFlow(initialSaleState, {
-    type: "cash_payment_changed",
-    amount_applied_centavos: "2500",
-    amount_tendered_centavos: "3000",
-    change_given_centavos: "500",
+  assert.equal(retry.request_id, firstRequestId);
+  assert.equal(afterSuccess.persisted_summary, null);
+  assert.deepEqual(afterSuccess.payment, {
+    amount_tendered_centavos: "",
+    qr_applied_centavos: "",
   });
-  const mixed = createSaleFlow(cash, {
-    type: "qr_payment_changed",
-    amount_applied_centavos: "1000",
-  });
-
-  assert.deepEqual(mixed.payments, [
-    {
-      method: "cash",
-      amount_applied_centavos: "2500",
-      amount_tendered_centavos: "3000",
-      change_given_centavos: "500",
-    },
-    { method: "qr", amount_applied_centavos: "1000" },
-  ]);
+  assert.equal(newIntent.request_id, thirdRequestId);
 });

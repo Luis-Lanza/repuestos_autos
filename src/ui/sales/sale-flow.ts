@@ -6,23 +6,18 @@ export type DraftLine = {
   sku: string;
   product_name: string;
   quantity: number;
-  negotiated_unit_price_centavos: number;
-  minimum_unit_price_centavos: number;
+  catalog_unit_price_centavos: number;
 };
 
-export type DraftPayment =
-  | {
-      method: "cash";
-      amount_applied_centavos: string;
-      amount_tendered_centavos: string;
-      change_given_centavos: string;
-    }
-  | { method: "qr"; amount_applied_centavos: string };
+export type DraftPaymentInput = {
+  amount_tendered_centavos: string;
+  qr_applied_centavos: string;
+};
 
 export type SaleState = {
   search_results: ProductSearchResult[];
   lines: DraftLine[];
-  payments: DraftPayment[];
+  payment: DraftPaymentInput;
   feedback: string | null;
   request_id: string | null;
   confirmation: "idle" | "pending" | "error" | "confirmed";
@@ -32,7 +27,10 @@ export type SaleState = {
 export const initialSaleState: SaleState = {
   search_results: [],
   lines: [],
-  payments: [],
+  payment: {
+    amount_tendered_centavos: "",
+    qr_applied_centavos: "",
+  },
   feedback: null,
   request_id: null,
   confirmation: "idle",
@@ -44,14 +42,8 @@ export type SaleAction =
   | { type: "add_product"; product: ProductSearchResult }
   | { type: "remove_product"; product_id: number }
   | { type: "line_quantity_changed"; product_id: number; value: string }
-  | { type: "line_price_changed"; product_id: number; value: string }
-  | {
-      type: "cash_payment_changed";
-      amount_applied_centavos: string;
-      amount_tendered_centavos: string;
-      change_given_centavos: string;
-    }
-  | { type: "qr_payment_changed"; amount_applied_centavos: string }
+  | { type: "tendered_cash_changed"; value: string }
+  | { type: "qr_applied_changed"; value: string }
   | { type: "confirmation_started"; request_id: string }
   | { type: "confirmation_succeeded"; summary: PersistedSaleSummary }
   | { type: "confirmation_failed"; message: string }
@@ -60,11 +52,6 @@ export type SaleAction =
 function positiveWhole(value: string): number | null {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function centavos(value: string): number | null {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 export function createSaleFlow(
@@ -91,10 +78,8 @@ export function createSaleFlow(
             sku: action.product.sku,
             product_name: action.product.name,
             quantity: 1,
-            negotiated_unit_price_centavos:
-              action.product.minimum_unit_price_centavos,
-            minimum_unit_price_centavos:
-              action.product.minimum_unit_price_centavos,
+            catalog_unit_price_centavos:
+              action.product.catalog_unit_price_centavos,
           },
         ],
         feedback: null,
@@ -122,50 +107,24 @@ export function createSaleFlow(
         feedback: null,
       };
     }
-    case "line_price_changed": {
-      const price = centavos(action.value);
-      if (price === null)
-        return {
-          ...state,
-          feedback: "Price must be a non-negative whole number of centavos.",
-        };
+    case "tendered_cash_changed":
       return {
         ...state,
-        lines: state.lines.map((line) =>
-          line.product_id === action.product_id
-            ? { ...line, negotiated_unit_price_centavos: price }
-            : line,
-        ),
+        payment: {
+          ...state.payment,
+          amount_tendered_centavos: action.value,
+        },
         feedback: null,
       };
-    }
-    case "cash_payment_changed":
+    case "qr_applied_changed":
       return {
         ...state,
-        payments: [
-          {
-            method: "cash",
-            amount_applied_centavos: action.amount_applied_centavos,
-            amount_tendered_centavos: action.amount_tendered_centavos,
-            change_given_centavos: action.change_given_centavos,
-          },
-        ],
+        payment: {
+          ...state.payment,
+          qr_applied_centavos: action.value,
+        },
         feedback: null,
       };
-    case "qr_payment_changed": {
-      const cash = state.payments.find((payment) => payment.method === "cash");
-      return {
-        ...state,
-        payments: [
-          ...(cash ? [cash] : []),
-          {
-            method: "qr",
-            amount_applied_centavos: action.amount_applied_centavos,
-          },
-        ],
-        feedback: null,
-      };
-    }
     case "confirmation_started":
       return {
         ...state,
