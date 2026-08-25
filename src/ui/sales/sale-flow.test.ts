@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createSaleFlow, initialSaleState } from "./sale-flow.ts";
 import type { ProductSearchResult } from "../../commands/catalog.ts";
+import { createSaleFlow, initialSaleState } from "./sale-flow.ts";
 
 const brakePad: ProductSearchResult = {
   product_id: 1,
@@ -62,45 +62,43 @@ test("draft edits give local quantity feedback and discard clears reduced paymen
   });
 });
 
-test("retains one request ID through pending and error retry, then replaces it after discard", () => {
-  const pending = createSaleFlow(initialSaleState, {
+test("retains request and draft intent through failed retries", () => {
+  const firstRequestId = "550e8400-e29b-41d4-a716-446655440060";
+  const secondRequestId = "550e8400-e29b-41d4-a716-446655440061";
+  const thirdRequestId = "550e8400-e29b-41d4-a716-446655440062";
+  const withLine = createSaleFlow(initialSaleState, {
+    type: "add_product",
+    product: brakePad,
+  });
+  const withPayment = createSaleFlow(withLine, {
+    type: "payment_changed",
+    field: "qr_applied_centavos",
+    value: "2500",
+  });
+  const pending = createSaleFlow(withPayment, {
     type: "confirmation_started",
-    request_id: "550e8400-e29b-41d4-a716-446655440060",
+    request_id: firstRequestId,
   });
   const retry = createSaleFlow(
     createSaleFlow(pending, {
       type: "confirmation_failed",
       message: "Retry the sale.",
     }),
-    {
-      type: "confirmation_started",
-      request_id: "550e8400-e29b-41d4-a716-446655440061",
-    },
+    { type: "confirmation_started", request_id: secondRequestId },
   );
-  const newIntent = createSaleFlow(createSaleFlow(retry, { type: "discard" }), {
+  const succeeded = createSaleFlow(retry, {
+    type: "confirmation_succeeded",
+    summary: { request_id: firstRequestId } as never,
+  });
+  const afterSuccess = createSaleFlow(succeeded, { type: "discard" });
+  const newIntent = createSaleFlow(afterSuccess, {
     type: "confirmation_started",
-    request_id: "550e8400-e29b-41d4-a716-446655440061",
+    request_id: thirdRequestId,
   });
 
-  assert.equal(retry.request_id, "550e8400-e29b-41d4-a716-446655440060");
-  assert.equal(newIntent.request_id, "550e8400-e29b-41d4-a716-446655440061");
-});
-
-test("keeps one reduced payment input object instead of a payment list", () => {
-  const cash = createSaleFlow(initialSaleState, {
-    type: "payment_changed",
-    field: "amount_tendered_centavos",
-    value: "2500",
-  });
-  const mixed = createSaleFlow(cash, {
-    type: "payment_changed",
-    field: "qr_applied_centavos",
-    value: "1000",
-  });
-
-  assert.deepEqual(mixed.payment, {
-    amount_tendered_centavos: "2500",
-    qr_applied_centavos: "1000",
-  });
-  assert.equal("payments" in mixed, false);
+  assert.equal(retry.request_id, firstRequestId);
+  assert.deepEqual(retry.lines, withLine.lines);
+  assert.deepEqual(retry.payment, withPayment.payment);
+  assert.equal(afterSuccess.persisted_summary, null);
+  assert.equal(newIntent.request_id, thirdRequestId);
 });

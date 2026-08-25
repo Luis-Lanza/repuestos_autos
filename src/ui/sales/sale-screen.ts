@@ -5,8 +5,8 @@ import {
   confirmSale,
   type ConfirmSaleRequest,
 } from "../../commands/confirm-sale.ts";
-import { createSaleFlow, initialSaleState } from "./sale-flow.ts";
 import { catalogResultDetails } from "./catalog-result.ts";
+import { createSaleFlow, initialSaleState } from "./sale-flow.ts";
 import { persistedSummaryDetails } from "./persisted-summary";
 
 function requestId(): string {
