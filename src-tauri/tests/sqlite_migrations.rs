@@ -102,6 +102,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
     assert_eq!(legacy_facts(&path), before);
     let connection = Connection::open(&path).unwrap();
     connection.execute_batch("INSERT INTO sales (id, request_id, status, total_centavos) VALUES (11, 'legacy-write-shape', 'confirmed', 2500); INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (11, 1, 1, 2500, 2500, 2500);").unwrap();
+    drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
