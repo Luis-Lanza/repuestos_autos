@@ -13,9 +13,9 @@ const brakePad: ProductSearchResult = {
   catalog_unit_price_centavos: 2_500,
 };
 
-test("presents catalog category and catalog price from the typed search result", () => {
+test("presents catalog price as draft guidance from the typed search result", () => {
   assert.equal(
     catalogResultDetails(brakePad),
-    "BP-100 — Brake Pad — Brakes — catalog Bs 25.00 (4 in stock)",
+    "BP-100 — Brake Pad — Brakes — catalog price guidance Bs 25.00 (4 in stock)",
   );
 });
