@@ -1,12 +1,135 @@
-use rusqlite::{OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction};
 
 use crate::application::sales::{
-    PersistedLine, PersistedSaleSummary, RequestedLine, SaleRepository,
+    ApplicationRequestedLine, ConfirmSaleError, ConfirmSaleRepository, PersistedLine,
+    PersistedSaleSummary, RequestedLine, Reservation, SaleRepository,
 };
-use crate::domain::sales::{Payment, SaleLine};
+use crate::domain::sales::{Payment, Sale, SaleLine};
 use crate::domain::{MoneyCentavos, Quantity, RequestId};
 
 pub struct SqliteSaleRepository;
+
+impl ConfirmSaleRepository for SqliteSaleRepository {
+    fn reserve_or_load(
+        &self,
+        transaction: &Transaction<'_>,
+        request_id: &RequestId,
+    ) -> Result<Reservation, ConfirmSaleError> {
+        let request_id = request_id.as_uuid().to_string();
+        let reserved = transaction
+            .execute(
+                "INSERT INTO sales (request_id, status, total_centavos) VALUES (?1, 'pending', 0) ON CONFLICT(request_id) DO NOTHING",
+                [&request_id],
+            )
+            .map_err(|_| ConfirmSaleError::Persistence)?;
+        if reserved == 1 {
+            return Ok(Reservation::Reserved);
+        }
+
+        match transaction
+            .query_row(
+                "SELECT status FROM sales WHERE request_id = ?1",
+                [&request_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|_| ConfirmSaleError::Persistence)?
+            .as_str()
+        {
+            "confirmed" => self
+                .load_summary(transaction, &request_id)
+                .map(Reservation::ExistingConfirmed)
+                .map_err(|_| ConfirmSaleError::Persistence),
+            "pending" => Ok(Reservation::ExistingIncomplete),
+            _ => Ok(Reservation::ExistingCorrupt),
+        }
+    }
+
+    fn resolve_lines(
+        &self,
+        transaction: &Transaction<'_>,
+        requested: &[ApplicationRequestedLine],
+    ) -> Result<Vec<SaleLine>, ConfirmSaleError> {
+        requested
+            .iter()
+            .map(|line| {
+                let product = transaction
+                    .query_row(
+                        "SELECT active, minimum_unit_price_centavos FROM products WHERE id = ?1",
+                        [line.product_id],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .optional()
+                    .map_err(|_| ConfirmSaleError::Persistence)?;
+                match product {
+                    Some((1, catalog_price)) => SaleLine::priced(
+                        line.product_id,
+                        line.quantity,
+                        MoneyCentavos::new(catalog_price)
+                            .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?,
+                    )
+                    .map_err(|_| ConfirmSaleError::MoneyOverflow),
+                    Some(_) => Err(ConfirmSaleError::ProductInactive),
+                    None => Err(ConfirmSaleError::ProductMissing),
+                }
+            })
+            .collect()
+    }
+
+    fn persist_confirmed(
+        &self,
+        transaction: &Transaction<'_>,
+        request_id: &RequestId,
+        sale: &Sale,
+    ) -> Result<PersistedSaleSummary, ConfirmSaleError> {
+        let request_id = request_id.as_uuid().to_string();
+        let sale_id = transaction
+            .query_row(
+                "SELECT id FROM sales WHERE request_id = ?1 AND status = 'pending'",
+                [&request_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
+        let mut line_ids = Vec::with_capacity(sale.lines().len());
+        for line in sale.lines() {
+            transaction
+                .execute(
+                    "INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![sale_id, line.product_id(), line.quantity().value(), line.unit_price().value(), line.unit_price().value(), line.total().value()],
+                )
+                .map_err(|_| ConfirmSaleError::Persistence)?;
+            line_ids.push(transaction.last_insert_rowid());
+        }
+        for payment in sale.payments() {
+            insert_payment(transaction, sale_id, *payment)?;
+        }
+        for (line, line_id) in sale.lines().iter().zip(line_ids) {
+            if transaction
+                .execute(
+                    "UPDATE stock_balances SET quantity = quantity - ?1 WHERE product_id = ?2 AND quantity >= ?1",
+                    params![line.quantity().value(), line.product_id()],
+                )
+                .map_err(|_| ConfirmSaleError::Persistence)?
+                != 1
+            {
+                return Err(ConfirmSaleError::InsufficientStock);
+            }
+            transaction
+                .execute(
+                    "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, quantity_delta) VALUES (?1, ?2, ?3, ?4)",
+                    params![line.product_id(), sale_id, line_id, -line.quantity().value()],
+                )
+                .map_err(|_| ConfirmSaleError::Persistence)?;
+        }
+        transaction
+            .execute(
+                "UPDATE sales SET status = 'confirmed', total_centavos = ?1, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?2",
+                params![sale.total().value(), sale_id],
+            )
+            .map_err(|_| ConfirmSaleError::Persistence)?;
+        self.load_summary(transaction, &request_id)
+            .map_err(|_| ConfirmSaleError::PersistedDataInvalid)
+    }
+}
 
 impl SaleRepository for SqliteSaleRepository {
     fn reserve_request_id(
@@ -115,6 +238,29 @@ impl SaleRepository for SqliteSaleRepository {
             total: MoneyCentavos::new(total).map_err(|_| integrity_error())?,
         })
     }
+}
+
+fn insert_payment(
+    transaction: &Transaction<'_>,
+    sale_id: i64,
+    payment: Payment,
+) -> Result<(), ConfirmSaleError> {
+    match payment {
+        Payment::Cash {
+            amount_applied,
+            amount_tendered,
+            change_given,
+        } => transaction.execute(
+            "INSERT INTO sale_payments (sale_id, method, amount_applied_centavos, amount_tendered_centavos, change_given_centavos) VALUES (?1, 'cash', ?2, ?3, ?4)",
+            params![sale_id, amount_applied.value(), amount_tendered.value(), change_given.value()],
+        ),
+        Payment::Qr { amount_applied } => transaction.execute(
+            "INSERT INTO sale_payments (sale_id, method, amount_applied_centavos) VALUES (?1, 'qr', ?2)",
+            params![sale_id, amount_applied.value()],
+        ),
+    }
+    .map(|_| ())
+    .map_err(|_| ConfirmSaleError::Persistence)
 }
 
 fn database_error(error: rusqlite::Error) -> String {
