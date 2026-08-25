@@ -12,7 +12,7 @@ struct AppState(std::sync::Mutex<rusqlite::Connection>);
 #[cfg(feature = "desktop")]
 pub fn run() -> Result<(), tauri::Error> {
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(|app: &mut tauri::App<tauri::Wry>| {
             let app_data_directory = app.path().app_data_dir()?;
             let database_config =
                 infrastructure::sqlite::production_database_config(app_data_directory);
@@ -34,7 +34,8 @@ fn search_products_command(
     state: tauri::State<AppState>,
     request: commands::catalog::SearchProductsRequest,
 ) -> Result<Vec<commands::catalog::ProductSearchResult>, String> {
-    commands::catalog::search_products(&state.0.lock().map_err(|_| "persistence_failure")?, request)
+    let connection = state.0.lock().map_err(|_| "persistence_failure")?;
+    commands::catalog::search_products(&connection, request)
 }
 
 #[cfg(feature = "desktop")]
@@ -43,10 +44,8 @@ fn confirm_sale_command(
     state: tauri::State<AppState>,
     request: commands::confirm_sale::ConfirmSaleRequest,
 ) -> Result<commands::confirm_sale::ConfirmSaleResponse, String> {
-    commands::confirm_sale::confirm_sale(
-        &mut state.0.lock().map_err(|_| "persistence_failure")?,
-        request,
-    )
+    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
+    commands::confirm_sale::confirm_sale(&mut connection, request)
 }
 
 pub mod catalog {
