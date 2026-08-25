@@ -18,7 +18,7 @@ pub struct ConfirmSaleRequest {
     pub payments: Vec<Payment>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PersistedLine {
     pub product_id: i64,
     pub sku: String,
@@ -29,7 +29,7 @@ pub struct PersistedLine {
     pub line_total: MoneyCentavos,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PersistedSaleSummary {
     pub sale_id: i64,
     pub request_id: RequestId,
