@@ -44,7 +44,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
     let mut version =
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
-    if version > 2 {
+    if version > 3 {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
@@ -61,6 +61,16 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         transaction.execute_batch(include_str!("migrations/0002_fixed_price_checkout.sql"))?;
         validate_version_one_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 2)?;
+        transaction.commit()?;
+        version = 2;
+    }
+
+    if version == 2 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!(
+            "migrations/0003_sale_line_product_snapshots.sql"
+        ))?;
+        transaction.pragma_update(None, "user_version", 3)?;
         transaction.commit()?;
     }
 

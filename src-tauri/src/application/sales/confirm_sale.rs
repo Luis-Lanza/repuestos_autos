@@ -68,7 +68,7 @@ pub fn confirm_sale(
         let mut line_ids = Vec::new();
         for line in sale.lines() {
             transaction.execute(
-                    "INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO sale_lines (sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) SELECT ?1, ?2, sku, name, ?3, ?4, ?5, ?6 FROM products WHERE id = ?2",
                     params![sale_id, line.product_id(), line.quantity().value(), line.negotiated_unit_price().value(), line.minimum_unit_price_snapshot().value(), line.total().value()],
                 ).map_err(database_error)?;
             line_ids.push(transaction.last_insert_rowid());
