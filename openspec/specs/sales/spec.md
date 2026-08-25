@@ -2,19 +2,19 @@
 
 ## Purpose
 
-Provide the first offline point-of-sale flow for the store operator: discover active seeded products, build a valid cart, accept cash and/or QR payment, and confirm a sale with consistent persisted sales and stock records.
+Provide the first offline point-of-sale flow for the store operator: discover active seeded products, build a valid cart with catalog-derived prices, accept cash and/or QR payment, and confirm a sale with consistent persisted sales and stock records.
 
 ## Requirements
 
 ### Requirement: Active Product Search and Cart
 
-The system MUST provide one global search entry point over the seeded active catalog. Search results MUST expose enough information to select a product and assess its availability, including name, SKU, category, available whole-unit stock, and minimum sale price. The operator MUST be able to add an available product to a draft cart and remove it without changing persisted stock.
+The system MUST provide one global search entry point over the seeded active catalog. Search results MUST expose enough information to select a product and assess its availability, including name, SKU, category, available whole-unit stock, and current catalog price. The operator MUST be able to add an available product to a draft cart and remove it without changing persisted stock.
 
 #### Scenario: Search and add an active product
 
 - GIVEN the seeded catalog contains an active product
 - WHEN the operator searches using a matching product name, SKU, category, or searchable category field
-- THEN the system shows the matching active product with its available stock and minimum sale price
+- THEN the system shows the matching active product with its current catalog price
 - AND the operator can add that product to the draft cart
 
 #### Scenario: Archived or inactive products cannot be sold
@@ -31,18 +31,26 @@ The system MUST provide one global search entry point over the seeded active cat
 - THEN the draft no longer contains that line
 - AND persisted stock, sales, payments, and inventory movements remain unchanged
 
-### Requirement: Whole-Unit Quantities and Price Floor
+### Requirement: Whole-Unit Quantities and Fixed Catalog Price
 
-The system MUST accept only positive whole-number quantities for sale lines. Each newly added line MUST be prefilled with the product's current configured minimum sale price. The operator MAY enter a higher negotiated unit price, but the system MUST reject confirmation when any negotiated unit price is below the product's current minimum. A confirmed line MUST retain the negotiated unit price and the applicable minimum-price snapshot.
+The system MUST accept only positive whole-number quantities for sale lines. A newly added line MUST display the product's current catalog price, but the operator MUST NOT be able to edit that price. At confirmation, the backend MUST resolve the authoritative current catalog price and persist it as the sale line's historical price snapshot. Catalog management may update a product's price only for future sales; it MUST NOT alter confirmed sale lines.
 
-#### Scenario: Prefill and accept a valid negotiated price
+#### Scenario: Resolve and persist the catalog price at confirmation
 
-- GIVEN an active product has a configured minimum sale price
+- GIVEN an active product has a current catalog price
 - WHEN the operator adds it to the cart
 - THEN the line quantity is a positive whole unit
-- AND the line unit price is prefilled with the configured minimum
-- WHEN the operator changes the unit price to a higher value and confirms a valid sale
-- THEN the persisted sale line contains the higher negotiated price and the minimum-price snapshot
+- AND the line displays the current catalog price without allowing an operator price edit
+- WHEN the operator confirms a valid sale
+- THEN the backend resolves the authoritative current catalog price
+- AND the persisted sale line contains that resolved price as its historical snapshot
+
+#### Scenario: Catalog price updates affect only future sales
+
+- GIVEN a confirmed sale line has a persisted catalog-price snapshot
+- WHEN catalog management changes the product's catalog price
+- THEN the confirmed sale line retains its original snapshot
+- AND a later confirmed sale uses the new catalog price
 
 #### Scenario: Reject fractional, zero, or negative quantity
 
@@ -51,53 +59,47 @@ The system MUST accept only positive whole-number quantities for sale lines. Eac
 - THEN the system rejects the quantity
 - AND confirmation cannot persist a sale or stock effect
 
-#### Scenario: Reject a price below the current minimum
-
-- GIVEN a cart line's negotiated unit price is below the product's current configured minimum
-- WHEN the operator attempts to confirm the sale
-- THEN confirmation is rejected
-- AND no sale, payment, inventory movement, or stock deduction is persisted
-
 ### Requirement: Payment Integrity
 
-The system MUST support cash-only, QR-only, and mixed cash-and-QR payments. Every payment line MUST record the amount applied to the sale. Cash MUST additionally record amount tendered and change given. All monetary values MUST be evaluated as integer centavos of Bs. The sum of applied payment amounts MUST equal the sale total exactly, and cash values MUST be non-negative and satisfy `amount_tendered - amount_applied = change_given`.
+The system MUST support cash-only, QR-only, and mixed cash-and-QR payments. The confirmation request MUST contain only tendered cash and an optional QR-applied amount; the backend MUST derive cash applied and change from the authoritative sale total after applying QR. Every payment line MUST persist its applied amount, and cash MUST additionally persist tendered amount and derived change. All monetary values MUST be evaluated as integer centavos of Bs. QR applied plus derived cash applied MUST equal the sale total exactly; QR applied MUST be non-negative and MUST NOT exceed the sale total; tendered cash MUST cover the remaining amount; and `amount_tendered - amount_applied = change_given`.
 
-#### Scenario: Confirm a cash-only sale with change
+#### Scenario: Confirm a cash-only sale with derived change
 
 - GIVEN the cart total is a positive amount
-- WHEN the operator submits one cash payment whose applied amount equals the total and whose tendered amount exceeds the applied amount by the recorded change
-- THEN the sale is confirmed
-- AND the persisted payment records the applied amount, tendered amount, and change in integer centavos
+- WHEN the operator enters tendered cash greater than the cart total and no QR amount
+- THEN the backend derives cash applied equal to the cart total
+- AND derives change equal to tendered cash minus the cart total
+- AND persists the cash payment with applied, tendered, and change amounts in integer centavos
 
 #### Scenario: Confirm a QR-only sale
 
 - GIVEN the cart total is a positive amount
-- WHEN the operator submits a QR payment whose applied amount equals the total
-- THEN the sale is confirmed
-- AND the persisted payment records the QR applied amount
-- AND no cash tender or change is required
+- WHEN the operator submits a QR amount equal to the total and no cash payment
+- THEN the system confirms the sale
+- AND persists the QR applied amount equal to the total
+- AND persists no cash tender or change
 
-#### Scenario: Confirm a mixed cash-and-QR sale
+#### Scenario: Confirm a mixed sale
 
 - GIVEN the cart total is a positive amount
-- WHEN the operator submits cash and QR payments whose applied amounts together equal the total
-- AND the cash tendered amount, applied amount, and change are consistent
-- THEN the sale is confirmed
-- AND both payment lines are persisted with their respective details
+- WHEN the operator provides a QR amount less than the total and tendered cash covering the remainder
+- THEN the backend derives cash applied as `total - QR applied`
+- AND derives change as `tendered cash - cash applied`
+- AND persists both payment lines with their authoritative details
 
-#### Scenario: Reject unequal applied payments
+#### Scenario: Reject QR overpayment
 
-- GIVEN the sum of applied payment amounts is less than or greater than the sale total
-- WHEN the operator attempts to confirm
+- GIVEN the cart total is a positive amount
+- WHEN the submitted QR amount exceeds the total
 - THEN confirmation is rejected
-- AND no sale, payment, inventory movement, or stock deduction is persisted
+- AND no sale, payment, stock deduction, or inventory movement is persisted
 
-#### Scenario: Reject inconsistent cash values
+#### Scenario: Reject insufficient tender for the remaining amount
 
-- GIVEN a cash payment has a negative value or its tendered amount minus applied amount does not equal its change
-- WHEN the operator attempts to confirm
+- GIVEN the submitted QR amount is no greater than the total
+- WHEN tendered cash is less than `total - QR applied`
 - THEN confirmation is rejected
-- AND no sale or stock effect is persisted
+- AND no sale, payment, stock deduction, or inventory movement is persisted
 
 ### Requirement: Atomic Sale Confirmation and Stock Integrity
 
@@ -123,33 +125,33 @@ The system MUST confirm a sale, its lines, its payment lines, stock balance decr
 
 ### Requirement: Idempotent Confirmation
 
-The system MUST generate and retain one UUID `request_id` for each sale intent when confirmation begins. Repeated clicks and retries for that intent MUST reuse the same request ID. The system MUST return the original persisted sale for a repeated request ID and MUST NOT duplicate any sale, line, payment, inventory movement, or stock deduction.
+The system MUST generate and retain one UUID `request_id` for each sale intent. Repeated confirmation attempts for that intent MUST reuse the same request ID. Once a request ID has a persisted sale, a retry MUST return that persisted sale and MUST NOT resolve a new catalog price, recalculate payment values, or duplicate any sale, line, payment, inventory movement, or stock deduction.
 
-#### Scenario: Retry a successful confirmation
+#### Scenario: Retry after a catalog price changes
 
-- GIVEN a sale was confirmed with a retained UUID request ID
-- WHEN the operator retries confirmation using that same request ID
-- THEN the system returns the original persisted sale
-- AND the returned sale identity and request ID match the first confirmation
-- AND sale, line, payment, movement, and stock counts remain unchanged after the retry
+- GIVEN a sale was confirmed with a retained request ID and its line price was persisted
+- WHEN the catalog price changes and the operator retries with the same request ID
+- THEN the system returns the original persisted sale and payment breakdown
+- AND the returned historical price and payment values are unchanged
+- AND no duplicate sale data or additional stock deduction is created
 
-#### Scenario: Retain the request ID after an ambiguous or failed UI attempt
+#### Scenario: Retry an unsuccessful attempt
 
-- GIVEN confirmation has begun for a sale intent
-- WHEN the UI enters a pending or error state and the operator retries that same intent
-- THEN the UI uses the retained request ID rather than generating a new one
-- AND a successful retry cannot create a duplicate sale for that intent
+- GIVEN an attempt with a request ID failed before persistence
+- WHEN the operator retries the same intent with that request ID and valid inputs
+- THEN the system may confirm one sale using the price resolved for the successful attempt
+- AND it creates no duplicate records for that request ID
 
 ### Requirement: Persisted Sale Summary
 
-The system MUST return a sale summary reconstructed from persisted records after a successful confirmation or idempotent retry. The summary MUST include the sale identity, UUID request ID, status, timestamp, line items, product information, positive whole-unit quantities, negotiated unit prices, payment breakdown, total in Bs, and confirmation outcome.
+The system MUST return a sale summary reconstructed from persisted records after a successful confirmation or idempotent retry. The summary MUST include the sale identity, UUID request ID, status, timestamp, line items, product information, positive whole-unit quantities, sale-time catalog-price snapshots, payment breakdown, total in Bs, and confirmation outcome.
 
 #### Scenario: Display the persisted summary after confirmation
 
 - GIVEN a sale confirmation succeeds
 - WHEN the confirmation response is received
 - THEN the operator can view the persisted sale summary
-- AND the summary contains the sale identity, request ID, status, timestamp, products, quantities, negotiated prices, payment breakdown, and total formatted in Bs
+- AND the summary contains the sale identity, request ID, status, timestamp, products, quantities, sale-time catalog prices, payment breakdown, and total formatted in Bs
 
 #### Scenario: Reconstruct the same summary on retry
 
@@ -175,3 +177,32 @@ The confirm-sale slice MUST remain limited to seeded catalog discovery, draft ca
 - WHEN the operator confirms an in-scope cash, QR, or mixed-payment sale
 - THEN confirmation does not require a network service, licensing check, payment gateway, account, invoice, barcode device, or multi-store synchronization
 - AND returns, cancellations, stock adjustments, reports, and backup/restore are not performed as part of confirmation
+
+### Requirement: Confirmation Inputs Exclude Negotiated Values
+
+The confirmation request MUST accept product identity and positive whole-unit quantity for each line, plus tendered cash and an optional QR-applied amount. It MUST NOT accept operator-supplied line prices, cash-applied amounts, or change values as authoritative inputs. The backend MUST resolve prices and derive payment values.
+
+#### Scenario: Reject negotiated price and derived-payment authority
+
+- GIVEN a checkout request contains an operator-supplied line price, cash-applied amount, or change value
+- WHEN the request is submitted for confirmation
+- THEN the system rejects the request or ignores those fields without using them as authority
+- AND no sale, payment, stock deduction, or inventory movement is persisted
+
+### Requirement: Migration and Legacy Compatibility
+
+The system MUST define and apply an explicit SQLite migration and backward-compatibility policy before rollout. Existing confirmed sales and payment records MUST remain readable without repricing, deletion, or loss of request-ID, stock, movement, line, or payment history. The policy MUST define legacy defaults or nullability, constraint rollout, and rollback behavior.
+
+#### Scenario: Open an existing database after migration
+
+- GIVEN a database contains confirmed sales created under the previous schema
+- WHEN the migrated application reads those sales
+- THEN it returns a compatible persisted summary without changing their historical prices or payment facts
+- AND existing stock balances, inventory movements, and request-ID uniqueness remain intact
+
+#### Scenario: Roll back application behavior after migration
+
+- GIVEN the migration has completed and the previous application contract must be restored
+- WHEN rollback is performed according to the documented compatibility policy
+- THEN confirmed-sale history and stock integrity are preserved
+- AND the previous application can operate without interpreting newly introduced data as a different historical sale
