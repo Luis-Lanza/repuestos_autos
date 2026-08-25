@@ -80,7 +80,17 @@ function assertNonNegativeSafeInteger(value: number, field: string): void {
   }
 }
 
+const CANONICAL_UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function assertRequestId(requestId: string): void {
+  if (!CANONICAL_UUID_V4.test(requestId)) {
+    throw new Error("Request ID must be a canonical UUID v4.");
+  }
+}
+
 function assertIntegerRequest(request: ConfirmSaleRequest): void {
+  assertRequestId(request.request_id);
   for (const line of request.lines) {
     assertPositiveSafeInteger(line.product_id, "Product ID");
     assertPositiveSafeInteger(line.quantity, "Quantity");
@@ -103,7 +113,17 @@ export function createConfirmSaleCommand(command: Invoke) {
   return async (request: ConfirmSaleRequest): Promise<ConfirmSaleResponse> => {
     assertIntegerRequest(request);
     return command("confirm_sale_command", {
-      request,
+      request: {
+        request_id: request.request_id,
+        lines: request.lines.map(({ product_id, quantity }) => ({
+          product_id,
+          quantity,
+        })),
+        payment: {
+          amount_tendered_centavos: request.payment.amount_tendered_centavos,
+          qr_applied_centavos: request.payment.qr_applied_centavos,
+        },
+      },
     }) as Promise<ConfirmSaleResponse>;
   };
 }

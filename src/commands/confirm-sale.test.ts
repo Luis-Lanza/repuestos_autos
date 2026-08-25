@@ -133,6 +133,61 @@ test("returns persisted authoritative summaries and backend errors unchanged", a
   assert.equal(result.payments[0].method, "qr");
 });
 
+test("rejects invalid request identities before invocation", async () => {
+  let invoked = false;
+  const confirmSale = createConfirmSaleCommand(async () => {
+    invoked = true;
+    return { kind: "error", code: "invalid_request", message: "unexpected" };
+  });
+
+  await assert.rejects(
+    confirmSale({
+      request_id: "550E8400-E29B-41D4-A716-446655440055",
+      lines: [{ product_id: 1, quantity: 1 }],
+      payment: { amount_tendered_centavos: null, qr_applied_centavos: null },
+    }),
+    /canonical UUID v4/,
+  );
+
+  assert.equal(invoked, false);
+});
+
+test("reconstructs the IPC payload from allowlisted request fields", async () => {
+  const calls: unknown[] = [];
+  const confirmSale = createConfirmSaleCommand(async (_command, payload) => {
+    calls.push(payload);
+    return { kind: "error", code: "invalid_request", message: "unexpected" };
+  });
+  const request = {
+    request_id: "550e8400-e29b-41d4-a716-446655440056",
+    lines: [
+      {
+        product_id: 1,
+        quantity: 1,
+        negotiated_unit_price_centavos: 2_500,
+      },
+    ],
+    payment: {
+      amount_tendered_centavos: 2_500,
+      qr_applied_centavos: null,
+      amount_applied_centavos: 2_500,
+    },
+    payments: [{ method: "cash", amount_applied_centavos: 2_500 }],
+  } as ConfirmSaleRequest;
+
+  await confirmSale(request);
+
+  assert.deepEqual(calls, [
+    {
+      request: {
+        request_id: "550e8400-e29b-41d4-a716-446655440056",
+        lines: [{ product_id: 1, quantity: 1 }],
+        payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
+      },
+    },
+  ]);
+});
+
 test("rejects unsafe, non-integer, negative, and non-positive values before invocation", async () => {
   let invoked = false;
   const confirmSale = createConfirmSaleCommand(async () => {
