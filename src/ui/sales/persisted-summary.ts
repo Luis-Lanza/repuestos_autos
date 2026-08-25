@@ -26,7 +26,7 @@ export function persistedSummaryDetails(
     outcome: summary.outcome,
     lines: summary.lines.map(
       (line) =>
-        `${line.sku} — ${line.product_name} · ${line.quantity} × ${formatBs(line.negotiated_unit_price_centavos)}`,
+        `${line.sku} — ${line.product_name} · ${line.quantity} × ${formatBs(line.unit_price_centavos)}`,
     ),
     payments: summary.payments.map((payment) =>
       payment.method === "cash"

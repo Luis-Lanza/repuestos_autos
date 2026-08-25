@@ -10,12 +10,12 @@ const brakePad: ProductSearchResult = {
   name: "Brake Pad",
   category_name: "Brakes",
   available_quantity: 4,
-  minimum_unit_price_centavos: 2_500,
+  catalog_unit_price_centavos: 2_500,
 };
 
-test("presents catalog category and minimum price from the typed search result", () => {
+test("presents catalog price as draft guidance from the typed search result", () => {
   assert.equal(
     catalogResultDetails(brakePad),
-    "BP-100 — Brake Pad — Brakes — minimum Bs 25.00 (4 in stock)",
+    "BP-100 — Brake Pad — Brakes — catalog price guidance Bs 25.00 (4 in stock)",
   );
 });
