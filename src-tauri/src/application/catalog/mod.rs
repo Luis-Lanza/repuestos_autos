@@ -8,7 +8,7 @@ pub struct ProductSearchResult {
     pub name: String,
     pub category_name: String,
     pub available_quantity: i64,
-    pub minimum_unit_price_centavos: i64,
+    pub catalog_unit_price_centavos: i64,
 }
 
 pub fn search_active_products(
@@ -32,7 +32,7 @@ pub fn search_active_products(
                 name: row.get(2)?,
                 category_name: row.get(3)?,
                 available_quantity: row.get(4)?,
-                minimum_unit_price_centavos: row.get(5)?,
+                catalog_unit_price_centavos: row.get(5)?,
             })
         })?
         .collect();
