@@ -1,7 +1,7 @@
 use repuestos_autos::domain::sales::{
     Payment, PaymentBreakdown, PaymentError, PaymentInput, Sale, SaleLine,
 };
-use repuestos_autos::domain::{MoneyCentavos, Quantity};
+use repuestos_autos::domain::{MoneyCentavos, Quantity, RequestId};
 
 fn money(value: i64) -> MoneyCentavos {
     MoneyCentavos::new(value).unwrap()
@@ -24,6 +24,28 @@ fn derive(
         },
     )
 }
+
+#[test]
+fn value_objects_accept_valid_values_and_reject_invalid_values() {
+    assert_eq!(Quantity::new(2).unwrap().value(), 2);
+    assert!(Quantity::new(0).is_err());
+    assert!(Quantity::new(-1).is_err());
+    assert_eq!(money(0).value(), 0);
+    assert!(MoneyCentavos::new(-1).is_err());
+}
+
+#[test]
+fn request_id_requires_a_valid_uuid() {
+    assert_eq!(
+        RequestId::parse("550e8400-e29b-41d4-a716-446655440000")
+            .unwrap()
+            .as_uuid()
+            .to_string(),
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert!(RequestId::parse("not-a-uuid").is_err());
+}
+
 #[test]
 fn priced_line_exposes_the_authoritative_unit_price_and_checked_total() {
     let priced = line(2_500, 2);
@@ -135,9 +157,28 @@ fn zero_tender_after_full_qr_creates_no_cash_row() {
     );
 }
 #[test]
+fn sale_rejects_empty_lines() {
+    assert!(Sale::new(vec![], vec![]).is_err());
+}
+
+#[test]
+fn persisted_cash_payment_requires_consistent_tender_and_change() {
+    assert!(Payment::cash(money(5_000), money(6_000), money(999)).is_err());
+    assert_eq!(
+        Payment::cash(money(5_000), money(6_000), money(1_000)).unwrap(),
+        Payment::Cash {
+            amount_applied: money(5_000),
+            amount_tendered: money(6_000),
+            change_given: money(1_000),
+        }
+    );
+}
+
+#[test]
 fn sale_defense_in_depth_rejects_applied_payments_that_do_not_equal_total() {
     assert!(Sale::new(vec![line(5_000, 1)], vec![Payment::qr(money(4_999))]).is_err());
 }
+
 #[test]
 fn aggregate_total_overflow_is_rejected() {
     assert!(Sale::new(
