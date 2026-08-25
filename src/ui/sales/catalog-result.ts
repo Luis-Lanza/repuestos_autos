@@ -5,5 +5,5 @@ function formatBolivianos(centavos: number): string {
 }
 
 export function catalogResultDetails(product: ProductSearchResult): string {
-  return `${product.sku} — ${product.name} — ${product.category_name} — catalog ${formatBolivianos(product.catalog_unit_price_centavos)} (${product.available_quantity} in stock)`;
+  return `${product.sku} — ${product.name} — ${product.category_name} — catalog price guidance ${formatBolivianos(product.catalog_unit_price_centavos)} (${product.available_quantity} in stock)`;
 }
