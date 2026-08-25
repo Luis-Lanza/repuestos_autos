@@ -36,6 +36,12 @@ fn confirms_a_persisted_sale_and_reuses_the_original_summary_for_a_retry() {
         request("550e8400-e29b-41d4-a716-446655440040"),
     )
     .unwrap();
+    connection
+        .execute(
+            "UPDATE products SET sku = 'REN-999', name = 'Renamed filter' WHERE id = 1",
+            [],
+        )
+        .unwrap();
     let retry = confirm_sale(
         &mut connection,
         ConfirmSaleRequest {
@@ -64,6 +70,8 @@ fn confirms_a_persisted_sale_and_reuses_the_original_summary_for_a_retry() {
         ("confirmed", "confirmed", 2_500),
     );
     assert!(!summary.confirmed_at.is_empty());
+    assert_eq!(summary.lines[0].sku, "FLT-001");
+    assert_eq!(summary.lines[0].product_name, "Filtro de aceite");
 }
 #[test]
 fn maps_malformed_and_rejected_requests_to_stable_public_error_codes() {

@@ -67,7 +67,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
@@ -96,11 +96,21 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     drop(reopened);
     assert_eq!(legacy_facts(&path), before);
     let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+            connection
+                .query_row(
+                    "SELECT sku_snapshot IS NULL, product_name_snapshot IS NULL FROM sale_lines WHERE id = 20",
+                    [],
+                    |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+                )
+                .unwrap(),
+            (true, true)
+        );
     connection.execute_batch("INSERT INTO sales (id, request_id, status, total_centavos) VALUES (11, 'legacy-write-shape', 'confirmed', 2500); INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (11, 1, 1, 2500, 2500, 2500);").unwrap();
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
@@ -136,14 +146,14 @@ fn rejects_foreign_key_corruption_without_changing_legacy_rows_or_version() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
-fn migrates_a_new_version_zero_database_through_version_two() {
+fn migrates_a_new_version_zero_database_through_version_three() {
     let directory = temporary_directory("migration-version-zero");
     let connection = open_database(&production_database_config(&directory)).unwrap();
     assert_eq!(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        2
+        3
     );
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
@@ -153,11 +163,11 @@ fn rejects_unknown_future_schema_versions_without_mutation() {
     let directory = temporary_directory("migration-future-version");
     let path = create_legacy_database(&directory);
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 3).unwrap();
+    connection.pragma_update(None, "user_version", 4).unwrap();
     drop(connection);
     let before = legacy_facts(&path);
     assert!(open_database(&production_database_config(&directory)).is_err());
-    assert_eq!(user_version(&path), 3);
+    assert_eq!(user_version(&path), 4);
     assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }

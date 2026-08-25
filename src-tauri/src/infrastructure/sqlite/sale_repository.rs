@@ -93,7 +93,7 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
         for line in sale.lines() {
             transaction
                 .execute(
-                    "INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO sale_lines (sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) SELECT ?1, ?2, sku, name, ?3, ?4, ?5, ?6 FROM products WHERE id = ?2",
                     params![sale_id, line.product_id(), line.quantity().value(), line.unit_price().value(), line.unit_price().value(), line.total().value()],
                 )
                 .map_err(|_| ConfirmSaleError::Persistence)?;
@@ -192,7 +192,7 @@ impl SaleRepository for SqliteSaleRepository {
             )
             .map_err(|_| integrity_error())?;
         let lines = transaction
-            .prepare("SELECT l.product_id, p.sku, p.name, l.quantity, l.negotiated_unit_price_centavos, l.minimum_unit_price_snapshot_centavos, l.line_total_centavos FROM sale_lines l JOIN products p ON p.id = l.product_id WHERE l.sale_id = ?1 ORDER BY l.id")
+            .prepare("SELECT l.product_id, COALESCE(l.sku_snapshot, p.sku), COALESCE(l.product_name_snapshot, p.name), l.quantity, l.negotiated_unit_price_centavos, l.minimum_unit_price_snapshot_centavos, l.line_total_centavos FROM sale_lines l JOIN products p ON p.id = l.product_id WHERE l.sale_id = ?1 ORDER BY l.id")
             .map_err(database_error)?
             .query_map([sale_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)))
             .map_err(database_error)?

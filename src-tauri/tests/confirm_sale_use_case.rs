@@ -219,6 +219,38 @@ fn rolls_back_later_stock_failure_and_allows_the_same_request_to_retry() {
 }
 
 #[test]
+fn rolls_back_all_effects_when_post_write_summary_readback_fails() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER delete_payments_after_confirmation
+                 AFTER UPDATE OF status ON sales
+                 WHEN NEW.status = 'confirmed'
+                 BEGIN
+                     DELETE FROM sale_payments WHERE sale_id = NEW.id;
+                 END;",
+        )
+        .unwrap();
+    let before = snapshot(&connection);
+
+    assert_eq!(
+        confirm_authoritative(
+            &mut connection,
+            authoritative_request(
+                "550e8400-e29b-41d4-a716-446655440126",
+                &[(1, 1)],
+                PaymentInput {
+                    amount_tendered: None,
+                    qr_applied: Some(MoneyCentavos::new(2_500).unwrap()),
+                },
+            ),
+        ),
+        Err(ConfirmSaleError::PersistedDataInvalid),
+    );
+    assert_eq!(snapshot(&connection), before);
+}
+
+#[test]
 fn returns_each_payment_mode_from_stored_sqlite_facts() {
     let cases = [
         (
@@ -393,7 +425,7 @@ fn reservation_short_circuits_repriced_or_missing_retries_to_stored_facts() {
     .unwrap();
     connection
         .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 9999 WHERE id = 1",
+            "UPDATE products SET sku = 'REN-999', name = 'Renamed filter', minimum_unit_price_centavos = 9999 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -416,6 +448,8 @@ fn reservation_short_circuits_repriced_or_missing_retries_to_stored_facts() {
         retry.lines[0].negotiated_unit_price,
         MoneyCentavos::new(2_500).unwrap()
     );
+    assert_eq!(retry.lines[0].sku, "FLT-001");
+    assert_eq!(retry.lines[0].product_name, "Filtro de aceite");
     assert_eq!(
         connection
             .query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0))
