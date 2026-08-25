@@ -143,13 +143,24 @@ fn confirmation_reserves_then_resolves_then_persists_derived_payment_facts() {
     );
 }
 #[test]
-fn duplicate_products_are_rejected_without_opening_a_repository_operation() {
+fn confirmed_retry_returns_stored_facts_before_validating_duplicate_products() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    let persisted = summary();
+    let repository = repository_double(Ok(Reservation::ExistingConfirmed(persisted.clone())));
+    let result = ConfirmSaleUseCase::new(&mut connection, &repository)
+        .confirm(request(vec![requested_line(1), requested_line(1)]))
+        .unwrap();
+    assert_eq!(result, persisted);
+    assert_eq!(*repository.calls.borrow(), ["reserve"]);
+}
+#[test]
+fn newly_reserved_duplicate_products_are_rejected_before_line_resolution() {
     let mut connection = Connection::open_in_memory().unwrap();
     let repository = repository_double(Ok(Reservation::Reserved));
     let result = ConfirmSaleUseCase::new(&mut connection, &repository)
         .confirm(request(vec![requested_line(1), requested_line(1)]));
     assert_eq!(result, Err(ConfirmSaleError::DuplicateProduct));
-    assert!(repository.calls.borrow().is_empty());
+    assert_eq!(*repository.calls.borrow(), ["reserve"]);
 }
 #[test]
 fn resolution_and_persistence_failures_stop_later_repository_calls() {

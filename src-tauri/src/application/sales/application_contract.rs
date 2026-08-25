@@ -37,7 +37,6 @@ impl<'connection, 'repository, R: ConfirmSaleRepository>
         self,
         request: ApplicationConfirmSaleRequest,
     ) -> Result<PersistedSaleSummary, ConfirmSaleError> {
-        reject_duplicate_products(&request.lines)?;
         let repository = self.repository;
         let transaction = self
             .connection
@@ -67,6 +66,7 @@ impl<'connection, 'repository, R: ConfirmSaleRepository>
             }
             Reservation::Reserved => (),
         }
+        reject_duplicate_products(&request.lines)?;
         let lines = repository.resolve_lines(transaction, &request.lines)?;
         let total = lines.iter().try_fold(
             MoneyCentavos::new(0).map_err(|_| ConfirmSaleError::PersistedDataInvalid)?,
