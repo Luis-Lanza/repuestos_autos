@@ -6,7 +6,7 @@ export type ProductSearchResult = {
   name: string;
   category_name: string;
   available_quantity: number;
-  minimum_unit_price_centavos: number;
+  catalog_unit_price_centavos: number;
 };
 
 type Invoke = (command: string, payload: unknown) => Promise<unknown>;
