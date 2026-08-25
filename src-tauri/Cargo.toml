@@ -13,7 +13,7 @@ path = "src/main.rs"
 required-features = ["desktop"]
 
 [dependencies]
-tauri = { version = "2", default-features = false, optional = true }
+tauri = { version = "2", default-features = false, features = ["wry"], optional = true }
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = "1"
 serde = { version = "1", features = ["derive"] }
