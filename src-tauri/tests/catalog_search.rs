@@ -11,7 +11,7 @@ fn finds_active_seeded_products_by_every_searchable_catalog_field() {
         let product = &results[0];
         assert_eq!(product.sku, "FLT-001");
         assert_eq!(product.available_quantity, 8);
-        assert_eq!(product.minimum_unit_price_centavos, 2_500);
+        assert_eq!(product.catalog_unit_price_centavos, 2_500);
     }
 }
 

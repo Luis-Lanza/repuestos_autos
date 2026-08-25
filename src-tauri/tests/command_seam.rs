@@ -1,23 +1,25 @@
 use repuestos_autos::commands::catalog::{search_products, SearchProductsRequest};
 use repuestos_autos::commands::confirm_sale::{
-    confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentRequest, RequestedLine,
+    confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
 };
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
-fn request(request_id: &str) -> ConfirmSaleRequest {
+
+fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> ConfirmSaleRequest {
     ConfirmSaleRequest {
         request_id: request_id.into(),
         lines: vec![RequestedLine {
             product_id: 1,
             quantity: 1,
-            negotiated_unit_price_centavos: 2_500,
         }],
-        payments: vec![PaymentRequest::Qr {
-            amount_applied_centavos: 2_500,
-        }],
+        payment: PaymentInputRequest {
+            amount_tendered_centavos: tendered,
+            qr_applied_centavos: qr_applied,
+        },
     }
 }
+
 #[test]
-fn exposes_search_dtos_without_floating_point_conversion() {
+fn exposes_catalog_price_without_physical_storage_terminology() {
     let connection = open_seeded_catalog().unwrap();
     let results = search_products(
         &connection,
@@ -26,14 +28,49 @@ fn exposes_search_dtos_without_floating_point_conversion() {
         },
     )
     .unwrap();
-    assert_eq!(results[0].minimum_unit_price_centavos, 2_500);
+
+    assert_eq!(results[0].catalog_unit_price_centavos, 2_500);
 }
+
 #[test]
-fn confirms_a_persisted_sale_and_reuses_the_original_summary_for_a_retry() {
+fn confirms_persisted_cash_qr_and_mixed_summaries() {
+    for (request_id, tendered, qr_applied, expected_total) in [
+        (
+            "550e8400-e29b-41d4-a716-446655440040",
+            Some(3_000),
+            None,
+            2_500,
+        ),
+        (
+            "550e8400-e29b-41d4-a716-446655440041",
+            None,
+            Some(2_500),
+            2_500,
+        ),
+        (
+            "550e8400-e29b-41d4-a716-446655440042",
+            Some(1_000),
+            Some(1_500),
+            2_500,
+        ),
+    ] {
+        let mut connection = open_seeded_catalog().unwrap();
+        let response =
+            confirm_sale(&mut connection, request(request_id, tendered, qr_applied)).unwrap();
+        let ConfirmSaleResponse::Success(summary) = response else {
+            panic!("expected a persisted summary");
+        };
+        assert_eq!(summary.total_centavos, expected_total);
+        assert_eq!(summary.lines[0].unit_price_centavos, 2_500);
+    }
+}
+
+#[test]
+fn returns_repriced_persisted_summary_for_idempotent_retries() {
     let mut connection = open_seeded_catalog().unwrap();
     let first = confirm_sale(
         &mut connection,
-        request("550e8400-e29b-41d4-a716-446655440040"),
+        request("550e8400-e29b-41d4-a716-446655440043", None, Some(2_500)),
     )
     .unwrap();
     connection
@@ -44,19 +81,10 @@ fn confirms_a_persisted_sale_and_reuses_the_original_summary_for_a_retry() {
         .unwrap();
     let retry = confirm_sale(
         &mut connection,
-        ConfirmSaleRequest {
-            lines: vec![RequestedLine {
-                product_id: 1,
-                quantity: 2,
-                negotiated_unit_price_centavos: 9_999,
-            }],
-            payments: vec![PaymentRequest::Qr {
-                amount_applied_centavos: 19_998,
-            }],
-            ..request("550e8400-e29b-41d4-a716-446655440040")
-        },
+        request("550e8400-e29b-41d4-a716-446655440043", Some(9_999), None),
     )
     .unwrap();
+
     assert_eq!(retry, first);
     let ConfirmSaleResponse::Success(summary) = first else {
         panic!("expected a persisted summary");
@@ -73,52 +101,43 @@ fn confirms_a_persisted_sale_and_reuses_the_original_summary_for_a_retry() {
     assert_eq!(summary.lines[0].sku, "FLT-001");
     assert_eq!(summary.lines[0].product_name, "Filtro de aceite");
 }
+
 #[test]
-fn maps_malformed_and_rejected_requests_to_stable_public_error_codes() {
-    let mut connection = open_seeded_catalog().unwrap();
+fn rejects_legacy_authority_and_invalid_request_shapes_before_confirmation() {
+    let base = r#"{"request_id":"550e8400-e29b-41d4-a716-446655440044","lines":[{"product_id":1,"quantity":1}],"payment":{"amount_tendered_centavos":null,"qr_applied_centavos":2500}}"#;
     let cases = [
-        (request("not-a-uuid"), "invalid_request"),
-        (
-            ConfirmSaleRequest {
-                lines: vec![RequestedLine {
-                    product_id: 1,
-                    quantity: 0,
-                    negotiated_unit_price_centavos: 2_500,
-                }],
-                ..request("550e8400-e29b-41d4-a716-446655440041")
-            },
-            "invalid_quantity",
+        base.replace(
+            "\"quantity\":1",
+            "\"quantity\":1,\"negotiated_unit_price_centavos\":2500",
         ),
-        (
-            ConfirmSaleRequest {
-                lines: vec![RequestedLine {
-                    product_id: 1,
-                    quantity: 1,
-                    negotiated_unit_price_centavos: 2_499,
-                }],
-                payments: vec![PaymentRequest::Qr {
-                    amount_applied_centavos: 2_499,
-                }],
-                ..request("550e8400-e29b-41d4-a716-446655440042")
-            },
-            "price_below_minimum",
+        base.replace("\"payment\":{", "\"payments\":[],\"payment\":{"),
+        base.replace(
+            "\"qr_applied_centavos\":2500",
+            "\"qr_applied_centavos\":2500,\"amount_applied_centavos\":2500",
+        ),
+        base.replace(
+            "\"qr_applied_centavos\":2500",
+            "\"qr_applied_centavos\":2500,\"change_given_centavos\":0",
+        ),
+        base.replace("\"quantity\":1", "\"quantity\":1.5"),
+        base.replace(
+            "\"qr_applied_centavos\":2500",
+            "\"qr_applied_centavos\":9223372036854775808",
         ),
     ];
-    for (request, code) in cases {
-        let ConfirmSaleResponse::Error(error) = confirm_sale(&mut connection, request).unwrap()
-        else {
-            panic!("expected error response");
-        };
-        assert_eq!(error.code, code);
-        assert!(!error.message.contains("SQLite"));
+
+    for payload in cases {
+        assert!(
+            serde_json::from_str::<ConfirmSaleRequest>(&payload).is_err(),
+            "{payload}"
+        );
     }
-}
-#[test]
-fn rejects_non_integer_and_out_of_range_json_shapes_before_command_invocation() {
-    for payload in [
-        r#"{\"request_id\":\"550e8400-e29b-41d4-a716-446655440043\",\"lines\":[{\"product_id\":1,\"quantity\":1.5,\"negotiated_unit_price_centavos\":2500}],\"payments\":[]}"#,
-        r#"{\"request_id\":\"550e8400-e29b-41d4-a716-446655440043\",\"lines\":[{\"product_id\":1,\"quantity\":1,\"negotiated_unit_price_centavos\":9223372036854775808}],\"payments\":[]}"#,
-    ] {
-        assert!(serde_json::from_str::<ConfirmSaleRequest>(payload).is_err());
-    }
+
+    let mut connection = open_seeded_catalog().unwrap();
+    let ConfirmSaleResponse::Error(error) =
+        confirm_sale(&mut connection, request("invalid", None, None)).unwrap()
+    else {
+        panic!("expected invalid request response");
+    };
+    assert_eq!(error.code, "invalid_request");
 }
