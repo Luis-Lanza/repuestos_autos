@@ -115,7 +115,7 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
             }
             transaction
                 .execute(
-                    "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, quantity_delta) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (?1, ?2, ?3, 'sale', ?4)",
                     params![line.product_id(), sale_id, line_id, -line.quantity().value()],
                 )
                 .map_err(|_| ConfirmSaleError::Persistence)?;

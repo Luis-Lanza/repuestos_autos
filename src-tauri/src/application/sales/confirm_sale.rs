@@ -78,7 +78,7 @@ pub fn confirm_sale(
         }
         for (line, line_id) in sale.lines().iter().zip(line_ids) {
             if transaction.execute("UPDATE stock_balances SET quantity = quantity - ?1 WHERE product_id = ?2 AND quantity >= ?1", params![line.quantity().value(), line.product_id()]).map_err(database_error)? != 1 { return Err("insufficient stock".into()); }
-            transaction.execute("INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, quantity_delta) VALUES (?1, ?2, ?3, ?4)", params![line.product_id(), sale_id, line_id, -line.quantity().value()]).map_err(database_error)?;
+            transaction.execute("INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (?1, ?2, ?3, 'sale', ?4)", params![line.product_id(), sale_id, line_id, -line.quantity().value()]).map_err(database_error)?;
         }
         transaction.execute("UPDATE sales SET status = 'confirmed', total_centavos = ?1, confirmed_at = CURRENT_TIMESTAMP WHERE id = ?2", params![sale.total().value(), sale_id]).map_err(database_error)?;
         repository.load_summary(transaction, &request_id)

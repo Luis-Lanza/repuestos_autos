@@ -2,6 +2,12 @@ use repuestos_autos::infrastructure::sqlite::{open_database, production_database
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 const LEGACY_FIXTURE: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
+const VERSION_TWO_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql");
+const VERSION_THREE_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql");
+const VERSION_FOUR_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql");
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "repuestos-autos-{name}-{}-{}",
@@ -17,6 +23,17 @@ fn create_legacy_database(directory: &Path) -> PathBuf {
     let path = directory.join("repuestos-autos.sqlite3");
     let connection = Connection::open(&path).unwrap();
     connection.execute_batch(LEGACY_FIXTURE).unwrap();
+    path
+}
+fn create_version_four_database(directory: &Path) -> PathBuf {
+    let path = create_legacy_database(directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_TWO_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 2).unwrap();
+    connection.execute_batch(VERSION_THREE_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 3).unwrap();
+    connection.execute_batch(VERSION_FOUR_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 4).unwrap();
     path
 }
 fn user_version(path: &Path) -> i64 {
@@ -67,7 +84,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        5
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
@@ -96,7 +113,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        5
     );
     drop(reopened);
     assert_eq!(legacy_facts(&path), before);
@@ -146,14 +163,14 @@ fn rejects_foreign_key_corruption_without_changing_legacy_rows_or_version() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
-fn migrates_a_new_version_zero_database_through_version_three() {
+fn migrates_a_new_version_zero_database_through_version_five() {
     let directory = temporary_directory("migration-version-zero");
     let connection = open_database(&production_database_config(&directory)).unwrap();
     assert_eq!(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        5
     );
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
@@ -163,11 +180,64 @@ fn rejects_unknown_future_schema_versions_without_mutation() {
     let directory = temporary_directory("migration-future-version");
     let path = create_legacy_database(&directory);
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 4).unwrap();
+    connection.pragma_update(None, "user_version", 6).unwrap();
     drop(connection);
     let before = legacy_facts(&path);
     assert!(open_database(&production_database_config(&directory)).is_err());
-    assert_eq!(user_version(&path), 4);
+    assert_eq!(user_version(&path), 6);
     assert_eq!(legacy_facts(&path), before);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() {
+    let directory = temporary_directory("migration-version-four");
+    let path = create_version_four_database(&directory);
+    let before = legacy_facts(&path);
+
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        5
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT movement_type, occurred_at, sale_id, sale_line_id FROM inventory_movements WHERE id = 40",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+            )
+            .unwrap(),
+        ("sale".into(), "2025-01-01T12:00:00Z".into(), 10, 20)
+    );
+    let mut foreign_key_check = connection.prepare("PRAGMA foreign_key_check").unwrap();
+    assert!(foreign_key_check
+        .query([])
+        .unwrap()
+        .next()
+        .unwrap()
+        .is_none());
+    drop(foreign_key_check);
+    assert_eq!(legacy_facts(&path), before);
+    drop(connection);
+    assert_eq!(user_version(&path), 5);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_corrupt_version_four_before_the_forward_migration() {
+    let directory = temporary_directory("migration-version-four-corrupt");
+    let path = create_version_four_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = OFF; DELETE FROM sales WHERE id = 10;")
+        .unwrap();
+    drop(connection);
+
+    assert!(open_database(&production_database_config(&directory)).is_err());
+    assert_eq!(user_version(&path), 4);
     std::fs::remove_dir_all(directory).unwrap();
 }
