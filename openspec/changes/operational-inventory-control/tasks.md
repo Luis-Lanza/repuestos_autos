@@ -42,8 +42,8 @@ PR 0 is planning, not `sdd-apply`.
 
 ## Phase 3: SQLite Authority
 
-- [ ] 3.1 (~150) Adapter tests: atomicity, retries, restart, intervening writes, alerts, constraints, `EXPLAIN`, <100 ms reads.
-- [ ] 3.2 (~210) Create `infrastructure/sqlite/inventory_repository.rs`; update indexes/tests for `BEGIN IMMEDIATE`, checked arithmetic, guarded updates, alerts.
+- [x] 3.1 (~150) Adapter tests: atomicity, retries, restart, intervening writes, alerts, constraints, `EXPLAIN`, <100 ms reads.
+- [x] 3.2 (~210) Create `infrastructure/sqlite/inventory_repository.rs`; update indexes/tests for `BEGIN IMMEDIATE`, checked arithmetic, guarded updates, alerts.
 
 ## Phase 4: IPC and Frontend Workflow
 

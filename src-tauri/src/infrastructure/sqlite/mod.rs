@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, Result};
 
 pub mod catalog_repository;
+pub mod inventory_repository;
 pub mod sale_repository;
+
+pub use inventory_repository::SqliteInventoryRepository;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
