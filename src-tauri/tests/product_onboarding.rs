@@ -2,6 +2,9 @@ use repuestos_autos::application::catalog::{
     create_category, create_product, AttributeValueInput, CategoryFieldInput, CreateCategoryInput,
     CreateProductError, CreateProductInput,
 };
+use repuestos_autos::commands::confirm_sale::{
+    confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
+};
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
 fn create_configured_category(connection: &mut rusqlite::Connection) -> i64 {
@@ -10,8 +13,18 @@ fn create_configured_category(connection: &mut rusqlite::Connection) -> i64 {
         CreateCategoryInput {
             name: "Belts".into(),
             fields: vec![
-                CategoryFieldInput { label: "Length".into(), field_type: "number".into(), required: true, options: vec![] },
-                CategoryFieldInput { label: "Material".into(), field_type: "option".into(), required: false, options: vec!["Rubber".into(), "Polyurethane".into()] },
+                CategoryFieldInput {
+                    label: "Length".into(),
+                    field_type: "number".into(),
+                    required: true,
+                    options: vec![],
+                },
+                CategoryFieldInput {
+                    label: "Material".into(),
+                    field_type: "option".into(),
+                    required: false,
+                    options: vec!["Rubber".into(), "Polyurethane".into()],
+                },
             ],
         },
     )
@@ -194,4 +207,46 @@ fn rolls_back_product_when_opening_movement_cannot_be_written() {
         )
         .unwrap();
     assert_eq!(count, 0);
+}
+
+#[test]
+fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    let product = create_product(
+        &mut connection,
+        valid_product(
+            category_id,
+            &[(definitions[0], "1050"), (definitions[1], "Polyurethane")],
+        ),
+    )
+    .unwrap();
+
+    for query in ["BEL-101", "Accessory", "Belts", "Polyurethane"] {
+        let results = repuestos_autos::catalog::search_active_products(&connection, query).unwrap();
+        assert_eq!(results[0].product_id, product.product_id, "query {query}");
+        assert_eq!(results[0].available_quantity, 6);
+        assert_eq!(results[0].catalog_unit_price_centavos, 4_500);
+    }
+
+    let response = confirm_sale(
+        &mut connection,
+        ConfirmSaleRequest {
+            request_id: "550e8400-e29b-41d4-a716-446655440060".into(),
+            lines: vec![RequestedLine {
+                product_id: product.product_id,
+                quantity: 2,
+            }],
+            payment: PaymentInputRequest {
+                amount_tendered_centavos: None,
+                qr_applied_centavos: Some(9_000),
+            },
+        },
+    )
+    .unwrap();
+    let ConfirmSaleResponse::Success(summary) = response else {
+        panic!("expected confirmed sale");
+    };
+    assert_eq!(summary.total_centavos, 9_000);
 }

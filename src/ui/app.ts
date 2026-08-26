@@ -1,6 +1,8 @@
 import { createElement, useState } from "react";
+
 import { OnboardingScreen } from "./onboarding/onboarding-screen.ts";
 import { SaleScreen } from "./sales/sale-screen.ts";
+
 export const SCREEN = {
   SALES: "sales",
   ONBOARDING: "onboarding",

@@ -3,6 +3,7 @@ use serde::Deserialize;
 use crate::application::catalog;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SearchProductsRequest {
     pub query: String,
 }
