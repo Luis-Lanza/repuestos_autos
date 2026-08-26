@@ -331,17 +331,21 @@ pub fn search_active_products(
     connection: &Connection,
     query: &str,
 ) -> Result<Vec<ProductSearchResult>> {
-    let pattern = format!("%{}%", query.trim().to_lowercase());
+    let Some(query) = normalized_search_query(query) else {
+        return Ok(Vec::new());
+    };
     let mut statement = connection.prepare(
-        "SELECT DISTINCT p.id, p.sku, p.name, c.name, s.quantity, p.minimum_unit_price_centavos
-         FROM products p JOIN categories c ON c.id = p.category_id
+        "SELECT p.id, p.sku, p.name, c.name, s.quantity, p.minimum_unit_price_centavos
+         FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id
+         JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
-         LEFT JOIN product_searchable_values v ON v.product_id = p.id
-         WHERE p.active = 1 AND (lower(p.sku) LIKE ?1 OR lower(p.name) LIKE ?1
-           OR lower(c.name) LIKE ?1 OR lower(v.value) LIKE ?1) ORDER BY p.name",
+         WHERE search.content MATCH ?1 AND p.active = 1
+         ORDER BY p.name
+         LIMIT 20",
     )?;
     let results = statement
-        .query_map([pattern], |row| {
+        .query_map([query], |row| {
             Ok(ProductSearchResult {
                 product_id: row.get(0)?,
                 sku: row.get(1)?,
@@ -353,4 +357,14 @@ pub fn search_active_products(
         })?
         .collect();
     results
+}
+
+fn normalized_search_query(query: &str) -> Option<String> {
+    let terms = query
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"*", term.to_lowercase()))
+        .collect::<Vec<_>>();
+
+    (!terms.is_empty()).then(|| terms.join(" "))
 }

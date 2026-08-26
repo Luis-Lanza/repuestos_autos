@@ -1,9 +1,15 @@
+use repuestos_autos::application::catalog::{
+    AttributeValueInput, CategoryFieldInput, CreateCategoryInput, CreateProductInput,
+};
 use repuestos_autos::commands::catalog::{search_products, SearchProductsRequest};
 use repuestos_autos::commands::confirm_sale::{
     confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
 };
-use repuestos_autos::application::catalog::{AttributeValueInput, CategoryFieldInput, CreateCategoryInput, CreateProductInput};
-use repuestos_autos::commands::onboarding::{create_category as create_category_command, create_product as create_product_command, list_categories as list_categories_command, CreateCategoryResponse, CreateProductResponse, ListCategoriesResponse};
+use repuestos_autos::commands::onboarding::{
+    create_category as create_category_command, create_product as create_product_command,
+    list_categories as list_categories_command, CreateCategoryResponse, CreateProductResponse,
+    ListCategoriesResponse,
+};
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
 fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> ConfirmSaleRequest {
@@ -145,9 +151,9 @@ fn rejects_legacy_authority_and_invalid_request_shapes_before_confirmation() {
 }
 
 #[test]
-fn category_commands_persist_and_return_stable_envelopes() {
+fn onboarding_commands_return_persisted_results_and_stable_errors() {
     let mut connection = open_seeded_catalog().unwrap();
-    let response = create_category_command(
+    let category = create_category_command(
         &mut connection,
         CreateCategoryInput {
             name: "Bearings".into(),
@@ -160,15 +166,45 @@ fn category_commands_persist_and_return_stable_envelopes() {
         },
     )
     .unwrap();
-
-    let CreateCategoryResponse::Success(category) = response else {
+    let CreateCategoryResponse::Success(category) = category else {
         panic!("expected persisted category");
     };
-    assert_eq!(category.name, "Bearings");
+
+    let invalid = create_product_command(
+        &mut connection,
+        CreateProductInput {
+            sku: "BRG-1".into(),
+            name: "Wheel bearing".into(),
+            category_id: category.category_id,
+            catalog_unit_price_centavos: 5_000,
+            opening_quantity: 3,
+            attribute_values: vec![AttributeValueInput {
+                definition_id: category.fields[0].definition_id,
+                value: "not-a-number".into(),
+            }],
+        },
+    )
+    .unwrap();
+    let CreateProductResponse::Error(error) = invalid else {
+        panic!("expected stable validation error");
+    };
+
+    assert_eq!(error.code, "invalid_attribute_value");
 }
 
 #[test]
-fn list_categories_returns_stable_persistence_error() {
+fn rejects_unknown_onboarding_and_search_payload_fields() {
+    let category = r#"{"name":"Bearings","fields":[],"unexpected":true}"#;
+    let product = r#"{"sku":"BRG-1","name":"Wheel bearing","category_id":1,"catalog_unit_price_centavos":5000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;
+    let search = r#"{"query":"bearing","unexpected":true}"#;
+
+    assert!(serde_json::from_str::<CreateCategoryInput>(category).is_err());
+    assert!(serde_json::from_str::<CreateProductInput>(product).is_err());
+    assert!(serde_json::from_str::<SearchProductsRequest>(search).is_err());
+}
+
+#[test]
+fn lists_categories_with_the_same_stable_envelope_as_create_commands() {
     let connection = rusqlite::Connection::open_in_memory().unwrap();
 
     let response = list_categories_command(&connection).unwrap();
@@ -180,23 +216,67 @@ fn list_categories_returns_stable_persistence_error() {
 }
 
 #[test]
-fn product_command_returns_stable_validation_error() {
+fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {
     let mut connection = open_seeded_catalog().unwrap();
     let CreateCategoryResponse::Success(category) = create_category_command(
         &mut connection,
-        CreateCategoryInput { name: "Bearings".into(), fields: vec![CategoryFieldInput { label: "Diameter".into(), field_type: "number".into(), required: true, options: vec![] }] },
-    ).unwrap() else { panic!("expected category"); };
-    let response = create_product_command(&mut connection, CreateProductInput {
-        sku: "BRG-1".into(), name: "Bearing".into(), category_id: category.category_id,
-        catalog_unit_price_centavos: 5_000, opening_quantity: 3,
-        attribute_values: vec![AttributeValueInput { definition_id: category.fields[0].definition_id, value: "invalid".into() }],
-    }).unwrap();
-    let CreateProductResponse::Error(error) = response else { panic!("expected error"); };
-    assert_eq!(error.code, "invalid_attribute_value");
-}
+        CreateCategoryInput {
+            name: "Bearings".into(),
+            fields: vec![CategoryFieldInput {
+                label: "Inner diameter".into(),
+                field_type: "number".into(),
+                required: true,
+                options: vec![],
+            }],
+        },
+    )
+    .unwrap() else {
+        panic!("expected a persisted category");
+    };
+    let CreateProductResponse::Success(product) = create_product_command(
+        &mut connection,
+        CreateProductInput {
+            sku: "BRG-50".into(),
+            name: "Wheel bearing".into(),
+            category_id: category.category_id,
+            catalog_unit_price_centavos: 5_000,
+            opening_quantity: 3,
+            attribute_values: vec![AttributeValueInput {
+                definition_id: category.fields[0].definition_id,
+                value: "50".into(),
+            }],
+        },
+    )
+    .unwrap() else {
+        panic!("expected a persisted product");
+    };
 
-#[test]
-fn rejects_unknown_product_payload_fields() {
-    let payload = r#"{"sku":"BRG-1","name":"Bearing","category_id":1,"catalog_unit_price_centavos":5000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;
-    assert!(serde_json::from_str::<CreateProductInput>(payload).is_err());
+    let results = search_products(
+        &connection,
+        SearchProductsRequest {
+            query: "BRG-50".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(results[0].catalog_unit_price_centavos, 5_000);
+
+    let ConfirmSaleResponse::Success(summary) = confirm_sale(
+        &mut connection,
+        ConfirmSaleRequest {
+            request_id: "550e8400-e29b-41d4-a716-446655440045".into(),
+            lines: vec![RequestedLine {
+                product_id: product.product_id,
+                quantity: 1,
+            }],
+            payment: PaymentInputRequest {
+                amount_tendered_centavos: None,
+                qr_applied_centavos: Some(5_000),
+            },
+        },
+    )
+    .unwrap() else {
+        panic!("expected the onboarded sale request to persist");
+    };
+    assert_eq!(summary.lines[0].unit_price_centavos, 5_000);
+    assert_eq!(product.catalog_unit_price_centavos, 5_000);
 }

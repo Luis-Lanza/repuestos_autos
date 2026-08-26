@@ -8,11 +8,11 @@ Provide the first offline point-of-sale flow for the store operator: discover ac
 
 ### Requirement: Active Product Search and Cart
 
-The system MUST provide one global search entry point over the seeded active catalog. Search results MUST expose enough information to select a product and assess its availability, including name, SKU, category, available whole-unit stock, and current catalog price. The operator MUST be able to add an available product to a draft cart and remove it without changing persisted stock.
+The system MUST provide one global search entry point over the active catalog, including seeded and operator-created products. Search results MUST expose enough information to select a product and assess its availability, including name, SKU, category, available whole-unit stock, and current catalog price. The operator MUST be able to add an available product to a draft cart and remove it without changing persisted stock. Checkout MUST retain the fixed-price and historical-price snapshot rules.
 
 #### Scenario: Search and add an active product
 
-- GIVEN the seeded catalog contains an active product
+- GIVEN the active catalog contains a seeded or operator-created product
 - WHEN the operator searches using a matching product name, SKU, category, or searchable category field
 - THEN the system shows the matching active product with its current catalog price
 - AND the operator can add that product to the draft cart
@@ -30,6 +30,13 @@ The system MUST provide one global search entry point over the seeded active cat
 - WHEN the operator removes the line or discards the draft sale
 - THEN the draft no longer contains that line
 - AND persisted stock, sales, payments, and inventory movements remain unchanged
+
+#### Scenario: Sell an onboarded product under unchanged rules
+
+- GIVEN an operator-created active product is in a valid cart
+- WHEN the operator confirms the sale
+- THEN checkout resolves the authoritative catalog price
+- AND the confirmed sale retains that price as its historical snapshot
 
 ### Requirement: Whole-Unit Quantities and Fixed Catalog Price
 
@@ -162,14 +169,14 @@ The system MUST return a sale summary reconstructed from persisted records after
 
 ### Requirement: Confirm-Sale Scope Exclusions
 
-The confirm-sale slice MUST remain limited to seeded catalog discovery, draft cart creation, sale confirmation, cash/QR payment recording, and atomic sales-and-stock persistence. It MUST NOT require product-management workflows, stock entry or manual adjustment, returns, cancellation, reports, backup or restore, licensing enforcement, user accounts or roles, customer accounts, invoicing, payment gateways, barcode hardware, cloud services, synchronization, multi-store support, or fractional/measured quantities.
+The confirm-sale slice MUST remain limited to active-catalog discovery, draft cart creation, sale confirmation, cash/QR payment recording, and atomic sales-and-stock persistence. Product-management workflows remain separate from confirm-sale. It MUST NOT require product-management workflows, stock entry or manual adjustment, returns, cancellation, reports, backup or restore, licensing enforcement, user accounts or roles, customer accounts, invoicing, payment gateways, barcode hardware, cloud services, synchronization, multi-store support, or fractional/measured quantities.
 
 #### Scenario: Product-management workflows are unavailable in this slice
 
 - GIVEN the operator is using the confirm-sale flow
 - WHEN the operator needs to create, edit, archive, or import a product or category
 - THEN the confirm-sale slice provides no such operation
-- AND seeded data remains the only catalog source for this slice
+- AND onboarding remains the separate catalog-management capability
 
 #### Scenario: External and future workflows do not affect confirmation
 

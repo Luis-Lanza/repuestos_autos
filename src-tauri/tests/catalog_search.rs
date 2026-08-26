@@ -1,4 +1,5 @@
 use repuestos_autos::catalog::open_seeded_catalog;
+use rusqlite::params;
 
 #[test]
 fn finds_active_seeded_products_by_every_searchable_catalog_field() {
@@ -31,4 +32,42 @@ fn excludes_inactive_products() {
     let results = repuestos_autos::catalog::search_active_products(&connection, "archivado")
         .expect("catalog search succeeds");
     assert!(results.is_empty());
+}
+
+#[test]
+fn searches_the_canonical_fts_document_with_prefixes_and_a_bounded_result_set() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection
+        .execute_batch("DROP TABLE product_searchable_values;")
+        .expect("legacy search table can be absent after FTS backfill");
+
+    for index in 0..21 {
+        connection
+            .execute(
+                "INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) VALUES (1, ?1, ?2, 1, 2500)",
+                [format!("BRG-{index:02}"), format!("Bearing {index:02}")],
+            )
+            .expect("product persists");
+        let product_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO stock_balances (product_id, quantity) VALUES (?1, 1)",
+                [product_id],
+            )
+            .expect("stock persists");
+        connection
+            .execute(
+                "INSERT INTO catalog_product_search (rowid, product_id, content) VALUES (?1, ?1, ?2)",
+                params![product_id, format!("brg {index:02} bearing")],
+            )
+            .expect("canonical search document persists");
+    }
+
+    let results = repuestos_autos::catalog::search_active_products(&connection, "bea")
+        .expect("FTS search succeeds without legacy searchable values");
+
+    assert_eq!(results.len(), 20);
+    assert!(results
+        .iter()
+        .all(|product| product.name.starts_with("Bearing")));
 }
