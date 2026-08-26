@@ -1,3 +1,4 @@
+pub mod catalog;
 mod money;
 mod quantity;
 mod request_id;
