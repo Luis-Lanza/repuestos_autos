@@ -8,6 +8,8 @@ const VERSION_THREE_MIGRATION: &str =
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql");
 const VERSION_FOUR_MIGRATION: &str =
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql");
+const VERSION_FIVE_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0005_catalog_onboarding_hardening.sql");
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "repuestos-autos-{name}-{}-{}",
@@ -34,6 +36,13 @@ fn create_version_four_database(directory: &Path) -> PathBuf {
     connection.pragma_update(None, "user_version", 3).unwrap();
     connection.execute_batch(VERSION_FOUR_MIGRATION).unwrap();
     connection.pragma_update(None, "user_version", 4).unwrap();
+    path
+}
+fn create_version_five_database(directory: &Path) -> PathBuf {
+    let path = create_version_four_database(directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_FIVE_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 5).unwrap();
     path
 }
 fn user_version(path: &Path) -> i64 {
@@ -84,7 +93,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
@@ -113,7 +122,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     drop(reopened);
     assert_eq!(legacy_facts(&path), before);
@@ -163,14 +172,14 @@ fn rejects_foreign_key_corruption_without_changing_legacy_rows_or_version() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
-fn migrates_a_new_version_zero_database_through_version_five() {
+fn migrates_a_new_version_zero_database_through_version_six() {
     let directory = temporary_directory("migration-version-zero");
     let connection = open_database(&production_database_config(&directory)).unwrap();
     assert_eq!(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
@@ -180,11 +189,11 @@ fn rejects_unknown_future_schema_versions_without_mutation() {
     let directory = temporary_directory("migration-future-version");
     let path = create_legacy_database(&directory);
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 6).unwrap();
+    connection.pragma_update(None, "user_version", 7).unwrap();
     drop(connection);
     let before = legacy_facts(&path);
     assert!(open_database(&production_database_config(&directory)).is_err());
-    assert_eq!(user_version(&path), 6);
+    assert_eq!(user_version(&path), 7);
     assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -201,7 +210,7 @@ fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() 
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     assert_eq!(
         connection
@@ -223,7 +232,7 @@ fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() 
     drop(foreign_key_check);
     assert_eq!(legacy_facts(&path), before);
     drop(connection);
-    assert_eq!(user_version(&path), 5);
+    assert_eq!(user_version(&path), 6);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -239,5 +248,67 @@ fn rejects_corrupt_version_four_before_the_forward_migration() {
 
     assert!(open_database(&production_database_config(&directory)).is_err());
     assert_eq!(user_version(&path), 4);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn migrates_valid_v5_history_verbatim_and_reopens_at_version_six() {
+    let directory = temporary_directory("migration-version-five");
+    let path = create_version_five_database(&directory);
+    let before = legacy_facts(&path);
+    let config = production_database_config(&directory);
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 6);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT movement_type, occurred_at FROM inventory_movements WHERE id = 40",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap(),
+        ("sale".into(), "2025-01-01T12:00:00Z".into())
+    );
+    drop(connection);
+    assert_eq!(legacy_facts(&path), before);
+    assert_eq!(user_version(&path), 6);
+    drop(open_database(&config).unwrap());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn version_six_enforces_each_movement_type_composite_links_and_immutability() {
+    let directory = temporary_directory("migration-v6-invariants");
+    let path = create_version_five_database(&directory);
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+    connection.execute_batch("INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta) VALUES (41, 1, 'opening_stock', 1); INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (42, 1, 'stock_entry', 1, 'entry', 9); INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason) VALUES (43, 1, 10, 20, 'sale', -1, NULL), (44, 1, 10, 20, 'return', 1, NULL), (46, 1, 10, 20, 'cancellation', 1, 'reversed'); INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, reason, request_id, counted_quantity, resulting_quantity) VALUES (45, 1, 'adjustment', -1, 'counted', 'adjustment', 7, 7); INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (2, 1, 'OTHER', 'Other', 1, 1);").unwrap();
+    for invalid in ["INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (1, 'stock_entry', -1, 'bad-sign', 1)", "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta) VALUES (1, 'sale', -1)", "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, request_id, counted_quantity, resulting_quantity) VALUES (1, 'adjustment', 1, ' ', 'bad-reason', 1, 1)", "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (1, 10, 20, 'cancellation', 1)", "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (2, 10, 20, 'return', 1)"] {
+        assert!(connection.execute(invalid, []).is_err());
+    }
+    assert!(connection
+        .execute(
+            "UPDATE inventory_movements SET quantity_delta = -2 WHERE id = 40",
+            [],
+        )
+        .is_err());
+    assert!(connection
+        .execute("DELETE FROM inventory_movements WHERE id = 40", [])
+        .is_err());
+    drop(connection);
+    assert_eq!(user_version(&path), 6);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_invalid_v5_preflight_without_schema_advancement_or_rewrite() {
+    let directory = temporary_directory("migration-v5-preflight");
+    let path = create_version_five_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("DROP TRIGGER inventory_movements_immutable_update; DROP TRIGGER inventory_movements_immutable_delete; PRAGMA ignore_check_constraints = ON; UPDATE inventory_movements SET sale_id = NULL WHERE id = 40;").unwrap();
+    drop(connection);
+    let before = legacy_facts(&path);
+    assert!(open_database(&production_database_config(&directory)).is_err());
+    assert_eq!(user_version(&path), 5);
+    assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }

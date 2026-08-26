@@ -10,9 +10,8 @@ context: |
   Domain constraints: Money uses integer centavos of Bs. Inventory uses
   positive whole units. Stock mutations require immutable movements.
   SQLite transactions and constraints protect data integrity.
-  Current state: Product and architecture documentation exists, but
-  application source, package manifests, Rust manifests, migrations,
-  and executable test configuration have not been scaffolded.
+  Current state: React/TypeScript and Rust/Tauri application source, SQLite
+  migrations, and executable frontend/Rust test runners are present.
   Product docs: docs/PRD.md, docs/ARCHITECTURE.md,
   docs/TECHNICAL_RECOMMENDATION.md, and
   docs/DEPLOYMENT_AND_LICENSING.md.
@@ -20,41 +19,37 @@ context: |
   in docs/agents/issue-tracker.md.
   Domain docs: Single-context conventions are configured in
   docs/agents/domain.md. No CONTEXT.md or ADR is currently required.
-  First slice: confirm-sale spans React -> Tauri -> Rust -> SQLite. It
-  uses seeded products and stock, prefills the minimum sale price,
-  supports cash, QR, and mixed payments, confirms atomically and
-  idempotently with a retained UUID request ID, and returns a persisted
-  sale summary.
-  Slice exclusions: Licensing enforcement and product-management
-  workflows are outside confirm-sale.
+  Current change: operational-inventory-control begins with a forward-only
+  v5-to-v6 inventory movement migration. Checkout pricing remains excluded.
 
 sdd:
   artifact_store: hybrid
   execution_mode: auto
   delivery_strategy: ask-on-risk
-  review_budget_changed_lines: 350
+  review_budget_changed_lines: 400
   strict_tdd: false
+  init_metadata:
+    refreshed_on: "2026-08-26"
+    current_stack: React/TypeScript, Tauri 2, Rust, rusqlite bundled SQLite
 
 testing:
-  capability: not-configured
+  capability: configured
   strict_tdd_reason: >-
-    No package.json, Cargo.toml, application source, or executable test
-    runner configuration exists yet.
+    Standard mode remains configured; executable frontend and Rust runners
+    exist, but strict TDD is not explicitly enabled project-wide.
   runners:
     frontend:
-      detected: false
-      command: null
+      detected: true
+      command: npm test
     rust:
-      detected: false
-      command: null
+      detected: true
+      command: cargo test --manifest-path src-tauri/Cargo.toml
     end_to_end:
-      detected: false
-      command: null
+      detected: true
+      command: npm run tauri:dev
   policy: >-
-    Standard mode applies until executable runners are added and
-    detected. Planning phases must name intended verification without
-    claiming runnable tests. Apply and verify must use only commands
-    present in the repository at execution time.
+    Standard mode applies unless strict_tdd is explicitly enabled. Apply and
+    verify must run only repository commands present at execution time.
 
 rules:
   init:
