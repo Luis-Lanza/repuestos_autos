@@ -2,8 +2,14 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::catalog::{
-    validate_category, CatalogValidationError, CategoryFieldDraft, FieldType,
+    validate_category, validate_product, AttributeValueDraft, CatalogValidationError,
+    CategoryFieldDraft, FieldType,
 };
+use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
+
+pub mod repository;
+
+use repository::CreateProductRepository;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct ProductSearchResult {
@@ -53,6 +59,125 @@ pub enum CreateCategoryError {
     InvalidFieldDefinition,
     DuplicateCategory,
     Persistence,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttributeValueInput {
+    pub definition_id: i64,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateProductInput {
+    pub sku: String,
+    pub name: String,
+    pub category_id: i64,
+    pub catalog_unit_price_centavos: i64,
+    pub opening_quantity: i64,
+    pub attribute_values: Vec<AttributeValueInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CreatedProduct {
+    pub product_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_id: i64,
+    pub category_name: String,
+    pub catalog_unit_price_centavos: i64,
+    pub available_quantity: i64,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CreateProductError {
+    InvalidProduct,
+    MissingCategory,
+    DuplicateSku,
+    InvalidCatalogPrice,
+    InvalidOpeningQuantity,
+    MissingRequiredField,
+    InvalidAttributeValue,
+    Persistence,
+}
+
+pub struct CreateProductUseCase<'connection, Repository> {
+    connection: &'connection mut Connection,
+    repository: Repository,
+}
+
+impl<'connection, Repository> CreateProductUseCase<'connection, Repository>
+where
+    Repository: CreateProductRepository,
+{
+    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+        Self {
+            connection,
+            repository,
+        }
+    }
+
+    pub fn execute(
+        self,
+        input: CreateProductInput,
+    ) -> std::result::Result<CreatedProduct, CreateProductError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|_| CreateProductError::Persistence)?;
+        let category_name = self
+            .repository
+            .category_name(&transaction, input.category_id)
+            .map_err(|_| CreateProductError::Persistence)?
+            .ok_or(CreateProductError::MissingCategory)?;
+        let definitions = self
+            .repository
+            .attribute_definitions(&transaction, input.category_id)
+            .map_err(|_| CreateProductError::Persistence)?;
+        let values = input
+            .attribute_values
+            .iter()
+            .map(|value| AttributeValueDraft {
+                definition_id: value.definition_id,
+                value: value.value.clone(),
+            })
+            .collect::<Vec<_>>();
+        let validated = validate_product(
+            &input.sku,
+            &input.name,
+            input.catalog_unit_price_centavos,
+            input.opening_quantity,
+            &definitions,
+            &values,
+        )
+        .map_err(map_product_validation)?;
+        if self
+            .repository
+            .sku_exists(&transaction, input.sku.trim())
+            .map_err(|_| CreateProductError::Persistence)?
+        {
+            return Err(CreateProductError::DuplicateSku);
+        }
+        let product_id = self
+            .repository
+            .persist_product(&transaction, &input, &validated, &category_name)
+            .map_err(|_| CreateProductError::Persistence)?;
+        transaction
+            .commit()
+            .map_err(|_| CreateProductError::Persistence)?;
+        Ok(CreatedProduct {
+            product_id,
+            sku: input.sku.trim().into(),
+            name: input.name.trim().into(),
+            category_id: input.category_id,
+            category_name,
+            catalog_unit_price_centavos: input.catalog_unit_price_centavos,
+            available_quantity: input.opening_quantity,
+            active: true,
+        })
+    }
 }
 
 pub fn list_categories(connection: &Connection) -> Result<Vec<Category>> {
@@ -141,6 +266,13 @@ pub fn create_category(
         .ok_or(CreateCategoryError::Persistence)
 }
 
+pub fn create_product(
+    connection: &mut Connection,
+    input: CreateProductInput,
+) -> std::result::Result<CreatedProduct, CreateProductError> {
+    CreateProductUseCase::new(connection, SqliteCatalogRepository).execute(input)
+}
+
 fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec<CategoryField>> {
     let mut statement = connection.prepare(
         "SELECT id, label, field_type, required FROM attribute_definitions WHERE category_id = ?1 ORDER BY id",
@@ -179,6 +311,19 @@ fn map_category_validation(error: CatalogValidationError) -> CreateCategoryError
     match error {
         CatalogValidationError::InvalidCategory => CreateCategoryError::InvalidCategory,
         _ => CreateCategoryError::InvalidFieldDefinition,
+    }
+}
+
+fn map_product_validation(error: CatalogValidationError) -> CreateProductError {
+    match error {
+        CatalogValidationError::InvalidProduct => CreateProductError::InvalidProduct,
+        CatalogValidationError::InvalidCatalogPrice => CreateProductError::InvalidCatalogPrice,
+        CatalogValidationError::InvalidOpeningQuantity => {
+            CreateProductError::InvalidOpeningQuantity
+        }
+        CatalogValidationError::MissingRequiredField => CreateProductError::MissingRequiredField,
+        CatalogValidationError::InvalidAttributeValue => CreateProductError::InvalidAttributeValue,
+        _ => CreateProductError::Persistence,
     }
 }
 

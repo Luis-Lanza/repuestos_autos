@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, Result};
 
+pub mod catalog_repository;
 pub mod sale_repository;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
