@@ -1,5 +1,6 @@
 use repuestos_autos::catalog::open_seeded_catalog;
 use rusqlite::params;
+use std::time::{Duration, Instant};
 
 #[test]
 fn finds_active_seeded_products_by_every_searchable_catalog_field() {
@@ -70,4 +71,59 @@ fn searches_the_canonical_fts_document_with_prefixes_and_a_bounded_result_set() 
     assert!(results
         .iter()
         .all(|product| product.name.starts_with("Bearing")));
+}
+
+#[test]
+fn searches_twenty_thousand_catalog_products_within_the_release_target() {
+    let mut connection = open_seeded_catalog().expect("a disposable catalog database");
+    let transaction = connection
+        .transaction()
+        .expect("benchmark catalog transaction starts");
+    let mut products = transaction
+        .prepare("INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) VALUES (1, ?1, ?2, 1, 2500)")
+        .expect("product statement prepares");
+    let mut balances = transaction
+        .prepare("INSERT INTO stock_balances (product_id, quantity) VALUES (?1, 1)")
+        .expect("balance statement prepares");
+    let mut search_documents = transaction
+        .prepare(
+            "INSERT INTO catalog_product_search (rowid, product_id, content) VALUES (?1, ?1, ?2)",
+        )
+        .expect("search document statement prepares");
+
+    for index in 0..20_000 {
+        let sku = format!("BNCH-{index:05}");
+        let name = format!("Benchmark product {index:05}");
+        products
+            .execute(params![sku, name])
+            .expect("benchmark product persists");
+        let product_id = transaction.last_insert_rowid();
+        balances
+            .execute([product_id])
+            .expect("benchmark balance persists");
+        search_documents
+            .execute(params![
+                product_id,
+                format!("bnch benchmark product {index:05}")
+            ])
+            .expect("benchmark search document persists");
+    }
+    drop((products, balances, search_documents));
+    transaction.commit().expect("benchmark catalog commits");
+
+    let started = Instant::now();
+    let results = repuestos_autos::catalog::search_active_products(&connection, "bench")
+        .expect("benchmark prefix search succeeds");
+    let elapsed = started.elapsed();
+
+    eprintln!("20,000-product prefix search: {elapsed:?}");
+
+    assert_eq!(results.len(), 20);
+    assert!(results
+        .iter()
+        .all(|product| product.name.starts_with("Benchmark product")));
+    assert!(
+        elapsed <= Duration::from_secs(1),
+        "20,000-product prefix search took {elapsed:?}"
+    );
 }
