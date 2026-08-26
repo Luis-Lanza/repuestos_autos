@@ -44,7 +44,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
     let mut version =
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
-    if version > 3 {
+    if version > 5 {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
@@ -71,6 +71,26 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
             "migrations/0003_sale_line_product_snapshots.sql"
         ))?;
         transaction.pragma_update(None, "user_version", 3)?;
+        transaction.commit()?;
+        version = 3;
+    }
+
+    if version == 3 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!("migrations/0004_product_onboarding.sql"))?;
+        transaction.pragma_update(None, "user_version", 4)?;
+        transaction.commit()?;
+        version = 4;
+    }
+
+    if version == 4 {
+        let transaction = connection.transaction()?;
+        validate_version_four_schema(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0005_catalog_onboarding_hardening.sql"
+        ))?;
+        validate_foreign_keys(&transaction)?;
+        transaction.pragma_update(None, "user_version", 5)?;
         transaction.commit()?;
     }
 
@@ -154,10 +174,39 @@ fn validate_version_one_schema(connection: &Connection) -> Result<()> {
         }
     }
 
-    let mut foreign_key_check = connection.prepare("PRAGMA foreign_key_check")?;
-    if foreign_key_check.query([])?.next()?.is_some() {
+    validate_foreign_keys(connection)
+}
+
+fn validate_version_four_schema(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(inventory_movements)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    if [
+        "id",
+        "product_id",
+        "sale_id",
+        "sale_line_id",
+        "movement_type",
+        "quantity_delta",
+        "occurred_at",
+    ]
+    .iter()
+    .any(|column| !columns.iter().any(|actual| actual == column))
+    {
         return Err(rusqlite::Error::InvalidQuery);
     }
+    validate_foreign_keys(connection)
+}
 
+fn validate_foreign_keys(connection: &Connection) -> Result<()> {
+    if connection
+        .prepare("PRAGMA foreign_key_check")?
+        .query([])?
+        .next()?
+        .is_some()
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     Ok(())
 }
