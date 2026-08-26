@@ -14,6 +14,9 @@ fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Buil
     builder.invoke_handler(tauri::generate_handler![
         search_products_command,
         confirm_sale_command,
+        confirm_stock_entry_command,
+        confirm_physical_count_command,
+        list_inventory_alerts_command,
         list_categories_command,
         create_category_command,
         create_product_command
@@ -53,6 +56,35 @@ fn confirm_sale_command(
 ) -> Result<commands::confirm_sale::ConfirmSaleResponse, String> {
     let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
     commands::confirm_sale::confirm_sale(&mut connection, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn confirm_stock_entry_command(
+    state: tauri::State<AppState>,
+    request: commands::inventory::StockEntryRequest,
+) -> Result<commands::inventory::InventoryCommandResponse, String> {
+    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
+    commands::inventory::confirm_stock_entry_command(&mut connection, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn confirm_physical_count_command(
+    state: tauri::State<AppState>,
+    request: commands::inventory::PhysicalCountRequest,
+) -> Result<commands::inventory::InventoryCommandResponse, String> {
+    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
+    commands::inventory::confirm_physical_count_command(&mut connection, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_inventory_alerts_command(
+    state: tauri::State<AppState>,
+) -> Result<commands::inventory::InventoryCommandResponse, String> {
+    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
+    commands::inventory::list_inventory_alerts_command(&mut connection)
 }
 
 #[cfg(feature = "desktop")]
