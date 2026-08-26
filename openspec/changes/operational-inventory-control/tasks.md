@@ -37,8 +37,8 @@ PR 0 is planning, not `sdd-apply`.
 
 ## Phase 2: Inventory Domain and Application
 
-- [ ] 2.1 (~110) Tests: quantities, reasons, classification, overflow, no-op, stale projections, results.
-- [ ] 2.2 (~160) Create `domain/inventory.rs` and `application/inventory/{mod.rs,repository.rs}` confirmation/alert use cases.
+- [x] 2.1 (~110) Tests: quantities, reasons, classification, overflow, no-op, stale projections, results.
+- [x] 2.2 (~160) Create `domain/inventory.rs` and `application/inventory/{mod.rs,repository.rs}` confirmation/alert use cases.
 
 ## Phase 3: SQLite Authority
 
