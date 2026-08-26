@@ -1,6 +1,6 @@
 use repuestos_autos::application::catalog::{
     create_category, create_product, AttributeValueInput, CategoryFieldInput, CreateCategoryInput,
-    CreateProductInput,
+    CreateProductError, CreateProductInput,
 };
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
@@ -90,4 +90,108 @@ fn creates_product_attributes_balance_and_opening_movement_atomically() {
             [result.product_id],
         )
         .is_err());
+}
+
+#[test]
+fn missing_required_field_persists_nothing() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+
+    let error = create_product(&mut connection, valid_product(category_id, &[])).unwrap_err();
+
+    assert_eq!(error, CreateProductError::MissingRequiredField);
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM products WHERE sku = 'BEL-101'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_errors() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    let valid = valid_product(category_id, &[(definitions[0], "1050")]);
+    create_product(&mut connection, valid).unwrap();
+
+    let cases = [
+        (
+            valid_product(category_id, &[(definitions[0], "1050")]),
+            CreateProductError::DuplicateSku,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-102".into(),
+                catalog_unit_price_centavos: 0,
+                ..valid_product(category_id, &[(definitions[0], "1050")])
+            },
+            CreateProductError::InvalidCatalogPrice,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-103".into(),
+                opening_quantity: 0,
+                ..valid_product(category_id, &[(definitions[0], "1050")])
+            },
+            CreateProductError::InvalidOpeningQuantity,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-104".into(),
+                ..valid_product(category_id, &[(definitions[0], "wide")])
+            },
+            CreateProductError::InvalidAttributeValue,
+        ),
+        (
+            CreateProductInput {
+                sku: "BEL-105".into(),
+                ..valid_product(
+                    category_id,
+                    &[(definitions[0], "1050"), (definitions[1], "Leather")],
+                )
+            },
+            CreateProductError::InvalidAttributeValue,
+        ),
+        (
+            valid_product(category_id, &[(999, "unknown")]),
+            CreateProductError::InvalidAttributeValue,
+        ),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            create_product(&mut connection, input).unwrap_err(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn rolls_back_product_when_opening_movement_cannot_be_written() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category_id);
+    connection
+        .execute_batch("CREATE TRIGGER reject_opening BEFORE INSERT ON inventory_movements WHEN new.movement_type = 'opening_stock' BEGIN SELECT RAISE(ABORT, 'test failure'); END;")
+        .unwrap();
+
+    let error = create_product(
+        &mut connection,
+        valid_product(category_id, &[(definitions[0], "1050")]),
+    )
+    .unwrap_err();
+
+    assert_eq!(error, CreateProductError::Persistence);
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM products WHERE sku = 'BEL-101'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
 }

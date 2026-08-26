@@ -1,11 +1,21 @@
 use serde::Serialize;
 
-use crate::application::catalog::{self, Category, CreateCategoryError, CreateCategoryInput};
+use crate::application::catalog::{
+    self, Category, CreateCategoryError, CreateCategoryInput, CreateProductError,
+    CreateProductInput, CreatedProduct,
+};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CreateCategoryResponse {
     Success(Category),
+    Error(OnboardingError),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CreateProductResponse {
+    Success(CreatedProduct),
     Error(OnboardingError),
 }
 
@@ -44,6 +54,16 @@ pub fn create_category(
     })
 }
 
+pub fn create_product(
+    connection: &mut rusqlite::Connection,
+    request: CreateProductInput,
+) -> Result<CreateProductResponse, String> {
+    Ok(match catalog::create_product(connection, request) {
+        Ok(product) => CreateProductResponse::Success(product),
+        Err(error) => CreateProductResponse::Error(map_product_error(error)),
+    })
+}
+
 fn map_category_error(error: CreateCategoryError) -> OnboardingError {
     let (code, message) = match error {
         CreateCategoryError::InvalidCategory => ("invalid_category", "Category name is required."),
@@ -58,6 +78,38 @@ fn map_category_error(error: CreateCategoryError) -> OnboardingError {
             "persistence_failure",
             "The category could not be persisted.",
         ),
+    };
+    OnboardingError { code, message }
+}
+
+fn map_product_error(error: CreateProductError) -> OnboardingError {
+    let (code, message) = match error {
+        CreateProductError::InvalidProduct => {
+            ("invalid_product", "SKU and product name are required.")
+        }
+        CreateProductError::MissingCategory => {
+            ("missing_category", "The selected category was not found.")
+        }
+        CreateProductError::DuplicateSku => ("duplicate_sku", "SKU already exists."),
+        CreateProductError::InvalidCatalogPrice => (
+            "invalid_catalog_price",
+            "Catalog price must be a positive whole number of centavos.",
+        ),
+        CreateProductError::InvalidOpeningQuantity => (
+            "invalid_opening_quantity",
+            "Opening stock must be a positive whole number.",
+        ),
+        CreateProductError::MissingRequiredField => (
+            "missing_required_field",
+            "A required category field is missing.",
+        ),
+        CreateProductError::InvalidAttributeValue => (
+            "invalid_attribute_value",
+            "A category field value is invalid.",
+        ),
+        CreateProductError::Persistence => {
+            ("persistence_failure", "The product could not be persisted.")
+        }
     };
     OnboardingError { code, message }
 }
