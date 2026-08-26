@@ -2,6 +2,8 @@ use repuestos_autos::commands::catalog::{search_products, SearchProductsRequest}
 use repuestos_autos::commands::confirm_sale::{
     confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
 };
+use repuestos_autos::application::catalog::{CategoryFieldInput, CreateCategoryInput};
+use repuestos_autos::commands::onboarding::{create_category as create_category_command, list_categories as list_categories_command, CreateCategoryResponse, ListCategoriesResponse};
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
 fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> ConfirmSaleRequest {
@@ -140,4 +142,39 @@ fn rejects_legacy_authority_and_invalid_request_shapes_before_confirmation() {
         panic!("expected invalid request response");
     };
     assert_eq!(error.code, "invalid_request");
+}
+
+#[test]
+fn category_commands_persist_and_return_stable_envelopes() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let response = create_category_command(
+        &mut connection,
+        CreateCategoryInput {
+            name: "Bearings".into(),
+            fields: vec![CategoryFieldInput {
+                label: "Inner diameter".into(),
+                field_type: "number".into(),
+                required: true,
+                options: vec![],
+            }],
+        },
+    )
+    .unwrap();
+
+    let CreateCategoryResponse::Success(category) = response else {
+        panic!("expected persisted category");
+    };
+    assert_eq!(category.name, "Bearings");
+}
+
+#[test]
+fn list_categories_returns_stable_persistence_error() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+
+    let response = list_categories_command(&connection).unwrap();
+
+    let ListCategoriesResponse::Error(error) = response else {
+        panic!("expected a stable persistence error envelope");
+    };
+    assert_eq!(error.code, "persistence_failure");
 }
