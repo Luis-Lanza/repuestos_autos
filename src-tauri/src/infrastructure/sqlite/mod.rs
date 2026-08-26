@@ -45,7 +45,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
     let mut version =
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
-    if version > 5 {
+    if version > 6 {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
@@ -92,6 +92,18 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         ))?;
         validate_foreign_keys(&transaction)?;
         transaction.pragma_update(None, "user_version", 5)?;
+        transaction.commit()?;
+        version = 5;
+    }
+
+    if version == 5 {
+        let transaction = connection.transaction()?;
+        validate_version_five_schema(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0006_operational_inventory_control.sql"
+        ))?;
+        validate_foreign_keys(&transaction)?;
+        transaction.pragma_update(None, "user_version", 6)?;
         transaction.commit()?;
     }
 
@@ -198,6 +210,28 @@ fn validate_version_four_schema(connection: &Connection) -> Result<()> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     validate_foreign_keys(connection)
+}
+
+fn validate_version_five_schema(connection: &Connection) -> Result<()> {
+    validate_version_four_schema(connection)?;
+    let mut statement = connection.prepare("PRAGMA table_info(inventory_movements)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    if ["reason", "operator_id", "source_reference"]
+        .iter()
+        .any(|column| !columns.iter().any(|actual| actual == column))
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM inventory_movements m LEFT JOIN sale_lines l ON l.id = m.sale_line_id AND l.sale_id = m.sale_id AND l.product_id = m.product_id WHERE NOT ((m.movement_type = 'opening_stock' AND m.quantity_delta > 0 AND m.sale_id IS NULL AND m.sale_line_id IS NULL) OR (m.movement_type = 'sale' AND m.quantity_delta < 0 AND m.sale_id IS NOT NULL AND m.sale_line_id IS NOT NULL AND l.id IS NOT NULL)))",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
 }
 
 fn validate_foreign_keys(connection: &Connection) -> Result<()> {

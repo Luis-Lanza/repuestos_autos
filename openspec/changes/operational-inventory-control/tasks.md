@@ -31,9 +31,9 @@ PR 0 is planning, not `sdd-apply`.
 
 ## Phase 1: Capability and Migration Foundation
 
-- [ ] 1.1 (~40) Refresh runners, budget, init metadata in `openspec/config.yaml`; preserve config.
-- [ ] 1.2 (~120) RED tests in `src-tauri/tests/sqlite_migrations.rs`: v5 reopen, invalid signs/links/reasons, composite links, rollback/version.
-- [ ] 1.3 (~170) Create migration `0006_operational_inventory_control.sql`; update `sqlite/mod.rs` preflight/copy/v6/triggers.
+- [x] 1.1 (~40) Refresh runners, budget, init metadata in `openspec/config.yaml`; preserve config.
+- [x] 1.2 (~120) RED tests in `src-tauri/tests/sqlite_migrations.rs`: v5 reopen, invalid signs/links/reasons, composite links, rollback/version.
+- [x] 1.3 (~170) Create migration `0006_operational_inventory_control.sql`; update `sqlite/mod.rs` preflight/copy/v6/triggers.
 
 ## Phase 2: Inventory Domain and Application
 
