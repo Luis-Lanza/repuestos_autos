@@ -160,6 +160,35 @@ impl BackupStore {
         fs::rename(stage, canonical).map_err(|_| StorageError::StorageUnavailable)
     }
 
+    pub fn restore_canonical_from(
+        &self,
+        source: &Path,
+        canonical: &Path,
+    ) -> Result<(), StorageError> {
+        let temporary = canonical.with_file_name("restore-recovery.sqlite3.part");
+        if temporary.exists() {
+            fs::remove_file(&temporary).map_err(|_| StorageError::StorageUnavailable)?;
+        }
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| StorageError::StorageUnavailable)?;
+        io::copy(
+            &mut File::open(source).map_err(|_| StorageError::StorageUnavailable)?,
+            &mut output,
+        )
+        .map_err(|_| StorageError::StorageUnavailable)?;
+        output
+            .sync_all()
+            .map_err(|_| StorageError::StorageUnavailable)?;
+        drop(output);
+        if canonical.exists() {
+            fs::remove_file(canonical).map_err(|_| StorageError::StorageUnavailable)?;
+        }
+        fs::rename(temporary, canonical).map_err(|_| StorageError::StorageUnavailable)
+    }
+
     pub fn clear_restore_state(&self) -> Result<(), StorageError> {
         let marker = self.root.join("restore-state.json");
         if marker.exists() {

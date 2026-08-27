@@ -12,6 +12,7 @@ use infrastructure::{
     filesystem::BackupStore,
     sqlite::{create_snapshot, open_database, validate_restored_database, DatabaseConfig},
 };
+use rusqlite::OpenFlags;
 
 pub use infrastructure::filesystem::RestoreState;
 
@@ -19,6 +20,7 @@ pub use infrastructure::filesystem::RestoreState;
 enum DatabaseStatus {
     Ready,
     Restoring,
+    Unavailable,
 }
 
 struct DatabaseStateInner {
@@ -40,6 +42,31 @@ impl DatabaseState {
             config,
             connection: Some(connection),
             status: DatabaseStatus::Ready,
+        }))
+    }
+
+    pub fn recover_on_startup(config: DatabaseConfig, store: &BackupStore) -> Self {
+        let recovered = match store.read_restore_state() {
+            Ok(None) => open_database(&config)
+                .map_err(|_| ())
+                .and_then(|connection| {
+                    validate_restored_database(&connection).map_err(|_| ())?;
+                    Ok(connection)
+                }),
+            Ok(Some(_)) => recover_marked_database(&config, store),
+            Err(_) => Err(()),
+        };
+        match recovered {
+            Ok(connection) => Self::from_connection(config, connection),
+            Err(()) => Self::unavailable(config),
+        }
+    }
+
+    fn unavailable(config: DatabaseConfig) -> Self {
+        Self(Mutex::new(DatabaseStateInner {
+            config,
+            connection: None,
+            status: DatabaseStatus::Unavailable,
         }))
     }
 
@@ -117,6 +144,35 @@ impl DatabaseState {
     }
 }
 
+fn recover_marked_database(
+    config: &DatabaseConfig,
+    store: &BackupStore,
+) -> Result<rusqlite::Connection, ()> {
+    let canonical = config.path();
+    if !is_valid_database(canonical) {
+        let rollback = canonical.with_file_name("restore-rollback.sqlite3");
+        let protective = canonical.parent().ok_or(())?.join("pre-restore.sqlite3");
+        let recovery_source = [&rollback, &protective]
+            .into_iter()
+            .find(|path| is_valid_database(path))
+            .ok_or(())?;
+        store
+            .restore_canonical_from(recovery_source, canonical)
+            .map_err(|_| ())?;
+    }
+    let connection = open_database(config).map_err(|_| ())?;
+    validate_restored_database(&connection).map_err(|_| ())?;
+    store.clear_restore_state().map_err(|_| ())?;
+    Ok(connection)
+}
+
+fn is_valid_database(path: &std::path::Path) -> bool {
+    let connection = rusqlite::Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY);
+    connection
+        .as_ref()
+        .is_ok_and(|connection| validate_restored_database(connection).is_ok())
+}
+
 #[cfg(feature = "desktop")]
 type AppState = DatabaseState;
 
@@ -140,9 +196,9 @@ pub fn run() -> Result<(), tauri::Error> {
         .setup(|app: &mut tauri::App<tauri::Wry>| {
             let app_data_directory = app.path().app_data_dir()?;
             let database_config =
-                infrastructure::sqlite::production_database_config(app_data_directory);
-            let state = DatabaseState::open(database_config)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
+                infrastructure::sqlite::production_database_config(&app_data_directory);
+            let store = BackupStore::new(&app_data_directory);
+            let state = DatabaseState::recover_on_startup(database_config, &store);
             app.manage(state);
             Ok(())
         })
