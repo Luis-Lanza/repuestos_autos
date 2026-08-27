@@ -193,9 +193,18 @@ mod command_surface_tests {
         let before = snapshot(&app.state::<AppState>().0.lock().unwrap());
 
         for command in [
+            "set_cart_line_price_command",
+            "create_return_command",
+            "cancel_sale_command",
+            "create_supplier_command",
+            "record_supplier_cost_command",
             "update_product_command",
-            "archive_product_command",
-            "import_products_command",
+            "inventory_report_command",
+            "backup_database_command",
+            "restore_database_command",
+            "create_role_command",
+            "sync_cloud_command",
+            "transfer_stock_command",
         ] {
             assert!(
                 get_ipc_response(&window, request(command)).is_err(),

@@ -119,6 +119,7 @@ pub struct PersistedInventoryOperation {
     pub quantity_delta: i64,
     pub resulting_quantity: i64,
     pub occurred_at: String,
+    pub note: Option<String>,
 }
 
 impl PersistedInventoryOperation {
@@ -130,6 +131,7 @@ impl PersistedInventoryOperation {
         quantity_delta: i64,
         resulting_quantity: i64,
         occurred_at: &str,
+        note: Option<String>,
     ) -> Result<Self, InventoryError> {
         if previous_quantity < 0 || resulting_quantity < 0 {
             return Err(InventoryError::PERSISTED_DATA_INVALID);
@@ -158,6 +160,7 @@ impl PersistedInventoryOperation {
             quantity_delta,
             resulting_quantity,
             occurred_at: occurred_at.into(),
+            note,
         })
     }
 }

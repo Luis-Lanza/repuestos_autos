@@ -31,7 +31,7 @@ impl InventoryRepository for FakeRepository {
             }
         };
         let result =
-            PersistedInventoryOperation::new(kind, request_id, 1, 9, -5, 4, "database-time")?;
+            PersistedInventoryOperation::new(kind, request_id, 1, 9, -5, 4, "database-time", None)?;
         self.stored = Some(result.clone());
         Ok(result)
     }
