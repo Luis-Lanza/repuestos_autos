@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-desktop = ["dep:tauri", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
 
 [[bin]]
 name = "repuestos-autos"
@@ -14,9 +14,10 @@ required-features = ["desktop"]
 
 [dependencies]
 tauri = { version = "2", default-features = false, features = ["wry", "test"], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
 rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 sha2 = "0.10"
-uuid = "1"
+uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
