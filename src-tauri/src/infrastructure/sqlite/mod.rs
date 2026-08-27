@@ -2,11 +2,15 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, Result};
 
+pub mod backup;
 pub mod catalog_repository;
 pub mod inventory_repository;
 pub mod sale_repository;
 
+pub use backup::{create_snapshot, stage_and_validate, BackupValidationError, DatabaseMetadata};
 pub use inventory_repository::SqliteInventoryRepository;
+
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
@@ -48,7 +52,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
     let mut version =
         connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
 
-    if version > 6 {
+    if version > CURRENT_SCHEMA_VERSION {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
