@@ -31,6 +31,7 @@ fn inventory_commands_preserve_persisted_results_and_only_expose_stable_errors()
         ),
         ("550e8400-e29b-41d4-a716-446655440201", 8, 10)
     );
+    assert_eq!(first.note.as_deref(), Some("delivery"));
     let retry = confirm_stock_entry_command(
         &mut connection,
         StockEntryRequest {

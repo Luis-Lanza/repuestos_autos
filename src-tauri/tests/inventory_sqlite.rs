@@ -26,6 +26,23 @@ fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
         )
         .unwrap();
     assert_eq!(result.resulting_quantity, 10);
+    assert_eq!(result.note.as_deref(), Some("delivery"));
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection)
+            .confirm(
+                InventoryOperation::stock_entry(
+                    1,
+                    request("550e8400-e29b-41d4-a716-446655440103"),
+                    99,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+            .note
+            .as_deref(),
+        Some("delivery")
+    );
     assert_eq!(
         connection
             .query_row(
@@ -170,4 +187,53 @@ fn retry_returns_original_result_and_alerts_are_active_ordered_and_indexed() {
         .unwrap();
     assert!(plan.contains("inventory_movements_request_id_idx"));
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn post_insert_balance_failure_rolls_back_the_inventory_operation() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection
+        .execute_batch("CREATE TRIGGER reject_inventory_balance_update BEFORE UPDATE ON stock_balances WHEN new.product_id = 1 BEGIN SELECT RAISE(ABORT, 'forced failure'); END;")
+        .unwrap();
+    let operation = InventoryOperation::stock_entry(
+        1,
+        request("550e8400-e29b-41d4-a716-446655440109"),
+        2,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(operation.clone()),
+        Err(InventoryError::PERSISTENCE_FAILURE)
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT quantity FROM stock_balances WHERE product_id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        8
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    connection
+        .execute_batch("DROP TRIGGER reject_inventory_balance_update;")
+        .unwrap();
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection)
+            .confirm(operation)
+            .unwrap()
+            .resulting_quantity,
+        10
+    );
 }

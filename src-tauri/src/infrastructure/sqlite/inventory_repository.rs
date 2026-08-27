@@ -156,20 +156,21 @@ fn load_persisted(
     request_id: &str,
 ) -> Result<Option<PersistedInventoryOperation>, InventoryError> {
     connection.query_row(
-        "SELECT movement_type, product_id, quantity_delta, resulting_quantity, occurred_at FROM inventory_movements WHERE request_id = ?1",
+        "SELECT movement_type, product_id, quantity_delta, resulting_quantity, occurred_at, source_reference FROM inventory_movements WHERE request_id = ?1",
         [request_id],
         |row| {
-            Ok::<(String, i64, i64, i64, String), rusqlite::Error>((
+            Ok::<(String, i64, i64, i64, String, Option<String>), rusqlite::Error>((
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
             ))
         },
-    ).optional().map_err(|_| InventoryError::PERSISTENCE_FAILURE)?.map(|(movement_type, product_id, delta, resulting, occurred_at)| {
+    ).optional().map_err(|_| InventoryError::PERSISTENCE_FAILURE)?.map(|(movement_type, product_id, delta, resulting, occurred_at, note)| {
         let kind = match movement_type.as_str() { "stock_entry" => OperationKind::StockEntry, "adjustment" => OperationKind::PhysicalCount, _ => return Err(InventoryError::PERSISTED_DATA_INVALID) };
         let previous = resulting.checked_sub(delta).ok_or(InventoryError::QUANTITY_OVERFLOW)?;
-        PersistedInventoryOperation::new(kind, RequestId::parse(request_id).map_err(|_| InventoryError::PERSISTED_DATA_INVALID)?, product_id, previous, delta, resulting, &occurred_at)
+        PersistedInventoryOperation::new(kind, RequestId::parse(request_id).map_err(|_| InventoryError::PERSISTED_DATA_INVALID)?, product_id, previous, delta, resulting, &occurred_at, note)
     }).transpose()
 }

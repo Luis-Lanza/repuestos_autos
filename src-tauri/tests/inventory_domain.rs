@@ -14,7 +14,7 @@ fn persisted(
     delta: i64,
     result: i64,
 ) -> Result<PersistedInventoryOperation, InventoryError> {
-    PersistedInventoryOperation::new(kind, request_id(), 1, old, delta, result, "now")
+    PersistedInventoryOperation::new(kind, request_id(), 1, old, delta, result, "now", None)
 }
 
 #[test]

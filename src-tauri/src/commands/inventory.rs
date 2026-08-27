@@ -43,6 +43,7 @@ pub struct PersistedInventoryOperation {
     pub quantity_delta: i64,
     pub resulting_quantity: i64,
     pub occurred_at: String,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -137,6 +138,7 @@ fn map_result(
         quantity_delta: result.quantity_delta,
         resulting_quantity: result.resulting_quantity,
         occurred_at: result.occurred_at,
+        note: result.note,
     }
 }
 

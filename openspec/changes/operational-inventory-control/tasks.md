@@ -49,9 +49,9 @@ PR 0 is planning, not `sdd-apply`.
 
 - [x] 4.1 (~120) Command-seam tests; create `commands/inventory.rs`, register commands in `src-tauri/src/lib.rs`, keep errors opaque.
 - [x] 4.2 (~120) TypeScript contract/reducer tests; create `src/commands/inventory.ts` and `src/ui/inventory/inventory-flow.ts` with allowlisting/UUID retention.
-- [ ] 4.3 (~180) Create `src/ui/inventory/inventory-screen.ts`; update `src/ui/app.ts` for Catalog search, forms, stale notice, alerts/navigation.
+- [x] 4.3 (~180) Create `src/ui/inventory/inventory-screen.ts`; update `src/ui/app.ts` for Catalog search, forms, stale notice, alerts/navigation.
 
 ## Phase 5: Verification and Closure
 
-- [ ] 5.1 (~80) Evidence for restart, concurrency, migration rejection/preservation, sales alerts, exclusions; threat matrix N/A.
-- [ ] 5.2 (~40) Run focused suites, `npm test`, `npm run build`, Rust suites; update checklist/notes; preserve Sales/cart pricing.
+- [x] 5.1 (~80) Evidence for restart, concurrency, migration rejection/preservation, sales alerts, exclusions; threat matrix N/A.
+- [x] 5.2 (~40) Run focused suites, `npm test`, `npm run build`, Rust suites; update checklist/notes; preserve Sales/cart pricing.
