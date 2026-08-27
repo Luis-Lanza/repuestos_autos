@@ -58,6 +58,12 @@ pub fn stage_and_validate(
     metadata(&destination)
 }
 
+pub fn validate_restored_database(connection: &Connection) -> Result<(), BackupValidationError> {
+    metadata(connection)?;
+    validate_version_five_schema(connection).map_err(|_| BackupValidationError::InvalidBackup)?;
+    validate_foreign_keys(connection).map_err(|_| BackupValidationError::InvalidBackup)
+}
+
 fn metadata(connection: &Connection) -> Result<DatabaseMetadata, BackupValidationError> {
     let integrity: String = connection
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))

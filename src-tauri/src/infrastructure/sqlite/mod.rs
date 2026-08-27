@@ -7,7 +7,10 @@ pub mod catalog_repository;
 pub mod inventory_repository;
 pub mod sale_repository;
 
-pub use backup::{create_snapshot, stage_and_validate, BackupValidationError, DatabaseMetadata};
+pub use backup::{
+    create_snapshot, stage_and_validate, validate_restored_database, BackupValidationError,
+    DatabaseMetadata,
+};
 pub use inventory_repository::SqliteInventoryRepository;
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 6;

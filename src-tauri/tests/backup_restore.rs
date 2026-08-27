@@ -9,8 +9,10 @@ use repuestos_autos::application::backup::{
 };
 use repuestos_autos::infrastructure::filesystem::{BackupStore, StorageError};
 use repuestos_autos::infrastructure::sqlite::{
-    create_snapshot, stage_and_validate, BackupValidationError, CURRENT_SCHEMA_VERSION,
+    create_snapshot, production_database_config, stage_and_validate, BackupValidationError,
+    CURRENT_SCHEMA_VERSION,
 };
+use repuestos_autos::{DatabaseState, RestoreState};
 use rusqlite::Connection;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
@@ -171,6 +173,65 @@ fn creates_a_consistent_snapshot_before_releasing_the_live_database_mutex() {
         Connection::open(&snapshot)
             .unwrap()
             .query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn records_each_durable_replacement_transition() {
+    let directory = temporary_directory("restore-state");
+    let store = BackupStore::new(&directory);
+
+    for state in [
+        RestoreState::Prepared,
+        RestoreState::LiveMoved,
+        RestoreState::CandidateInstalled,
+    ] {
+        store.write_restore_state(state).unwrap();
+        assert_eq!(store.read_restore_state().unwrap(), Some(state));
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn installs_a_validated_stage_after_closing_the_live_connection() {
+    let directory = temporary_directory("replacement");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    versioned_database(config.path(), CURRENT_SCHEMA_VERSION);
+    let state = DatabaseState::open(config.clone()).unwrap();
+    let stage = directory.join("staging/candidate.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    versioned_database(&stage, CURRENT_SCHEMA_VERSION);
+    Connection::open(&stage)
+        .unwrap()
+        .execute(
+            "INSERT INTO categories (name) VALUES (?1)",
+            ["restored-state"],
+        )
+        .unwrap();
+    let store = BackupStore::new(&directory);
+
+    state.install_validated_stage(&stage, &store).unwrap();
+
+    assert!(!stage.exists());
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    assert!(directory.join("restore-rollback.sqlite3").exists());
+    assert!(!directory.join("restore-state.json").exists());
+    assert_eq!(
+        state
+            .with_read(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM categories WHERE name = ?1",
+                        ["restored-state"],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|_| "database_unavailable".into())
+            })
             .unwrap(),
         1
     );

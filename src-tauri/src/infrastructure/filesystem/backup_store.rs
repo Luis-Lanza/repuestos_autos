@@ -4,6 +4,32 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreState {
+    Prepared,
+    LiveMoved,
+    CandidateInstalled,
+}
+
+impl RestoreState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::LiveMoved => "live_moved",
+            Self::CandidateInstalled => "candidate_installed",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "prepared" => Some(Self::Prepared),
+            "live_moved" => Some(Self::LiveMoved),
+            "candidate_installed" => Some(Self::CandidateInstalled),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum StorageError {
     SelectionCancelled,
@@ -104,8 +130,42 @@ impl BackupStore {
         Ok(marker)
     }
 
-    pub fn replace_stage(&self, stage: &Path, canonical: &Path) -> Result<(), StorageError> {
+    pub fn write_restore_state(&self, state: RestoreState) -> Result<PathBuf, StorageError> {
+        self.write_marker(format!(r#"{{"state":"{}"}}"#, state.as_str()).as_bytes())
+    }
+
+    pub fn read_restore_state(&self) -> Result<Option<RestoreState>, StorageError> {
+        let marker = self.root.join("restore-state.json");
+        if !marker.exists() {
+            return Ok(None);
+        }
+        let contents = fs::read_to_string(marker).map_err(|_| StorageError::StorageUnavailable)?;
+        let state = contents
+            .strip_prefix(r#"{"state":""#)
+            .and_then(|value| value.strip_suffix(r#""}"#))
+            .and_then(RestoreState::parse)
+            .ok_or(StorageError::StorageUnavailable)?;
+        Ok(Some(state))
+    }
+
+    pub fn move_live_to_rollback(&self, canonical: &Path) -> Result<(), StorageError> {
+        let rollback = canonical.with_file_name("restore-rollback.sqlite3");
+        if rollback.exists() {
+            fs::remove_file(&rollback).map_err(|_| StorageError::StorageUnavailable)?;
+        }
+        fs::rename(canonical, rollback).map_err(|_| StorageError::StorageUnavailable)
+    }
+
+    pub fn install_stage(&self, stage: &Path, canonical: &Path) -> Result<(), StorageError> {
         fs::rename(stage, canonical).map_err(|_| StorageError::StorageUnavailable)
+    }
+
+    pub fn clear_restore_state(&self) -> Result<(), StorageError> {
+        let marker = self.root.join("restore-state.json");
+        if marker.exists() {
+            fs::remove_file(marker).map_err(|_| StorageError::StorageUnavailable)?;
+        }
+        Ok(())
     }
 }
 
