@@ -1,7 +1,12 @@
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use repuestos_autos::application::backup::{
+    BackupCoordinator, ConfirmRestoreResult, OperationalFacts, PrepareRestoreResult,
+    ProtectiveBackup, RestoreCandidate, RestoreCandidateStore, RestoreError, RestoreTokenSource,
+};
 use repuestos_autos::infrastructure::filesystem::{BackupStore, StorageError};
 use repuestos_autos::infrastructure::sqlite::{
     create_snapshot, stage_and_validate, BackupValidationError, CURRENT_SCHEMA_VERSION,
@@ -170,4 +175,157 @@ fn creates_a_consistent_snapshot_before_releasing_the_live_database_mutex() {
         1
     );
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[derive(Clone)]
+struct CandidateStore {
+    candidate: RestoreCandidate,
+    rechecked: RestoreCandidate,
+}
+
+impl RestoreCandidateStore for CandidateStore {
+    fn prepare(&self, _: &Path) -> Result<RestoreCandidate, RestoreError> {
+        Ok(self.candidate.clone())
+    }
+
+    fn recheck(&self, _: &RestoreCandidate) -> Result<RestoreCandidate, RestoreError> {
+        Ok(self.rechecked.clone())
+    }
+}
+
+struct BackupProtection {
+    should_fail: bool,
+    calls: Cell<u8>,
+}
+
+impl ProtectiveBackup for BackupProtection {
+    fn create_and_validate(&self) -> Result<(), RestoreError> {
+        self.calls.set(self.calls.get() + 1);
+        if self.should_fail {
+            Err(RestoreError::RestoreFailed)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct FixedToken;
+
+impl RestoreTokenSource for FixedToken {
+    fn next_token(&mut self) -> String {
+        "opaque-token".into()
+    }
+}
+
+fn candidate() -> RestoreCandidate {
+    RestoreCandidate {
+        stage: PathBuf::from("staging/candidate.sqlite3"),
+        schema_version: CURRENT_SCHEMA_VERSION,
+        size_bytes: 4096,
+        sha256: "candidate-checksum".into(),
+        facts: OperationalFacts {
+            catalog_records: 1,
+            confirmed_sales: 1,
+            stock_balances: 1,
+            movement_records: 2,
+            schema_history_version: CURRENT_SCHEMA_VERSION,
+        },
+    }
+}
+
+fn coordinator(
+    rechecked: RestoreCandidate,
+    protective_failure: bool,
+) -> BackupCoordinator<CandidateStore, BackupProtection, FixedToken> {
+    let candidate = candidate();
+    BackupCoordinator::new(
+        CandidateStore {
+            candidate: candidate.clone(),
+            rechecked,
+        },
+        BackupProtection {
+            should_fail: protective_failure,
+            calls: Cell::new(0),
+        },
+        FixedToken,
+        60,
+    )
+}
+
+#[test]
+fn requires_explicit_confirmation_and_rejects_mismatched_or_reused_tokens() {
+    let mut coordinator = coordinator(candidate(), false);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        coordinator.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+
+    assert_eq!(
+        coordinator.confirm(&token, false, 11),
+        ConfirmRestoreResult::Failed(RestoreError::ConfirmationRequired)
+    );
+    assert_eq!(
+        coordinator.confirm("different-token", true, 11),
+        ConfirmRestoreResult::Failed(RestoreError::TokenInvalid)
+    );
+    let ConfirmRestoreResult::ReadyForReplacement { candidate } =
+        coordinator.confirm(&token, true, 11)
+    else {
+        panic!("confirmed candidate should be ready for Slice 2B");
+    };
+    assert_eq!(candidate.facts.catalog_records, 1);
+    assert_eq!(candidate.facts.confirmed_sales, 1);
+    assert_eq!(candidate.facts.stock_balances, 1);
+    assert_eq!(candidate.facts.movement_records, 2);
+    assert_eq!(
+        candidate.facts.schema_history_version,
+        CURRENT_SCHEMA_VERSION
+    );
+    assert_eq!(
+        coordinator.confirm(&token, true, 12),
+        ConfirmRestoreResult::Failed(RestoreError::TokenInvalid)
+    );
+}
+
+#[test]
+fn rejects_expired_or_changed_candidates_before_protective_backup() {
+    let mut expired = coordinator(candidate(), false);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        expired.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+    assert_eq!(
+        expired.confirm(&token, true, 71),
+        ConfirmRestoreResult::Failed(RestoreError::TokenExpired)
+    );
+
+    let mut changed = candidate();
+    changed.sha256 = "changed-checksum".into();
+    let mut coordinator = coordinator(changed, true);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        coordinator.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+    assert_eq!(
+        coordinator.confirm(&token, true, 11),
+        ConfirmRestoreResult::Failed(RestoreError::InvalidBackup)
+    );
+}
+
+#[test]
+fn aborts_before_replacement_when_protective_backup_fails() {
+    let mut coordinator = coordinator(candidate(), true);
+    let PrepareRestoreResult::Prepared { token, .. } =
+        coordinator.prepare(Path::new("backup.sqlite3"), 10)
+    else {
+        panic!("candidate should prepare");
+    };
+
+    assert_eq!(
+        coordinator.confirm(&token, true, 11),
+        ConfirmRestoreResult::Failed(RestoreError::RestoreFailed)
+    );
 }
