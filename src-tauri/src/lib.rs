@@ -1,5 +1,7 @@
 #[cfg(feature = "desktop")]
 use tauri::Manager;
+#[cfg(feature = "desktop")]
+use tauri_plugin_dialog::DialogExt;
 
 pub mod application;
 pub mod commands;
@@ -176,7 +178,7 @@ fn is_valid_database(path: &std::path::Path) -> bool {
 #[cfg(feature = "desktop")]
 type AppState = DatabaseState;
 
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", test))]
 fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
         search_products_command,
@@ -191,8 +193,29 @@ fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Buil
 }
 
 #[cfg(feature = "desktop")]
+fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            search_products_command,
+            confirm_sale_command,
+            confirm_stock_entry_command,
+            confirm_physical_count_command,
+            list_inventory_alerts_command,
+            list_categories_command,
+            create_category_command,
+            create_product_command,
+            choose_backup_destination_command,
+            choose_restore_source_command,
+            create_backup_command,
+            prepare_restore_command,
+            confirm_restore_command
+        ])
+}
+
+#[cfg(feature = "desktop")]
 pub fn run() -> Result<(), tauri::Error> {
-    command_builder(tauri::Builder::default())
+    desktop_command_builder(tauri::Builder::default())
         .setup(|app: &mut tauri::App<tauri::Wry>| {
             let app_data_directory = app.path().app_data_dir()?;
             let database_config =
@@ -200,9 +223,80 @@ pub fn run() -> Result<(), tauri::Error> {
             let store = BackupStore::new(&app_data_directory);
             let state = DatabaseState::recover_on_startup(database_config, &store);
             app.manage(state);
+            app.manage(Mutex::new(commands::backup::BackupCommandState::new(
+                app_data_directory,
+            )));
             Ok(())
         })
         .run(tauri::generate_context!())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn choose_backup_destination_command(
+    window: tauri::WebviewWindow,
+) -> commands::backup::PathSelection {
+    commands::backup::select_path(
+        window
+            .app_handle()
+            .dialog()
+            .file()
+            .blocking_pick_folder()
+            .and_then(|path| path.into_path().ok()),
+    )
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn choose_restore_source_command(window: tauri::WebviewWindow) -> commands::backup::PathSelection {
+    commands::backup::select_path(
+        window
+            .app_handle()
+            .dialog()
+            .file()
+            .add_filter("SQLite backup", &["sqlite3"])
+            .blocking_pick_file()
+            .and_then(|path| path.into_path().ok()),
+    )
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn create_backup_command(
+    state: tauri::State<AppState>,
+    commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
+    request: commands::backup::CreateBackupRequest,
+) -> commands::backup::BackupResponse {
+    let Ok(commands) = commands.lock() else {
+        return commands::backup::BackupResponse::error("storage_unavailable");
+    };
+    commands::backup::create_backup(&state, &commands, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn prepare_restore_command(
+    state: tauri::State<AppState>,
+    commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
+    request: commands::backup::PrepareRestoreRequest,
+) -> commands::backup::BackupResponse {
+    let Ok(mut commands) = commands.lock() else {
+        return commands::backup::BackupResponse::error("storage_unavailable");
+    };
+    commands::backup::prepare_restore(&state, &mut commands, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn confirm_restore_command(
+    state: tauri::State<AppState>,
+    commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
+    request: commands::backup::ConfirmRestoreRequest,
+) -> commands::backup::BackupResponse {
+    let Ok(mut commands) = commands.lock() else {
+        return commands::backup::BackupResponse::error("storage_unavailable");
+    };
+    commands::backup::confirm_restore(&state, &mut commands, request)
 }
 
 #[cfg(feature = "desktop")]
