@@ -6,8 +6,119 @@ pub mod commands;
 pub mod domain;
 pub mod infrastructure;
 
+use std::sync::Mutex;
+
+use infrastructure::{
+    filesystem::BackupStore,
+    sqlite::{create_snapshot, open_database, validate_restored_database, DatabaseConfig},
+};
+
+pub use infrastructure::filesystem::RestoreState;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DatabaseStatus {
+    Ready,
+    Restoring,
+}
+
+struct DatabaseStateInner {
+    config: DatabaseConfig,
+    connection: Option<rusqlite::Connection>,
+    status: DatabaseStatus,
+}
+
+pub struct DatabaseState(Mutex<DatabaseStateInner>);
+
+impl DatabaseState {
+    pub fn open(config: DatabaseConfig) -> Result<Self, Box<dyn std::error::Error>> {
+        let connection = open_database(&config)?;
+        Ok(Self::from_connection(config, connection))
+    }
+
+    pub fn from_connection(config: DatabaseConfig, connection: rusqlite::Connection) -> Self {
+        Self(Mutex::new(DatabaseStateInner {
+            config,
+            connection: Some(connection),
+            status: DatabaseStatus::Ready,
+        }))
+    }
+
+    pub fn with_read<T>(
+        &self,
+        operation: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let state = self.0.lock().map_err(|_| "persistence_failure")?;
+        if state.status != DatabaseStatus::Ready {
+            return Err("database_unavailable".into());
+        }
+        operation(state.connection.as_ref().ok_or("database_unavailable")?)
+    }
+
+    pub fn with_write<T>(
+        &self,
+        operation: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
+        if state.status != DatabaseStatus::Ready {
+            return Err("database_unavailable".into());
+        }
+        operation(state.connection.as_mut().ok_or("database_unavailable")?)
+    }
+
+    pub fn install_validated_stage(
+        &self,
+        stage: &std::path::Path,
+        store: &BackupStore,
+    ) -> Result<(), String> {
+        let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
+        if state.status != DatabaseStatus::Ready {
+            return Err("database_unavailable".into());
+        }
+        let protective = state
+            .config
+            .path()
+            .parent()
+            .ok_or("restore_failed")?
+            .join("pre-restore.sqlite3");
+        create_snapshot(
+            state.connection.as_ref().ok_or("database_unavailable")?,
+            &protective,
+        )
+        .map_err(|_| "restore_failed")?;
+        {
+            let protective_connection =
+                rusqlite::Connection::open(&protective).map_err(|_| "restore_failed")?;
+            validate_restored_database(&protective_connection).map_err(|_| "restore_failed")?;
+        }
+        store
+            .write_restore_state(RestoreState::Prepared)
+            .map_err(|_| "restore_failed")?;
+        state.status = DatabaseStatus::Restoring;
+        drop(state.connection.take());
+        store
+            .move_live_to_rollback(state.config.path())
+            .map_err(|_| "restore_failed")?;
+        store
+            .write_restore_state(RestoreState::LiveMoved)
+            .map_err(|_| "restore_failed")?;
+        store
+            .install_stage(stage, state.config.path())
+            .map_err(|_| "restore_failed")?;
+        store
+            .write_restore_state(RestoreState::CandidateInstalled)
+            .map_err(|_| "restore_failed")?;
+        let connection = open_database(&state.config).map_err(|_| "restore_failed")?;
+        validate_restored_database(&connection).map_err(|_| "restore_failed")?;
+        state.connection = Some(connection);
+        state.status = DatabaseStatus::Ready;
+        store
+            .clear_restore_state()
+            .map_err(|_| "restore_failed".to_string())
+    }
+}
+
 #[cfg(feature = "desktop")]
-struct AppState(std::sync::Mutex<rusqlite::Connection>);
+type AppState = DatabaseState;
 
 #[cfg(feature = "desktop")]
 fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
@@ -30,9 +141,9 @@ pub fn run() -> Result<(), tauri::Error> {
             let app_data_directory = app.path().app_data_dir()?;
             let database_config =
                 infrastructure::sqlite::production_database_config(app_data_directory);
-            let connection = infrastructure::sqlite::open_database(&database_config)
+            let state = DatabaseState::open(database_config)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
-            app.manage(AppState(std::sync::Mutex::new(connection)));
+            app.manage(state);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -44,8 +155,7 @@ fn search_products_command(
     state: tauri::State<AppState>,
     request: commands::catalog::SearchProductsRequest,
 ) -> Result<Vec<commands::catalog::ProductSearchResult>, String> {
-    let connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::catalog::search_products(&connection, request)
+    state.with_read(|connection| commands::catalog::search_products(connection, request))
 }
 
 #[cfg(feature = "desktop")]
@@ -54,8 +164,7 @@ fn confirm_sale_command(
     state: tauri::State<AppState>,
     request: commands::confirm_sale::ConfirmSaleRequest,
 ) -> Result<commands::confirm_sale::ConfirmSaleResponse, String> {
-    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::confirm_sale::confirm_sale(&mut connection, request)
+    state.with_write(|connection| commands::confirm_sale::confirm_sale(connection, request))
 }
 
 #[cfg(feature = "desktop")]
@@ -64,8 +173,9 @@ fn confirm_stock_entry_command(
     state: tauri::State<AppState>,
     request: commands::inventory::StockEntryRequest,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
-    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::inventory::confirm_stock_entry_command(&mut connection, request)
+    state.with_write(|connection| {
+        commands::inventory::confirm_stock_entry_command(connection, request)
+    })
 }
 
 #[cfg(feature = "desktop")]
@@ -74,8 +184,9 @@ fn confirm_physical_count_command(
     state: tauri::State<AppState>,
     request: commands::inventory::PhysicalCountRequest,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
-    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::inventory::confirm_physical_count_command(&mut connection, request)
+    state.with_write(|connection| {
+        commands::inventory::confirm_physical_count_command(connection, request)
+    })
 }
 
 #[cfg(feature = "desktop")]
@@ -83,8 +194,7 @@ fn confirm_physical_count_command(
 fn list_inventory_alerts_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
-    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::inventory::list_inventory_alerts_command(&mut connection)
+    state.with_write(commands::inventory::list_inventory_alerts_command)
 }
 
 #[cfg(feature = "desktop")]
@@ -92,8 +202,7 @@ fn list_inventory_alerts_command(
 fn list_categories_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::onboarding::ListCategoriesResponse, String> {
-    let connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::onboarding::list_categories(&connection)
+    state.with_read(commands::onboarding::list_categories)
 }
 
 #[cfg(feature = "desktop")]
@@ -102,8 +211,7 @@ fn create_category_command(
     state: tauri::State<AppState>,
     request: application::catalog::CreateCategoryInput,
 ) -> Result<commands::onboarding::CreateCategoryResponse, String> {
-    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::onboarding::create_category(&mut connection, request)
+    state.with_write(|connection| commands::onboarding::create_category(connection, request))
 }
 
 #[cfg(feature = "desktop")]
@@ -112,8 +220,7 @@ fn create_product_command(
     state: tauri::State<AppState>,
     request: application::catalog::CreateProductInput,
 ) -> Result<commands::onboarding::CreateProductResponse, String> {
-    let mut connection = state.0.lock().map_err(|_| "persistence_failure")?;
-    commands::onboarding::create_product(&mut connection, request)
+    state.with_write(|connection| commands::onboarding::create_product(connection, request))
 }
 
 #[cfg(all(test, feature = "desktop"))]
@@ -176,9 +283,10 @@ mod command_surface_tests {
         tauri::WebviewWindow<tauri::test::MockRuntime>,
     ) {
         let app = command_builder(mock_builder())
-            .manage(AppState(std::sync::Mutex::new(
+            .manage(AppState::from_connection(
+                infrastructure::sqlite::production_database_config(std::env::temp_dir()),
                 infrastructure::sqlite::open_seeded_catalog().unwrap(),
-            )))
+            ))
             .build(mock_context(noop_assets()))
             .unwrap();
         let window = WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -190,7 +298,10 @@ mod command_surface_tests {
     #[test]
     fn rejects_excluded_onboarding_operations_without_persistence_mutation() {
         let (app, window) = test_window();
-        let before = snapshot(&app.state::<AppState>().0.lock().unwrap());
+        let before = app
+            .state::<AppState>()
+            .with_read(|connection| Ok(snapshot(connection)))
+            .unwrap();
 
         for command in [
             "set_cart_line_price_command",
@@ -212,13 +323,21 @@ mod command_surface_tests {
             );
         }
 
-        assert_eq!(snapshot(&app.state::<AppState>().0.lock().unwrap()), before);
+        assert_eq!(
+            app.state::<AppState>()
+                .with_read(|connection| Ok(snapshot(connection)))
+                .unwrap(),
+            before
+        );
     }
 
     #[test]
     fn rejecting_draft_removal_and_discard_leaves_persistence_unchanged() {
         let (app, window) = test_window();
-        let before = snapshot(&app.state::<AppState>().0.lock().unwrap());
+        let before = app
+            .state::<AppState>()
+            .with_read(|connection| Ok(snapshot(connection)))
+            .unwrap();
 
         for command in [
             "remove_draft_cart_line_command",
@@ -230,7 +349,12 @@ mod command_surface_tests {
             );
         }
 
-        assert_eq!(snapshot(&app.state::<AppState>().0.lock().unwrap()), before);
+        assert_eq!(
+            app.state::<AppState>()
+                .with_read(|connection| Ok(snapshot(connection)))
+                .unwrap(),
+            before
+        );
     }
 }
 
