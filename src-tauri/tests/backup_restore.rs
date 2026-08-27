@@ -238,6 +238,118 @@ fn installs_a_validated_stage_after_closing_the_live_connection() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+fn database_with_category(path: &Path, category_name: &str) {
+    versioned_database(path, CURRENT_SCHEMA_VERSION);
+    Connection::open(path)
+        .unwrap()
+        .execute("INSERT INTO categories (name) VALUES (?1)", [category_name])
+        .unwrap();
+}
+
+fn category_count(state: &DatabaseState, category_name: &str) -> i64 {
+    state
+        .with_read(|connection| {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM categories WHERE name = ?1",
+                    [category_name],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "database_unavailable".into())
+        })
+        .unwrap()
+}
+
+#[test]
+fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_installed_markers() {
+    for (name, state) in [
+        ("recover-prepared", RestoreState::Prepared),
+        (
+            "recover-candidate-installed",
+            RestoreState::CandidateInstalled,
+        ),
+    ] {
+        let directory = temporary_directory(name);
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        database_with_category(config.path(), "canonical");
+        database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
+        database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+        let store = BackupStore::new(&directory);
+        store.write_restore_state(state).unwrap();
+
+        let recovered = DatabaseState::recover_on_startup(config, &store);
+
+        assert_eq!(category_count(&recovered, "canonical"), 1, "{state:?}");
+        assert_eq!(category_count(&recovered, "rollback"), 0, "{state:?}");
+        assert_eq!(store.read_restore_state().unwrap(), None, "{state:?}");
+        assert!(directory.join("pre-restore.sqlite3").exists(), "{state:?}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn startup_recovery_restores_a_valid_rollback_after_live_moved_crash() {
+    let directory = temporary_directory("recover-live-moved");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
+    database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+    let store = BackupStore::new(&directory);
+    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(category_count(&recovered, "rollback"), 1);
+    assert!(config.path().exists());
+    assert_eq!(store.read_restore_state().unwrap(), None);
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_recovery_uses_the_retained_protective_database_when_rollback_is_unavailable() {
+    let directory = temporary_directory("recover-protective");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
+    database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+    let store = BackupStore::new(&directory);
+    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config, &store);
+
+    assert_eq!(category_count(&recovered, "protective"), 1);
+    assert_eq!(store.read_restore_state().unwrap(), None);
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_recovery_leaves_database_unavailable_without_a_safe_candidate() {
+    let directory = temporary_directory("recover-unavailable");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
+    fs::write(directory.join("pre-restore.sqlite3"), b"not sqlite").unwrap();
+    let store = BackupStore::new(&directory);
+    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(
+        recovered.with_read(|_| Ok(())).unwrap_err(),
+        "database_unavailable"
+    );
+    assert!(!config.path().exists());
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::LiveMoved)
+    );
+    assert!(directory.join("pre-restore.sqlite3").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[derive(Clone)]
 struct CandidateStore {
     candidate: RestoreCandidate,
