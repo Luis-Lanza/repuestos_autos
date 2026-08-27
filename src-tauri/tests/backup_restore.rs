@@ -7,6 +7,10 @@ use repuestos_autos::application::backup::{
     BackupCoordinator, ConfirmRestoreResult, OperationalFacts, PrepareRestoreResult,
     ProtectiveBackup, RestoreCandidate, RestoreCandidateStore, RestoreError, RestoreTokenSource,
 };
+use repuestos_autos::commands::backup::{
+    confirm_restore, prepare_restore, BackupCommandState, BackupResponse, ConfirmRestoreRequest,
+    PrepareRestoreRequest, ALLOWED_COMMANDS,
+};
 use repuestos_autos::infrastructure::filesystem::{BackupStore, StorageError};
 use repuestos_autos::infrastructure::sqlite::{
     create_snapshot, production_database_config, stage_and_validate, BackupValidationError,
@@ -501,4 +505,66 @@ fn aborts_before_replacement_when_protective_backup_fails() {
         coordinator.confirm(&token, true, 11),
         ConfirmRestoreResult::Failed(RestoreError::RestoreFailed)
     );
+}
+
+#[test]
+fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes() {
+    let request: PrepareRestoreRequest =
+        serde_json::from_str(r#"{"source":"/media/USB/backup.sqlite3"}"#).unwrap();
+    assert_eq!(request.source, PathBuf::from("/media/USB/backup.sqlite3"));
+    assert!(serde_json::from_str::<PrepareRestoreRequest>(
+        r#"{"source":"backup.sqlite3","unexpected":true}"#
+    )
+    .is_err());
+    assert_eq!(
+        serde_json::to_value(BackupResponse::error("invalid_backup")).unwrap(),
+        serde_json::json!({
+            "kind": "error",
+            "code": "invalid_backup",
+            "message": "The selected backup is invalid.",
+        })
+    );
+    assert_eq!(
+        ALLOWED_COMMANDS,
+        [
+            "choose_backup_destination_command",
+            "choose_restore_source_command",
+            "create_backup_command",
+            "prepare_restore_command",
+            "confirm_restore_command",
+        ]
+    );
+
+    let directory = temporary_directory("command-unavailable");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let store = BackupStore::new(&directory);
+    fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
+    fs::write(directory.join("pre-restore.sqlite3"), b"not sqlite").unwrap();
+    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+    let state = DatabaseState::recover_on_startup(config, &store);
+    let mut commands = BackupCommandState::new(&directory);
+
+    assert_eq!(
+        prepare_restore(
+            &state,
+            &mut commands,
+            PrepareRestoreRequest {
+                source: PathBuf::from("/untrusted/internal.sqlite3"),
+            }
+        ),
+        BackupResponse::error("database_unavailable")
+    );
+    assert_eq!(
+        confirm_restore(
+            &state,
+            &mut commands,
+            ConfirmRestoreRequest {
+                token: "unknown-token".into(),
+                confirmed: true,
+            }
+        ),
+        BackupResponse::error("token_invalid")
+    );
+    fs::remove_dir_all(directory).unwrap();
 }
