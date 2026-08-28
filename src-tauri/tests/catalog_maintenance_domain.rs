@@ -1,7 +1,7 @@
 use repuestos_autos::domain::catalog::{
-    has_normalized_collision, plan_transition, validate_maintenance_product, AttributeDefinition,
-    AttributeValueDraft, CatalogActivity, CatalogIntent, CatalogSnapshot, CatalogTarget, FieldType,
-    MaintenanceError, TransitionPlan,
+    has_normalized_collision, plan_transition, validate_maintenance_category,
+    validate_maintenance_product, AttributeDefinition, AttributeValueDraft, CatalogActivity,
+    CatalogIntent, CatalogSnapshot, CatalogTarget, FieldType, MaintenanceError, TransitionPlan,
 };
 
 fn product_snapshot(category_activity: CatalogActivity) -> CatalogSnapshot {
@@ -18,6 +18,14 @@ fn product_snapshot(category_activity: CatalogActivity) -> CatalogSnapshot {
 #[test]
 fn normalized_identity_collisions_are_rejected_before_persistence() {
     assert!(has_normalized_collision("  FLT-001 ", "flt-001"));
+}
+
+#[test]
+fn maintenance_category_metadata_rejects_blank_names() {
+    assert_eq!(
+        validate_maintenance_category("  "),
+        Err(MaintenanceError::InvalidProduct)
+    );
 }
 
 #[test]
@@ -39,11 +47,11 @@ fn maintenance_product_metadata_rejects_mistyped_values() {
                 id: 1,
                 field_type: FieldType::Number,
                 required: true,
-                options: vec![],
+                options: vec![]
             }],
             &[AttributeValueDraft {
                 definition_id: 1,
-                value: "wrong type".into(),
+                value: "wrong type".into()
             }],
         ),
         Err(MaintenanceError::InvalidAttributeValue)
@@ -78,7 +86,7 @@ fn lifecycle_transitions_preserve_independent_category_and_product_state() {
         ),
         Ok(TransitionPlan {
             activity: CatalogActivity::Archived,
-            expected_revision: 4,
+            expected_revision: 4
         })
     );
 }

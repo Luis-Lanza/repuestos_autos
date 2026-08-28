@@ -118,6 +118,12 @@ pub enum MaintenanceError {
     LifecycleBlocked,
 }
 
+pub fn validate_maintenance_category(name: &str) -> Result<(), MaintenanceError> {
+    (!name.trim().is_empty())
+        .then_some(())
+        .ok_or(MaintenanceError::InvalidProduct)
+}
+
 pub fn has_normalized_collision(left: &str, right: &str) -> bool {
     normalize_identity(left) == normalize_identity(right)
 }
