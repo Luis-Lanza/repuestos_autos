@@ -11,6 +11,7 @@ pub use backup::{
     create_snapshot, stage_and_validate, validate_restored_database, BackupValidationError,
     DatabaseMetadata,
 };
+pub use catalog_repository::SqliteCatalogRepository;
 pub use inventory_repository::SqliteInventoryRepository;
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 7;
