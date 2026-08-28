@@ -188,6 +188,8 @@ fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Buil
         list_inventory_alerts_command,
         list_catalog_maintenance_command,
         maintain_catalog_command,
+        edit_catalog_command,
+        catalog_metadata_detail_command,
         list_categories_command,
         create_category_command,
         create_product_command
@@ -206,6 +208,8 @@ fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builde
             list_inventory_alerts_command,
             list_catalog_maintenance_command,
             maintain_catalog_command,
+            edit_catalog_command,
+            catalog_metadata_detail_command,
             list_categories_command,
             create_category_command,
             create_product_command,
@@ -376,6 +380,36 @@ fn maintain_catalog_command(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn edit_catalog_command(
+    state: tauri::State<AppState>,
+    request: commands::catalog::EditCatalogRequest,
+) -> commands::catalog::CatalogMaintenanceResponse {
+    state
+        .with_write(|connection| commands::catalog::edit_catalog(connection, request))
+        .unwrap_or_else(|error| {
+            commands::catalog::CatalogMaintenanceResponse::Error(
+                commands::catalog::map_command_state_error(&error),
+            )
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn catalog_metadata_detail_command(
+    state: tauri::State<AppState>,
+    request: commands::catalog::CatalogMetadataDetailRequest,
+) -> commands::catalog::CatalogMetadataDetailResponse {
+    state
+        .with_read(|connection| commands::catalog::catalog_metadata_detail(connection, request))
+        .unwrap_or_else(|error| {
+            commands::catalog::CatalogMetadataDetailResponse::Error(
+                commands::catalog::map_command_state_error(&error),
+            )
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn list_categories_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::onboarding::ListCategoriesResponse, String> {
@@ -452,6 +486,13 @@ mod command_surface_tests {
             body: Default::default(),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_owned(),
+        }
+    }
+
+    fn request_with(command: &str, payload: serde_json::Value) -> InvokeRequest {
+        InvokeRequest {
+            body: serde_json::json!({ "request": payload }).into(),
+            ..request(command)
         }
     }
 
@@ -538,6 +579,20 @@ mod command_surface_tests {
     fn registers_catalog_maintenance_listing_at_the_tauri_command_seam() {
         let (_app, window) = test_window();
         assert!(get_ipc_response(&window, request("list_catalog_maintenance_command")).is_ok());
+    }
+
+    #[test]
+    fn registers_metadata_edit_and_detail_commands_at_the_tauri_command_seam() {
+        let (_app, window) = test_window();
+        assert!(get_ipc_response(&window, request_with("edit_catalog_command", serde_json::json!({ "target": "category", "entity_id": 1, "expected_revision": 0, "name": "Filters and oils" }))).is_ok());
+        assert!(get_ipc_response(
+            &window,
+            request_with(
+                "catalog_metadata_detail_command",
+                serde_json::json!({ "target": "product", "entity_id": 1 })
+            )
+        )
+        .is_ok());
     }
 }
 

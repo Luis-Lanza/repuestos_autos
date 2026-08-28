@@ -306,7 +306,7 @@ pub enum CreateCategoryError {
     Persistence,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttributeValueInput {
     pub definition_id: i64,
@@ -334,6 +334,29 @@ pub struct CreatedProduct {
     pub catalog_unit_price_centavos: i64,
     pub available_quantity: i64,
     pub active: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "target", rename_all = "snake_case")]
+pub enum CatalogMetadataDetail {
+    Category {
+        entity_id: i64,
+        name: String,
+        activity: &'static str,
+        revision: i64,
+        attribute_definitions: Vec<CategoryField>,
+    },
+    Product {
+        entity_id: i64,
+        category_id: i64,
+        sku: String,
+        name: String,
+        catalog_unit_price_centavos: i64,
+        activity: &'static str,
+        revision: i64,
+        attribute_definitions: Vec<CategoryField>,
+        attribute_values: Vec<AttributeValueInput>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -511,6 +534,55 @@ pub fn create_product(
     input: CreateProductInput,
 ) -> std::result::Result<CreatedProduct, CreateProductError> {
     CreateProductUseCase::new(connection, SqliteCatalogRepository).execute(input)
+}
+
+pub fn read_catalog_metadata_detail(
+    connection: &Connection,
+    target: CatalogTarget,
+    entity_id: i64,
+) -> Result<Option<CatalogMetadataDetail>> {
+    match target {
+        CatalogTarget::Category => connection
+            .query_row(
+                "SELECT name, active, revision FROM categories WHERE id = ?1",
+                [entity_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .map(|(name, active, revision)| {
+                Ok(CatalogMetadataDetail::Category {
+                    entity_id,
+                    name,
+                    activity: if active { "active" } else { "archived" },
+                    revision,
+                    attribute_definitions: load_category_fields(connection, entity_id)?,
+                })
+            })
+            .transpose(),
+        CatalogTarget::Product => connection
+            .query_row(
+                "SELECT category_id, sku, name, minimum_unit_price_centavos, active, revision FROM products WHERE id = ?1",
+                [entity_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .optional()?
+            .map(|(category_id, sku, name, catalog_unit_price_centavos, active, revision)| {
+                let mut statement = connection.prepare("SELECT definition_id, searchable_value FROM product_attribute_values WHERE product_id = ?1 ORDER BY definition_id")?;
+                let attribute_values = statement.query_map([entity_id], |row| Ok(AttributeValueInput { definition_id: row.get(0)?, value: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
+                Ok(CatalogMetadataDetail::Product {
+                    entity_id,
+                    category_id,
+                    sku,
+                    name,
+                    catalog_unit_price_centavos,
+                    activity: if active { "active" } else { "archived" },
+                    revision,
+                    attribute_definitions: load_category_fields(connection, category_id)?,
+                    attribute_values,
+                })
+            })
+            .transpose(),
+    }
 }
 
 fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec<CategoryField>> {
