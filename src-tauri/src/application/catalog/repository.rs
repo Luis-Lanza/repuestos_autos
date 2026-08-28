@@ -1,6 +1,8 @@
 use rusqlite::{Result, Transaction};
 
-use crate::domain::catalog::{AttributeDefinition, ValidatedAttributeValue};
+use crate::domain::catalog::{
+    AttributeDefinition, CatalogSnapshot, CatalogTarget, TransitionPlan, ValidatedAttributeValue,
+};
 
 use super::CreateProductInput;
 
@@ -23,4 +25,20 @@ pub trait CreateProductRepository {
         values: &[ValidatedAttributeValue],
         category_name: &str,
     ) -> Result<i64>;
+}
+
+pub trait CatalogMaintenanceRepository {
+    fn load(
+        &self,
+        transaction: &Transaction<'_>,
+        target: CatalogTarget,
+        entity_id: i64,
+    ) -> Result<Option<CatalogSnapshot>>;
+    fn apply(
+        &self,
+        transaction: &Transaction<'_>,
+        target: CatalogTarget,
+        entity_id: i64,
+        plan: TransitionPlan,
+    ) -> Result<CatalogSnapshot>;
 }

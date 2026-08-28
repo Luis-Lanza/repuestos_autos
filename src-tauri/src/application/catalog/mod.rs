@@ -1,15 +1,102 @@
-use rusqlite::{params, Connection, OptionalExtension, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::catalog::{
-    validate_category, validate_product, AttributeValueDraft, CatalogValidationError,
-    CategoryFieldDraft, FieldType,
+    plan_transition, validate_category, validate_product, AttributeValueDraft, CatalogIntent,
+    CatalogSnapshot, CatalogTarget, CatalogValidationError, CategoryFieldDraft, FieldType,
+    MaintenanceError,
 };
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
 pub mod repository;
 
-use repository::CreateProductRepository;
+use repository::{CatalogMaintenanceRepository, CreateProductRepository};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaintainCatalogInput {
+    pub target: CatalogTarget,
+    pub entity_id: i64,
+    pub intent: CatalogIntent,
+    pub expected_revision: i64,
+}
+
+impl MaintainCatalogInput {
+    pub fn new(
+        target: CatalogTarget,
+        entity_id: i64,
+        intent: CatalogIntent,
+        expected_revision: i64,
+    ) -> Self {
+        Self {
+            target,
+            entity_id,
+            intent,
+            expected_revision,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaintainCatalogError {
+    MissingCatalogRecord,
+    LifecycleBlocked,
+    StaleCatalogRecord,
+    PersistenceFailure,
+}
+
+pub struct MaintainCatalogUseCase<'connection, Repository> {
+    connection: &'connection mut Connection,
+    repository: Repository,
+}
+
+impl<'connection, Repository> MaintainCatalogUseCase<'connection, Repository>
+where
+    Repository: CatalogMaintenanceRepository,
+{
+    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+        Self {
+            connection,
+            repository,
+        }
+    }
+
+    pub fn execute(
+        self,
+        input: MaintainCatalogInput,
+    ) -> std::result::Result<CatalogSnapshot, MaintainCatalogError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| MaintainCatalogError::PersistenceFailure)?;
+        let snapshot = self
+            .repository
+            .load(&transaction, input.target, input.entity_id)
+            .map_err(|_| MaintainCatalogError::PersistenceFailure)?
+            .ok_or(MaintainCatalogError::MissingCatalogRecord)?;
+        if snapshot.revision != input.expected_revision {
+            return Err(MaintainCatalogError::StaleCatalogRecord);
+        }
+        let plan = plan_transition(&snapshot, input.intent).map_err(map_maintenance_error)?;
+        let persisted = self
+            .repository
+            .apply(&transaction, input.target, input.entity_id, plan)
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => MaintainCatalogError::StaleCatalogRecord,
+                _ => MaintainCatalogError::PersistenceFailure,
+            })?;
+        transaction
+            .commit()
+            .map_err(|_| MaintainCatalogError::PersistenceFailure)?;
+        Ok(persisted)
+    }
+}
+
+fn map_maintenance_error(error: MaintenanceError) -> MaintainCatalogError {
+    match error {
+        MaintenanceError::LifecycleBlocked => MaintainCatalogError::LifecycleBlocked,
+        _ => MaintainCatalogError::PersistenceFailure,
+    }
+}
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct ProductSearchResult {
@@ -340,7 +427,7 @@ pub fn search_active_products(
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
-         WHERE search.content MATCH ?1 AND p.active = 1
+          WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
          ORDER BY p.name
          LIMIT 20",
     )?;
