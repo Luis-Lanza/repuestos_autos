@@ -123,6 +123,17 @@ pub fn select_path(path: Option<PathBuf>) -> PathSelection {
     })
 }
 
+#[cfg(feature = "desktop")]
+pub async fn select_callback_path(
+    open_picker: impl FnOnce(Box<dyn FnOnce(Option<PathBuf>) + Send>),
+) -> PathSelection {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    open_picker(Box::new(move |path| {
+        let _ = sender.try_send(select_path(path));
+    }));
+    receiver.recv().await.unwrap_or(PathSelection::Cancelled)
+}
+
 pub fn create_backup(
     state: &DatabaseState,
     commands: &BackupCommandState,
@@ -145,7 +156,7 @@ pub fn create_backup(
     );
     let published = BackupStore::new(&commands.root).publish_snapshot(
         &snapshot,
-        &request.destination,
+        &request.destination.join("backup-restore"),
         &file_name,
     );
     let _ = fs::remove_file(snapshot);
