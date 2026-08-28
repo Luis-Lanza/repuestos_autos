@@ -19,6 +19,38 @@ pub struct MaintainCatalogRequest {
     pub expected_revision: i64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogMetadataDetailRequest {
+    pub target: String,
+    pub entity_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditAttributeValueRequest {
+    pub definition_id: i64,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "target", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EditCatalogRequest {
+    Category {
+        entity_id: i64,
+        expected_revision: i64,
+        name: String,
+    },
+    Product {
+        entity_id: i64,
+        expected_revision: i64,
+        sku: String,
+        name: String,
+        catalog_unit_price_centavos: i64,
+        attribute_values: Vec<EditAttributeValueRequest>,
+    },
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CatalogMaintenanceResponse {
@@ -31,6 +63,12 @@ pub enum CatalogMaintenanceListResponse {
     Success {
         records: Vec<CatalogMaintenanceRecord>,
     },
+    Error(CatalogMaintenanceError),
+}
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CatalogMetadataDetailResponse {
+    Success(catalog::CatalogMetadataDetail),
     Error(CatalogMaintenanceError),
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -141,6 +179,77 @@ pub fn maintain_catalog(
     )
 }
 
+pub fn edit_catalog(
+    connection: &mut rusqlite::Connection,
+    request: EditCatalogRequest,
+) -> Result<CatalogMaintenanceResponse, String> {
+    let (entity_id, target, input) = match request {
+        EditCatalogRequest::Category {
+            entity_id,
+            expected_revision,
+            name,
+        } if entity_id > 0 && expected_revision >= 0 => (
+            entity_id,
+            "category",
+            catalog::EditCatalogInput::category(entity_id, expected_revision, name),
+        ),
+        EditCatalogRequest::Product {
+            entity_id,
+            expected_revision,
+            sku,
+            name,
+            catalog_unit_price_centavos,
+            attribute_values,
+        } if entity_id > 0 && expected_revision >= 0 => (
+            entity_id,
+            "product",
+            catalog::EditCatalogInput::product(
+                entity_id,
+                expected_revision,
+                sku,
+                name,
+                catalog_unit_price_centavos,
+                attribute_values
+                    .into_iter()
+                    .map(|value| catalog::AttributeValueInput {
+                        definition_id: value.definition_id,
+                        value: value.value,
+                    })
+                    .collect(),
+            ),
+        ),
+        _ => return Ok(CatalogMaintenanceResponse::Error(validation_error())),
+    };
+    Ok(
+        match catalog::EditCatalogUseCase::new(connection, SqliteCatalogRepository).execute(input) {
+            Ok(snapshot) => CatalogMaintenanceResponse::Success(CatalogMaintenanceRecord {
+                entity_id,
+                target,
+                label: String::new(),
+                activity: activity(snapshot.activity),
+                revision: snapshot.revision,
+            }),
+            Err(error) => CatalogMaintenanceResponse::Error(map_maintenance_error(error)),
+        },
+    )
+}
+
+pub fn catalog_metadata_detail(
+    connection: &rusqlite::Connection,
+    request: CatalogMetadataDetailRequest,
+) -> Result<CatalogMetadataDetailResponse, String> {
+    let Some(target) = target(&request.target).filter(|_| request.entity_id > 0) else {
+        return Ok(CatalogMetadataDetailResponse::Error(validation_error()));
+    };
+    Ok(
+        match catalog::read_catalog_metadata_detail(connection, target, request.entity_id) {
+            Ok(Some(detail)) => CatalogMetadataDetailResponse::Success(detail),
+            Ok(None) => CatalogMetadataDetailResponse::Error(unavailable_error()),
+            Err(_) => CatalogMetadataDetailResponse::Error(persistence_error()),
+        },
+    )
+}
+
 fn target(value: &str) -> Option<CatalogTarget> {
     match value {
         "category" => Some(CatalogTarget::Category),
@@ -184,5 +293,32 @@ fn persistence_error() -> CatalogMaintenanceError {
     CatalogMaintenanceError {
         code: "persistence_failure",
         message: "The catalog could not be completed.",
+    }
+}
+fn unavailable_error() -> CatalogMaintenanceError {
+    CatalogMaintenanceError {
+        code: "catalog_unavailable",
+        message: "This catalog record is unavailable.",
+    }
+}
+pub fn map_command_state_error(error: &str) -> CatalogMaintenanceError {
+    if error == "database_unavailable" {
+        unavailable_error()
+    } else {
+        persistence_error()
+    }
+}
+fn map_maintenance_error(error: catalog::MaintainCatalogError) -> CatalogMaintenanceError {
+    match error {
+        catalog::MaintainCatalogError::LifecycleBlocked => CatalogMaintenanceError {
+            code: "lifecycle_blocked",
+            message: "This lifecycle change is not allowed.",
+        },
+        catalog::MaintainCatalogError::StaleCatalogRecord => CatalogMaintenanceError {
+            code: "stale_catalog_record",
+            message: "This catalog record changed. Reload and try again.",
+        },
+        catalog::MaintainCatalogError::MissingCatalogRecord => validation_error(),
+        catalog::MaintainCatalogError::PersistenceFailure => persistence_error(),
     }
 }
