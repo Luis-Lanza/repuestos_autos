@@ -14,7 +14,24 @@ pub use backup::{
 pub use catalog_repository::SqliteCatalogRepository;
 pub use inventory_repository::SqliteInventoryRepository;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MigrationCompatibility {
+    DuplicateNormalizedProductName,
+}
+
+pub fn migration_compatibility(connection: &Connection) -> Result<Option<MigrationCompatibility>> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM products GROUP BY lower(trim(name)) HAVING COUNT(*) > 1)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map(|duplicate| {
+            duplicate.then_some(MigrationCompatibility::DuplicateNormalizedProductName)
+        })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
@@ -125,6 +142,20 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         transaction.execute_batch(include_str!("migrations/0007_catalog_maintenance.sql"))?;
         validate_version_seven_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 7)?;
+        transaction.commit()?;
+        version = 7;
+    }
+
+    if version == 7 {
+        let transaction = connection.transaction()?;
+        validate_version_seven_schema(&transaction)?;
+        if migration_compatibility(&transaction)?.is_some() {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        transaction.execute_batch(include_str!(
+            "migrations/0008_catalog_metadata_name_uniqueness.sql"
+        ))?;
+        transaction.pragma_update(None, "user_version", 8)?;
         transaction.commit()?;
     }
 

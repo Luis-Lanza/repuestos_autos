@@ -1,7 +1,8 @@
 use rusqlite::{params, OptionalExtension, Result, Transaction};
 
 use crate::application::catalog::repository::{
-    CatalogMaintenanceRepository, CreateProductRepository,
+    CatalogMaintenanceRepository, CatalogMetadataRepository, CreateProductRepository,
+    ProductMetadata,
 };
 use crate::application::catalog::CreateProductInput;
 use crate::domain::catalog::{
@@ -150,8 +151,7 @@ impl CatalogMaintenanceRepository for SqliteCatalogRepository {
         entity_id: i64,
         plan: TransitionPlan,
     ) -> Result<CatalogSnapshot> {
-        let before = self
-            .load(transaction, target, entity_id)?
+        let before = CatalogMaintenanceRepository::load(self, transaction, target, entity_id)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let active = matches!(plan.activity, CatalogActivity::Active) as i64;
         let updated = match target {
@@ -171,8 +171,7 @@ impl CatalogMaintenanceRepository for SqliteCatalogRepository {
         if target == CatalogTarget::Product {
             refresh_product_search(transaction, entity_id)?;
         }
-        let after = self
-            .load(transaction, target, entity_id)?
+        let after = CatalogMaintenanceRepository::load(self, transaction, target, entity_id)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         transaction
             .execute(
@@ -182,6 +181,146 @@ impl CatalogMaintenanceRepository for SqliteCatalogRepository {
             ?;
         Ok(after)
     }
+}
+
+impl CatalogMetadataRepository for SqliteCatalogRepository {
+    fn load(
+        &self,
+        transaction: &Transaction<'_>,
+        target: CatalogTarget,
+        entity_id: i64,
+    ) -> Result<Option<CatalogSnapshot>> {
+        CatalogMaintenanceRepository::load(self, transaction, target, entity_id)
+    }
+
+    fn category_name_exists(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        name: &str,
+    ) -> Result<bool> {
+        transaction.query_row("SELECT EXISTS(SELECT 1 FROM categories WHERE id <> ?1 AND lower(trim(name)) = lower(trim(?2)))", params![id, name], |row| row.get(0))
+    }
+
+    fn product_metadata_for_normalized_patch(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        sku: &str,
+        name: &str,
+    ) -> Result<Option<ProductMetadata>> {
+        let Some(category_id) = transaction
+            .query_row(
+                "SELECT category_id FROM products WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let definitions =
+            CreateProductRepository::attribute_definitions(self, transaction, category_id)?;
+        let duplicate_normalized_identity = transaction.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE id <> ?1 AND (lower(trim(sku)) = lower(trim(?2)) OR lower(trim(name)) = lower(trim(?3))))", params![id, sku, name], |row| row.get(0))?;
+        Ok(Some(ProductMetadata {
+            definitions,
+            duplicate_normalized_identity,
+        }))
+    }
+
+    fn edit_category(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        revision: i64,
+        name: &str,
+    ) -> Result<CatalogSnapshot> {
+        let target = CatalogTarget::Category;
+        let before = category_metadata_json(transaction, id)?;
+        if transaction.execute("UPDATE OR IGNORE categories SET name = ?1, revision = revision + 1 WHERE id = ?2 AND revision = ?3", params![name, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
+        refresh_category_search(transaction, id)?;
+        let after = category_metadata_json(transaction, id)?;
+        let snapshot = CatalogMaintenanceRepository::load(self, transaction, target, id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        audit_metadata(transaction, target, id, before, after, snapshot.revision)?;
+        Ok(snapshot)
+    }
+
+    fn edit_product(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        revision: i64,
+        sku: &str,
+        name: &str,
+        price: i64,
+        values: &[ValidatedAttributeValue],
+    ) -> Result<CatalogSnapshot> {
+        let target = CatalogTarget::Product;
+        let before = product_metadata_json(transaction, id)?;
+        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, minimum_unit_price_centavos = ?3, revision = revision + 1 WHERE id = ?4 AND revision = ?5", params![sku, name, price, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
+        transaction.execute(
+            "DELETE FROM product_attribute_values WHERE product_id = ?1",
+            [id],
+        )?;
+        for value in values {
+            insert_attribute_value(transaction, id, value)?;
+        }
+        refresh_product_search(transaction, id)?;
+        let after = product_metadata_json(transaction, id)?;
+        let snapshot = CatalogMaintenanceRepository::load(self, transaction, target, id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        audit_metadata(transaction, target, id, before, after, snapshot.revision)?;
+        Ok(snapshot)
+    }
+}
+
+fn insert_attribute_value(
+    transaction: &Transaction<'_>,
+    product_id: i64,
+    value: &ValidatedAttributeValue,
+) -> Result<()> {
+    let (definition_id, text, number, option, searchable) = match value {
+        ValidatedAttributeValue::Text {
+            definition_id,
+            value,
+        } => (*definition_id, Some(value), None, None, value),
+        ValidatedAttributeValue::Number {
+            definition_id,
+            value,
+            searchable,
+        } => (*definition_id, None, Some(value), None, searchable),
+        ValidatedAttributeValue::Option {
+            definition_id,
+            value,
+        } => (*definition_id, None, None, Some(value), value),
+    };
+    transaction.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, number_value, option_value, searchable_value) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![product_id, definition_id, text, number, option, searchable])?;
+    Ok(())
+}
+
+fn category_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<String> {
+    transaction.query_row(
+        "SELECT json_object('name', name, 'revision', revision) FROM categories WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+}
+
+fn product_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<String> {
+    transaction.query_row("SELECT json_object('sku', p.sku, 'name', p.name, 'catalog_unit_price_centavos', p.minimum_unit_price_centavos, 'revision', p.revision, 'attribute_values', json(COALESCE((SELECT json_group_array(json_object('definition_id', definition_id, 'text_value', text_value, 'number_value', number_value, 'option_value', option_value)) FROM product_attribute_values WHERE product_id = p.id), '[]'))) FROM products p WHERE p.id = ?1", [id], |row| row.get(0))
+}
+
+fn audit_metadata(
+    transaction: &Transaction<'_>,
+    target: CatalogTarget,
+    id: i64,
+    before: String,
+    after: String,
+    revision: i64,
+) -> Result<()> {
+    transaction.execute("INSERT INTO catalog_audit (entity_type, entity_id, operation, before_json, after_json, revision) VALUES (?1, ?2, 'edit_metadata', ?3, ?4, ?5)", params![target_name(target), id, before, after, revision])?;
+    Ok(())
 }
 
 fn activity_from_sql(value: i64) -> Result<CatalogActivity> {
@@ -202,6 +341,16 @@ fn refresh_product_search(transaction: &Transaction<'_>, product_id: i64) -> Res
         [product_id],
     )?;
     Ok(())
+}
+
+fn refresh_category_search(transaction: &Transaction<'_>, category_id: i64) -> Result<()> {
+    let products = transaction
+        .prepare("SELECT id FROM products WHERE category_id = ?1")?
+        .query_map([category_id], |row| row.get(0))?
+        .collect::<Result<Vec<_>>>()?;
+    products
+        .into_iter()
+        .try_for_each(|id| refresh_product_search(transaction, id))
 }
 
 fn target_name(target: CatalogTarget) -> &'static str {

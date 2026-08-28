@@ -1,4 +1,6 @@
-use repuestos_autos::infrastructure::sqlite::{open_database, production_database_config};
+use repuestos_autos::infrastructure::sqlite::{
+    migration_compatibility, open_database, production_database_config, MigrationCompatibility,
+};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 const LEGACY_FIXTURE: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
@@ -12,6 +14,8 @@ const VERSION_FIVE_MIGRATION: &str =
     include_str!("../src/infrastructure/sqlite/migrations/0005_catalog_onboarding_hardening.sql");
 const VERSION_SIX_MIGRATION: &str =
     include_str!("../src/infrastructure/sqlite/migrations/0006_operational_inventory_control.sql");
+const VERSION_SEVEN_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0007_catalog_maintenance.sql");
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "repuestos-autos-{name}-{}-{}",
@@ -52,6 +56,13 @@ fn create_version_six_database(directory: &Path) -> PathBuf {
     let connection = Connection::open(&path).unwrap();
     connection.execute_batch(VERSION_SIX_MIGRATION).unwrap();
     connection.pragma_update(None, "user_version", 6).unwrap();
+    path
+}
+fn create_version_seven_database(directory: &Path) -> PathBuf {
+    let path = create_version_six_database(directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_SEVEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 7).unwrap();
     path
 }
 fn user_version(path: &Path) -> i64 {
@@ -102,7 +113,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        7
+        8
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
@@ -131,7 +142,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        7
+        8
     );
     drop(reopened);
     assert_eq!(legacy_facts(&path), before);
@@ -188,7 +199,7 @@ fn migrates_a_new_version_zero_database_through_version_seven() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        7
+        8
     );
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
@@ -198,11 +209,11 @@ fn rejects_unknown_future_schema_versions_without_mutation() {
     let directory = temporary_directory("migration-future-version");
     let path = create_legacy_database(&directory);
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 8).unwrap();
+    connection.pragma_update(None, "user_version", 9).unwrap();
     drop(connection);
     let before = legacy_facts(&path);
     assert!(open_database(&production_database_config(&directory)).is_err());
-    assert_eq!(user_version(&path), 8);
+    assert_eq!(user_version(&path), 9);
     assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -219,7 +230,7 @@ fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() 
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        7
+        8
     );
     assert_eq!(
         connection
@@ -241,7 +252,7 @@ fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() 
     drop(foreign_key_check);
     assert_eq!(legacy_facts(&path), before);
     drop(connection);
-    assert_eq!(user_version(&path), 7);
+    assert_eq!(user_version(&path), 8);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -267,7 +278,7 @@ fn migrates_valid_v5_history_verbatim_and_reopens_at_version_seven() {
     let before = legacy_facts(&path);
     let config = production_database_config(&directory);
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 7);
+    assert_eq!(user_version(&path), 8);
     assert_eq!(
         connection
             .query_row(
@@ -280,7 +291,7 @@ fn migrates_valid_v5_history_verbatim_and_reopens_at_version_seven() {
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
-    assert_eq!(user_version(&path), 7);
+    assert_eq!(user_version(&path), 8);
     drop(open_database(&config).unwrap());
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -292,7 +303,7 @@ fn migrates_version_six_additively_with_immutable_sale_prices_and_audits() {
     let before = legacy_facts(&path);
     let connection = open_database(&production_database_config(&directory)).unwrap();
 
-    assert_eq!(user_version(&path), 7);
+    assert_eq!(user_version(&path), 8);
     assert_eq!(legacy_facts(&path), before);
     assert_eq!(
         connection
@@ -356,7 +367,7 @@ fn version_six_enforces_each_movement_type_composite_links_and_immutability() {
         .execute("DELETE FROM inventory_movements WHERE id = 40", [])
         .is_err());
     drop(connection);
-    assert_eq!(user_version(&path), 7);
+    assert_eq!(user_version(&path), 8);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -370,6 +381,51 @@ fn rejects_invalid_v5_preflight_without_schema_advancement_or_rewrite() {
     let before = legacy_facts(&path);
     assert!(open_database(&production_database_config(&directory)).is_err());
     assert_eq!(user_version(&path), 5);
+    assert_eq!(legacy_facts(&path), before);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn migrates_v7_names_preserving_facts_and_reopens_with_normalized_uniqueness() {
+    let directory = temporary_directory("migration-v7");
+    let path = create_version_seven_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (1, 1, 'retained', 'text', 1); INSERT INTO product_attribute_values VALUES (1, 1, 'kept', NULL, NULL, 'kept');").unwrap();
+    drop(connection);
+    let before = legacy_facts(&path);
+    let config = production_database_config(&directory);
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 8);
+    assert_eq!(legacy_facts(&path), before);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT text_value FROM product_attribute_values WHERE product_id = 1",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        "kept"
+    );
+    assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) SELECT category_id, 'NEW-001', lower(trim(name)), 1, 1 FROM products WHERE id = 1", []).is_err());
+    drop(connection);
+    drop(open_database(&config).unwrap());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+#[test]
+fn rejects_duplicate_normalized_v7_names_before_schema_advancement() {
+    let directory = temporary_directory("migration-v7-duplicates");
+    let path = create_version_seven_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute("INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) SELECT category_id, 'NEW-001', lower(trim(name)), 1, 1 FROM products WHERE id = 1", []).unwrap();
+    let before = legacy_facts(&path);
+    assert_eq!(
+        migration_compatibility(&connection).unwrap(),
+        Some(MigrationCompatibility::DuplicateNormalizedProductName)
+    );
+    drop(connection);
+    assert!(open_database(&production_database_config(&directory)).is_err());
+    assert_eq!(user_version(&path), 7);
     assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }
