@@ -76,6 +76,97 @@ pub enum CatalogValidationError {
     InvalidAttributeValue,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogActivity {
+    Active,
+    Archived,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogTarget {
+    Category,
+    Product,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogIntent {
+    Archive,
+    Reactivate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CatalogSnapshot {
+    pub target: CatalogTarget,
+    pub activity: CatalogActivity,
+    pub category_activity: CatalogActivity,
+    pub active_products: i64,
+    pub values_valid: bool,
+    pub revision: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransitionPlan {
+    pub activity: CatalogActivity,
+    pub expected_revision: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaintenanceError {
+    InvalidProduct,
+    InvalidCatalogPrice,
+    InvalidAttributeValue,
+    LifecycleBlocked,
+}
+
+pub fn has_normalized_collision(left: &str, right: &str) -> bool {
+    normalize_identity(left) == normalize_identity(right)
+}
+
+pub fn normalize_identity(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+pub fn validate_maintenance_product(
+    sku: &str,
+    name: &str,
+    catalog_unit_price_centavos: i64,
+    definitions: &[AttributeDefinition],
+    values: &[AttributeValueDraft],
+) -> Result<Vec<ValidatedAttributeValue>, MaintenanceError> {
+    if sku.trim().is_empty() || name.trim().is_empty() {
+        return Err(MaintenanceError::InvalidProduct);
+    }
+    if catalog_unit_price_centavos <= 0 {
+        return Err(MaintenanceError::InvalidCatalogPrice);
+    }
+    validate_attribute_values(definitions, values)
+        .map_err(|_| MaintenanceError::InvalidAttributeValue)
+}
+
+pub fn plan_transition(
+    snapshot: &CatalogSnapshot,
+    intent: CatalogIntent,
+) -> Result<TransitionPlan, MaintenanceError> {
+    match (snapshot.target, intent) {
+        (CatalogTarget::Category, CatalogIntent::Archive) if snapshot.active_products > 0 => {
+            Err(MaintenanceError::LifecycleBlocked)
+        }
+        (CatalogTarget::Product, CatalogIntent::Reactivate)
+            if snapshot.category_activity != CatalogActivity::Active || !snapshot.values_valid =>
+        {
+            Err(MaintenanceError::LifecycleBlocked)
+        }
+        (_, CatalogIntent::Archive) => Ok(TransitionPlan {
+            activity: CatalogActivity::Archived,
+            expected_revision: snapshot.revision,
+        }),
+        (_, CatalogIntent::Reactivate) => Ok(TransitionPlan {
+            activity: CatalogActivity::Active,
+            expected_revision: snapshot.revision,
+        }),
+    }
+}
+
 pub fn validate_category(
     name: &str,
     fields: &[CategoryFieldDraft],
@@ -123,6 +214,13 @@ pub fn validate_product(
         return Err(CatalogValidationError::InvalidOpeningQuantity);
     }
 
+    validate_attribute_values(definitions, values)
+}
+
+fn validate_attribute_values(
+    definitions: &[AttributeDefinition],
+    values: &[AttributeValueDraft],
+) -> Result<Vec<ValidatedAttributeValue>, CatalogValidationError> {
     let mut supplied = HashMap::new();
     for value in values {
         if supplied
