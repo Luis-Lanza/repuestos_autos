@@ -6,6 +6,10 @@ export type DraftLine = {
   sku: string;
   product_name: string;
   quantity: number;
+  captured_unit_price_centavos: number;
+  captured_revision: number;
+  acknowledged_price_centavos?: number;
+  acknowledged_revision?: number;
 };
 
 export type DraftPayment = {
@@ -21,6 +25,7 @@ export type SaleState = {
   request_id: string | null;
   confirmation: "idle" | "pending" | "error" | "confirmed";
   persisted_summary: PersistedSaleSummary | null;
+  stale_price: { product_id: number; current_unit_price_centavos: number; current_revision: number } | null;
 };
 
 export const initialSaleState: SaleState = {
@@ -31,6 +36,7 @@ export const initialSaleState: SaleState = {
   request_id: null,
   confirmation: "idle",
   persisted_summary: null,
+  stale_price: null,
 };
 
 export type SaleAction =
@@ -46,6 +52,8 @@ export type SaleAction =
   | { type: "confirmation_started"; request_id: string }
   | { type: "confirmation_succeeded"; summary: PersistedSaleSummary }
   | { type: "confirmation_failed"; message: string }
+  | { type: "stale_price_detected"; product_id: number; current_unit_price_centavos: number; current_revision: number }
+  | { type: "acknowledge_stale_price"; product_id: number; current_unit_price_centavos: number; current_revision: number }
   | { type: "discard" };
 
 function positiveWhole(value: string): number | null {
@@ -63,7 +71,9 @@ export function createSaleFlow(
     case "add_product":
       if (
         action.product.available_quantity < 1 ||
-        state.lines.some((line) => line.product_id === action.product.product_id)
+        state.lines.some(
+          (line) => line.product_id === action.product.product_id,
+        )
       )
         return state;
       return {
@@ -75,6 +85,8 @@ export function createSaleFlow(
             sku: action.product.sku,
             product_name: action.product.name,
             quantity: 1,
+            captured_unit_price_centavos: action.product.catalog_unit_price_centavos,
+            captured_revision: action.product.revision,
           },
         ],
         feedback: null,
@@ -125,6 +137,11 @@ export function createSaleFlow(
       };
     case "confirmation_failed":
       return { ...state, confirmation: "error", feedback: action.message };
+    case "stale_price_detected":
+      return { ...state, confirmation: "error", stale_price: action, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, acknowledged_price_centavos: undefined, acknowledged_revision: undefined } : line), feedback: "Catalog price changed. Review and acknowledge the current price." };
+    case "acknowledge_stale_price":
+      if (state.stale_price?.product_id !== action.product_id || state.stale_price.current_unit_price_centavos !== action.current_unit_price_centavos || state.stale_price.current_revision !== action.current_revision) return state;
+      return { ...state, confirmation: "idle", stale_price: null, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, acknowledged_price_centavos: action.current_unit_price_centavos, acknowledged_revision: action.current_revision } : line), feedback: "Current catalog price acknowledged. Confirm again to continue." };
     case "discard":
       return initialSaleState;
   }

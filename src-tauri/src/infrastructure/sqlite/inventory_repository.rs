@@ -68,14 +68,15 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
         };
         let product = transaction
             .query_row(
-                "SELECT p.active, b.quantity FROM products p JOIN stock_balances b ON b.product_id = p.id WHERE p.id = ?1",
+                "SELECT p.active, c.active, b.quantity FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.id = ?1",
                 [product_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
             )
             .optional()
             .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
-        let (active, previous_quantity) = product.ok_or(InventoryError::MISSING_PRODUCT)?;
-        if active == 0 {
+        let (active, category_active, previous_quantity) =
+            product.ok_or(InventoryError::MISSING_PRODUCT)?;
+        if active == 0 || category_active == 0 {
             return Err(InventoryError::INACTIVE_PRODUCT);
         }
         let (quantity_delta, resulting_quantity) = match kind {
@@ -127,7 +128,7 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
 
     fn list_alerts(&self) -> Result<Vec<InventoryAlert>, InventoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT p.id, p.name, p.active, b.quantity FROM products p JOIN stock_balances b ON b.product_id = p.id WHERE p.active = 1 AND b.quantity IN (0, 1) ORDER BY CASE b.quantity WHEN 0 THEN 0 ELSE 1 END, lower(p.name), p.id",
+            "SELECT p.id, p.name, p.active, b.quantity FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.active = 1 AND c.active = 1 AND b.quantity IN (0, 1) ORDER BY CASE b.quantity WHEN 0 THEN 0 ELSE 1 END, lower(p.name), p.id",
         ).map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
         let alerts = statement
             .query_map([], |row| {

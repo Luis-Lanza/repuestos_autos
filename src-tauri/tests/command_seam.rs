@@ -18,6 +18,10 @@ fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> 
         lines: vec![RequestedLine {
             product_id: 1,
             quantity: 1,
+            captured_unit_price_centavos: 2_500,
+            captured_revision: 0,
+            acknowledged_price_centavos: None,
+            acknowledged_revision: None,
         }],
         payment: PaymentInputRequest {
             amount_tendered_centavos: tendered,
@@ -267,6 +271,10 @@ fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {
             lines: vec![RequestedLine {
                 product_id: product.product_id,
                 quantity: 1,
+                captured_unit_price_centavos: 5_000,
+                captured_revision: 0,
+                acknowledged_price_centavos: None,
+                acknowledged_revision: None,
             }],
             payment: PaymentInputRequest {
                 amount_tendered_centavos: None,

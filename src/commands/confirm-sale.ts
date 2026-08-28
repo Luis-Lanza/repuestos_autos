@@ -13,6 +13,10 @@ const PAYMENT_METHOD = {
 export interface ConfirmSaleLineRequest {
   product_id: number;
   quantity: number;
+  captured_unit_price_centavos: number;
+  captured_revision: number;
+  acknowledged_price_centavos?: number;
+  acknowledged_revision?: number;
 }
 
 export interface ConfirmSalePaymentInput {
@@ -60,6 +64,7 @@ export interface PersistedSaleSummary {
 
 export type ConfirmSaleResponse =
   | ({ kind: typeof CONFIRM_SALE_RESPONSE_KIND.SUCCESS } & PersistedSaleSummary)
+  | { kind: "stale_catalog_record"; product_id: number; current_unit_price_centavos: number; current_revision: number }
   | {
       kind: typeof CONFIRM_SALE_RESPONSE_KIND.ERROR;
       code: string;
@@ -94,6 +99,11 @@ function assertIntegerRequest(request: ConfirmSaleRequest): void {
   for (const line of request.lines) {
     assertPositiveSafeInteger(line.product_id, "Product ID");
     assertPositiveSafeInteger(line.quantity, "Quantity");
+    assertPositiveSafeInteger(line.captured_unit_price_centavos, "Captured price");
+    assertNonNegativeSafeInteger(line.captured_revision, "Captured revision");
+    if ((line.acknowledged_price_centavos === undefined) !== (line.acknowledged_revision === undefined)) throw new Error("Price acknowledgement must include its revision.");
+    if (line.acknowledged_price_centavos !== undefined) assertPositiveSafeInteger(line.acknowledged_price_centavos, "Acknowledged price");
+    if (line.acknowledged_revision !== undefined) assertNonNegativeSafeInteger(line.acknowledged_revision, "Acknowledged revision");
   }
   if (request.payment.amount_tendered_centavos !== null) {
     assertNonNegativeSafeInteger(
@@ -115,9 +125,12 @@ export function createConfirmSaleCommand(command: Invoke) {
     return command("confirm_sale_command", {
       request: {
         request_id: request.request_id,
-        lines: request.lines.map(({ product_id, quantity }) => ({
+        lines: request.lines.map(({ product_id, quantity, captured_unit_price_centavos, captured_revision, acknowledged_price_centavos, acknowledged_revision }) => ({
           product_id,
           quantity,
+          captured_unit_price_centavos,
+          captured_revision,
+          ...(acknowledged_price_centavos === undefined ? {} : { acknowledged_price_centavos, acknowledged_revision }),
         })),
         payment: {
           amount_tendered_centavos: request.payment.amount_tendered_centavos,

@@ -264,6 +264,7 @@ pub struct ProductSearchResult {
     pub category_name: String,
     pub available_quantity: i64,
     pub catalog_unit_price_centavos: i64,
+    pub revision: i64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -645,7 +646,7 @@ pub fn search_active_products(
         return Ok(Vec::new());
     };
     let mut statement = connection.prepare(
-        "SELECT p.id, p.sku, p.name, c.name, s.quantity, p.minimum_unit_price_centavos
+        "SELECT p.id, p.sku, p.name, c.name, s.quantity, p.minimum_unit_price_centavos, p.revision
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
@@ -663,6 +664,7 @@ pub fn search_active_products(
                 category_name: row.get(3)?,
                 available_quantity: row.get(4)?,
                 catalog_unit_price_centavos: row.get(5)?,
+                revision: row.get(6)?,
             })
         })?
         .collect();

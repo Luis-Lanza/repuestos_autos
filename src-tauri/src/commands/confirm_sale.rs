@@ -20,6 +20,10 @@ pub struct ConfirmSaleRequest {
 pub struct RequestedLine {
     pub product_id: i64,
     pub quantity: i64,
+    pub captured_unit_price_centavos: i64,
+    pub captured_revision: i64,
+    pub acknowledged_price_centavos: Option<i64>,
+    pub acknowledged_revision: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +37,15 @@ pub struct PaymentInputRequest {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConfirmSaleResponse {
     Success(PersistedSaleSummary),
+    StaleCatalogRecord(StaleCatalogPrice),
     Error(CommandError),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct StaleCatalogPrice {
+    pub product_id: i64,
+    pub current_unit_price_centavos: i64,
+    pub current_revision: i64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -76,6 +88,15 @@ pub fn confirm_sale(
     Ok(
         match ConfirmSaleUseCase::new(connection, &repository).confirm(request) {
             Ok(summary) => ConfirmSaleResponse::Success(map_summary(summary)),
+            Err(ConfirmSaleError::StaleCatalogPrice {
+                product_id,
+                current_unit_price,
+                current_revision,
+            }) => ConfirmSaleResponse::StaleCatalogRecord(StaleCatalogPrice {
+                product_id,
+                current_unit_price_centavos: current_unit_price.value(),
+                current_revision,
+            }),
             Err(error) => ConfirmSaleResponse::Error(map_error(error)),
         },
     )
@@ -89,9 +110,25 @@ fn parse_request(
         .lines
         .into_iter()
         .map(|line| {
+            let (acknowledged_price, acknowledged_revision) =
+                match (line.acknowledged_price_centavos, line.acknowledged_revision) {
+                    (None, None) => (None, None),
+                    (Some(price), Some(revision)) if revision >= 0 => (
+                        Some(MoneyCentavos::new(price).map_err(|_| invalid_request())?),
+                        Some(revision),
+                    ),
+                    _ => return Err(invalid_request()),
+                };
             Ok(ApplicationRequestedLine {
                 product_id: line.product_id,
                 quantity: Quantity::new(line.quantity).map_err(|_| invalid_quantity())?,
+                captured_unit_price: MoneyCentavos::new(line.captured_unit_price_centavos)
+                    .map_err(|_| invalid_request())?,
+                captured_revision: (line.captured_revision >= 0)
+                    .then_some(line.captured_revision)
+                    .ok_or_else(invalid_request)?,
+                acknowledged_price,
+                acknowledged_revision,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -172,6 +209,9 @@ fn map_error(error: ConfirmSaleError) -> CommandError {
         }
         ConfirmSaleError::InsufficientStock => {
             ("insufficient_stock", "Insufficient stock is available.")
+        }
+        ConfirmSaleError::StaleCatalogPrice { .. } => {
+            ("persistence_failure", "The sale could not be persisted.")
         }
         ConfirmSaleError::DuplicateProduct => ("invalid_request", "The request shape is invalid."),
         ConfirmSaleError::MoneyOverflow

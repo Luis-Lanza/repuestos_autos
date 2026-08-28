@@ -40,17 +40,17 @@ The system MUST provide one global search entry point over the active catalog, i
 
 ### Requirement: Whole-Unit Quantities and Fixed Catalog Price
 
-The system MUST accept only positive whole-number quantities for sale lines. A newly added line MUST display the product's current catalog price, but the operator MUST NOT be able to edit that price. At confirmation, the backend MUST resolve the authoritative current catalog price and persist it as the sale line's historical price snapshot. Catalog management may update a product's price only for future sales; it MUST NOT alter confirmed sale lines.
+The system MUST accept only positive whole-number quantities for sale lines. A newly added line MUST capture the product's current catalog price and catalog revision, display those captured facts, and MUST NOT allow the operator to edit either the price or revision. At confirmation, the backend MUST resolve the authoritative current catalog price and revision. If either authoritative fact differs from the captured cart facts, confirmation MUST return the opaque `stale_catalog_record` outcome and MUST NOT persist the sale until the operator acknowledges the current facts and reconfirms. That acknowledgement MUST be tied to the current price and revision observed during the stale response. On successful confirmation, the resolved authoritative price MUST be persisted as the sale line's immutable historical price snapshot. Catalog management may update a product's price only for future confirmations; it MUST NOT alter confirmed sale lines.
 
 #### Scenario: Resolve and persist the catalog price at confirmation
 
-- GIVEN an active product has a current catalog price
+- GIVEN an active product has a current catalog price and revision
 - WHEN the operator adds it to the cart
 - THEN the line quantity is a positive whole unit
-- AND the line displays the current catalog price without allowing an operator price edit
+- AND the line captures and displays the current catalog price and revision without allowing an operator edit
 - WHEN the operator confirms a valid sale
-- THEN the backend resolves the authoritative current catalog price
-- AND the persisted sale line contains that resolved price as its historical snapshot
+- THEN the backend resolves the authoritative current catalog price and revision
+- AND the persisted sale line contains that resolved price as its immutable historical snapshot
 
 #### Scenario: Catalog price updates affect only future sales
 
@@ -65,6 +65,17 @@ The system MUST accept only positive whole-number quantities for sale lines. A n
 - WHEN the operator enters a fractional, zero, or negative quantity
 - THEN the system rejects the quantity
 - AND confirmation cannot persist a sale or stock effect
+
+#### Scenario: Acknowledge a stale catalog record
+
+- GIVEN a draft line captured price P and revision R
+- AND the authoritative product facts at confirmation are price Q and revision S
+- WHEN the operator confirms without acknowledgement tied to price Q and revision S
+- THEN confirmation returns `stale_catalog_record`
+- AND no sale, payment, stock, or movement is persisted
+- WHEN the operator reviews and acknowledges those current facts and reconfirms
+- THEN the sale persists using price Q as the immutable historical line snapshot
+- AND an acknowledgement for any other price or revision is rejected as stale
 
 ### Requirement: Payment Integrity
 

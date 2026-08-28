@@ -11,6 +11,7 @@ const brakePad: ProductSearchResult = {
   category_name: "Brakes",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_500,
+  revision: 0,
 };
 
 test("adds active search results as quantity-only sale intent", () => {
@@ -29,8 +30,20 @@ test("adds active search results as quantity-only sale intent", () => {
       sku: "BP-100",
       product_name: "Brake Pad",
       quantity: 1,
+      captured_unit_price_centavos: 2_500,
+      captured_revision: 0,
     },
   ]);
+});
+
+test("requires acknowledgement for the exact current stale price and revision", () => {
+  const drafted = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
+  const stale = createSaleFlow(drafted, { type: "stale_price_detected", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 });
+  const acknowledged = createSaleFlow(stale, { type: "acknowledge_stale_price", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 });
+  const changedAgain = createSaleFlow(acknowledged, { type: "stale_price_detected", product_id: 1, current_unit_price_centavos: 2800, current_revision: 3 });
+  assert.equal(acknowledged.lines[0].acknowledged_revision, 2);
+  assert.equal(changedAgain.lines[0].acknowledged_revision, undefined);
+  assert.equal(changedAgain.confirmation, "error");
 });
 
 test("draft edits give local quantity feedback and discard clears reduced payment intent", () => {

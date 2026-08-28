@@ -2,13 +2,18 @@ use rusqlite::Transaction;
 
 use super::{ApplicationRequestedLine, PersistedSaleSummary};
 use crate::domain::sales::{PaymentError, Sale, SaleLine};
-use crate::domain::RequestId;
+use crate::domain::{MoneyCentavos, RequestId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConfirmSaleError {
     DuplicateProduct,
     ProductMissing,
     ProductInactive,
+    StaleCatalogPrice {
+        product_id: i64,
+        current_unit_price: MoneyCentavos,
+        current_revision: i64,
+    },
     InvalidQuantity,
     MoneyOverflow,
     QrExceedsTotal,
