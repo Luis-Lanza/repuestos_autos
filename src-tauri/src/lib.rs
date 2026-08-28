@@ -186,6 +186,8 @@ fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Buil
         confirm_stock_entry_command,
         confirm_physical_count_command,
         list_inventory_alerts_command,
+        list_catalog_maintenance_command,
+        maintain_catalog_command,
         list_categories_command,
         create_category_command,
         create_product_command
@@ -202,6 +204,8 @@ fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builde
             confirm_stock_entry_command,
             confirm_physical_count_command,
             list_inventory_alerts_command,
+            list_catalog_maintenance_command,
+            maintain_catalog_command,
             list_categories_command,
             create_category_command,
             create_product_command,
@@ -351,6 +355,23 @@ fn list_inventory_alerts_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
     state.with_write(commands::inventory::list_inventory_alerts_command)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_catalog_maintenance_command(
+    state: tauri::State<AppState>,
+) -> Result<commands::catalog::CatalogMaintenanceListResponse, String> {
+    state.with_read(commands::catalog::list_catalog_maintenance)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn maintain_catalog_command(
+    state: tauri::State<AppState>,
+    request: commands::catalog::MaintainCatalogRequest,
+) -> Result<commands::catalog::CatalogMaintenanceResponse, String> {
+    state.with_write(|connection| commands::catalog::maintain_catalog(connection, request))
 }
 
 #[cfg(feature = "desktop")]
@@ -511,6 +532,12 @@ mod command_surface_tests {
                 .unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn registers_catalog_maintenance_listing_at_the_tauri_command_seam() {
+        let (_app, window) = test_window();
+        assert!(get_ipc_response(&window, request("list_catalog_maintenance_command")).is_ok());
     }
 }
 
