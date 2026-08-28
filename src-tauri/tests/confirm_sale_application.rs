@@ -62,6 +62,10 @@ fn requested_line(product_id: i64) -> ApplicationRequestedLine {
     ApplicationRequestedLine {
         product_id,
         quantity: Quantity::new(1).unwrap(),
+        captured_unit_price: money(2_500),
+        captured_revision: 0,
+        acknowledged_price: None,
+        acknowledged_revision: None,
     }
 }
 fn summary() -> PersistedSaleSummary {
@@ -270,5 +274,25 @@ fn application_failures_stop_in_order_and_roll_back_the_reservation() {
         valid_request(),
         ConfirmSaleError::Persistence,
         &["reserve", "resolve", "persist"],
+    );
+}
+
+#[test]
+fn stale_catalog_price_rolls_back_the_reserved_sale_before_any_fact_is_persisted() {
+    let mut repository = repository_double(Ok(Reservation::Reserved));
+    repository.resolution = Err(ConfirmSaleError::StaleCatalogPrice {
+        product_id: 1,
+        current_unit_price: money(2_700),
+        current_revision: 1,
+    });
+    assert_failure_rolls_back(
+        repository,
+        request(vec![requested_line(1)]),
+        ConfirmSaleError::StaleCatalogPrice {
+            product_id: 1,
+            current_unit_price: money(2_700),
+            current_revision: 1,
+        },
+        &["reserve", "resolve"],
     );
 }

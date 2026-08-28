@@ -5,7 +5,7 @@ export const CATALOG_INTENT = { ARCHIVE: "archive", REACTIVATE: "reactivate" } a
 export const ATTRIBUTE_FIELD_TYPE = { TEXT: "text", NUMBER: "number", OPTION: "option" } as const;
 const RESPONSE_KIND = { SUCCESS: "success", ERROR: "error" } as const;
 const ERROR_CODE = { VALIDATION: "validation_error", LIFECYCLE: "lifecycle_blocked", STALE: "stale_catalog_record", PERSISTENCE: "persistence_failure", UNAVAILABLE: "catalog_unavailable" } as const;
-export interface ProductSearchResult { product_id: number; sku: string; name: string; category_name: string; available_quantity: number; catalog_unit_price_centavos: number; }
+export interface ProductSearchResult { product_id: number; sku: string; name: string; category_name: string; available_quantity: number; catalog_unit_price_centavos: number; revision: number; }
 export interface CatalogMaintenanceRecord { entity_id: number; target: (typeof CATALOG_TARGET)[keyof typeof CATALOG_TARGET]; label: string; activity: "active" | "archived"; revision: number; }
 export interface MaintainCatalogInput { target: CatalogMaintenanceRecord["target"]; entity_id: number; intent: (typeof CATALOG_INTENT)[keyof typeof CATALOG_INTENT]; expected_revision: number; }
 export interface CatalogAttributeDefinition { definition_id: number; label: string; field_type: (typeof ATTRIBUTE_FIELD_TYPE)[keyof typeof ATTRIBUTE_FIELD_TYPE]; required: boolean; options: string[]; }

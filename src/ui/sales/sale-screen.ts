@@ -41,9 +41,13 @@ export function SaleScreen() {
     dispatch({ type: "confirmation_started", request_id: currentRequestId });
     const request: ConfirmSaleRequest = {
       request_id: currentRequestId,
-      lines: state.lines.map(({ product_id, quantity }) => ({
+      lines: state.lines.map(({ product_id, quantity, captured_unit_price_centavos, captured_revision, acknowledged_price_centavos, acknowledged_revision }) => ({
         product_id,
         quantity,
+        captured_unit_price_centavos,
+        captured_revision,
+        acknowledged_price_centavos,
+        acknowledged_revision,
       })),
       payment: {
         amount_tendered_centavos: optionalCentavos(
@@ -58,6 +62,8 @@ export function SaleScreen() {
       const response = await confirmSale(request);
       if (response.kind === "success")
         dispatch({ type: "confirmation_succeeded", summary: response });
+      else if (response.kind === "stale_catalog_record")
+        dispatch({ type: "stale_price_detected", ...response });
       else
         dispatch({
           type: "confirmation_failed",
@@ -180,7 +186,10 @@ export function SaleScreen() {
             {
               type: "button",
               onClick: () =>
-                dispatch({ type: "remove_product", product_id: line.product_id }),
+                dispatch({
+                  type: "remove_product",
+                  product_id: line.product_id,
+                }),
             },
             "Remove",
           ),
@@ -229,11 +238,14 @@ export function SaleScreen() {
     state.feedback
       ? createElement("p", { role: "alert" }, state.feedback)
       : null,
+    state.stale_price
+      ? createElement("button", { type: "button", onClick: () => dispatch({ type: "acknowledge_stale_price", product_id: state.stale_price!.product_id, current_unit_price_centavos: state.stale_price!.current_unit_price_centavos, current_revision: state.stale_price!.current_revision }) }, `Acknowledge current price (${state.stale_price.current_unit_price_centavos} centavos)`)
+      : null,
     createElement(
       "button",
       {
         type: "button",
-        disabled: state.confirmation === "pending" || state.lines.length === 0,
+        disabled: state.confirmation === "pending" || state.lines.length === 0 || state.stale_price !== null,
         onClick: confirm,
       },
       state.confirmation === "pending" ? "Confirming…" : "Confirm sale",

@@ -10,6 +10,10 @@ use super::{ConfirmSaleError, ConfirmSaleRepository, PersistedSaleSummary, Reser
 pub struct ApplicationRequestedLine {
     pub product_id: i64,
     pub quantity: Quantity,
+    pub captured_unit_price: MoneyCentavos,
+    pub captured_revision: i64,
+    pub acknowledged_price: Option<MoneyCentavos>,
+    pub acknowledged_revision: Option<i64>,
 }
 
 pub struct ApplicationConfirmSaleRequest {

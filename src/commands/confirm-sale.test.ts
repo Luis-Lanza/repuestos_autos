@@ -16,7 +16,7 @@ test("sends only the reduced confirmation payload", async () => {
 
   const result = await confirmSale({
     request_id: "550e8400-e29b-41d4-a716-446655440050",
-    lines: [{ product_id: 1, quantity: 2 }],
+    lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: {
       amount_tendered_centavos: 3_000,
       qr_applied_centavos: 2_000,
@@ -34,7 +34,7 @@ test("sends only the reduced confirmation payload", async () => {
       payload: {
         request: {
           request_id: "550e8400-e29b-41d4-a716-446655440050",
-          lines: [{ product_id: 1, quantity: 2 }],
+          lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
           payment: {
             amount_tendered_centavos: 3_000,
             qr_applied_centavos: 2_000,
@@ -43,6 +43,21 @@ test("sends only the reduced confirmation payload", async () => {
       },
     },
   ]);
+});
+
+test("forwards captured facts and an exact stale-price acknowledgement", async () => {
+  const calls: unknown[] = [];
+  const confirmSale = createConfirmSaleCommand(async (command, payload) => {
+    calls.push({ command, payload });
+    return { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 };
+  });
+  const result = await confirmSale({
+    request_id: "550e8400-e29b-41d4-a716-446655440057",
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0, acknowledged_price_centavos: 2700, acknowledged_revision: 2 }],
+    payment: { amount_tendered_centavos: null, qr_applied_centavos: 2700 },
+  });
+  assert.deepEqual(result, { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 });
+  assert.deepEqual(calls, [{ command: "confirm_sale_command", payload: { request: { request_id: "550e8400-e29b-41d4-a716-446655440057", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0, acknowledged_price_centavos: 2700, acknowledged_revision: 2 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2700 } } } }]);
 });
 
 test("preserves nullable payment inputs for cash, QR, and mixed confirmation", async () => {
@@ -58,17 +73,17 @@ test("preserves nullable payment inputs for cash, QR, and mixed confirmation", a
 
   await confirmSale({
     request_id: "550e8400-e29b-41d4-a716-446655440051",
-    lines: [{ product_id: 1, quantity: 1 }],
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
   });
   await confirmSale({
     request_id: "550e8400-e29b-41d4-a716-446655440052",
-    lines: [{ product_id: 2, quantity: 1 }],
+    lines: [{ product_id: 2, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_500 },
   });
   await confirmSale({
     request_id: "550e8400-e29b-41d4-a716-446655440053",
-    lines: [{ product_id: 3, quantity: 1 }],
+    lines: [{ product_id: 3, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: 1_500, qr_applied_centavos: 1_000 },
   });
 
@@ -76,21 +91,21 @@ test("preserves nullable payment inputs for cash, QR, and mixed confirmation", a
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440051",
-        lines: [{ product_id: 1, quantity: 1 }],
+        lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
         payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
       },
     },
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440052",
-        lines: [{ product_id: 2, quantity: 1 }],
+        lines: [{ product_id: 2, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
         payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_500 },
       },
     },
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440053",
-        lines: [{ product_id: 3, quantity: 1 }],
+        lines: [{ product_id: 3, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
         payment: {
           amount_tendered_centavos: 1_500,
           qr_applied_centavos: 1_000,
@@ -124,7 +139,7 @@ test("returns persisted authoritative summaries and backend errors unchanged", a
 
   const result = await confirmSale({
     request_id: "550e8400-e29b-41d4-a716-446655440054",
-    lines: [{ product_id: 1, quantity: 2 }],
+    lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 5_500 },
   });
 
@@ -164,6 +179,8 @@ test("reconstructs the IPC payload from allowlisted request fields", async () =>
       {
         product_id: 1,
         quantity: 1,
+        captured_unit_price_centavos: 2_500,
+        captured_revision: 0,
         negotiated_unit_price_centavos: 2_500,
       },
     ],
@@ -181,7 +198,7 @@ test("reconstructs the IPC payload from allowlisted request fields", async () =>
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440056",
-        lines: [{ product_id: 1, quantity: 1 }],
+        lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
         payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
       },
     },

@@ -8,7 +8,7 @@ Provide offline stock entry, count reconciliation, immutable history, and active
 
 ### Requirement: Active Product Selection
 
-The system MUST reuse Catalog global search for active products and MUST NOT duplicate semantics.
+The system MUST reuse Catalog global search for active products and MUST NOT duplicate semantics. Inventory operations MUST be available only when both the selected product and its category are active. If the product or category is archived or inactive, the operation MUST return a stable unavailable outcome without changing the inventory balance or immutable movement history.
 
 #### Scenario: Select an active product
 
@@ -21,6 +21,20 @@ The system MUST reuse Catalog global search for active products and MUST NOT dup
 - GIVEN the selected product is inactive
 - WHEN an operation is submitted
 - THEN a stable error returns; balance/history are unchanged
+
+#### Scenario: Reject a product with an archived or inactive category
+
+- GIVEN the selected product is active but its category is archived or inactive
+- WHEN an inventory operation is submitted
+- THEN a stable unavailable outcome returns
+- AND the inventory balance and immutable movement history remain unchanged
+
+#### Scenario: Reject an archived product or category without mutation
+
+- GIVEN the selected product or its category is archived
+- WHEN an inventory operation is submitted
+- THEN the operation is unavailable
+- AND no balance or movement history changes
 
 ### Requirement: Positive Stock Entry
 

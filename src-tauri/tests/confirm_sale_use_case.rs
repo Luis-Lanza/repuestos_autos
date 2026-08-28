@@ -57,6 +57,15 @@ fn authoritative_request(
             .map(|(product_id, quantity)| ApplicationRequestedLine {
                 product_id: *product_id,
                 quantity: Quantity::new(*quantity).unwrap(),
+                captured_unit_price: MoneyCentavos::new(if *product_id == 3 {
+                    3_000
+                } else {
+                    2_500
+                })
+                .unwrap(),
+                captured_revision: 0,
+                acknowledged_price: None,
+                acknowledged_revision: None,
             })
             .collect(),
         payment,
@@ -128,6 +137,104 @@ fn assert_no_sale_effects(connection: &rusqlite::Connection) {
             )
             .unwrap(),
         8
+    );
+}
+
+fn captured_request(
+    request_id: &str,
+    price: i64,
+    revision: i64,
+    acknowledged: Option<(i64, i64)>,
+) -> ApplicationConfirmSaleRequest {
+    ApplicationConfirmSaleRequest {
+        request_id: RequestId::parse(request_id).unwrap(),
+        lines: vec![ApplicationRequestedLine {
+            product_id: 1,
+            quantity: Quantity::new(1).unwrap(),
+            captured_unit_price: MoneyCentavos::new(price).unwrap(),
+            captured_revision: revision,
+            acknowledged_price: acknowledged.map(|(price, _)| MoneyCentavos::new(price).unwrap()),
+            acknowledged_revision: acknowledged.map(|(_, revision)| revision),
+        }],
+        payment: PaymentInput {
+            amount_tendered: None,
+            qr_applied: Some(
+                MoneyCentavos::new(acknowledged.map_or(price, |(price, _)| price)).unwrap(),
+            ),
+        },
+    }
+}
+
+#[test]
+fn stale_prices_require_an_exact_acknowledgement_and_confirmed_lines_remain_historical() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let before = snapshot(&connection);
+    connection
+        .execute(
+            "UPDATE products SET minimum_unit_price_centavos = 2700, revision = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    let stale = captured_request("550e8400-e29b-41d4-a716-446655440127", 2_500, 0, None);
+    assert_eq!(
+        confirm_authoritative(&mut connection, stale),
+        Err(ConfirmSaleError::StaleCatalogPrice {
+            product_id: 1,
+            current_unit_price: MoneyCentavos::new(2_700).unwrap(),
+            current_revision: 1
+        })
+    );
+    assert_eq!(snapshot(&connection), before);
+    connection
+        .execute(
+            "UPDATE products SET minimum_unit_price_centavos = 2800, revision = 2 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    let stale_again = captured_request(
+        "550e8400-e29b-41d4-a716-446655440128",
+        2_500,
+        0,
+        Some((2_700, 1)),
+    );
+    assert_eq!(
+        confirm_authoritative(&mut connection, stale_again),
+        Err(ConfirmSaleError::StaleCatalogPrice {
+            product_id: 1,
+            current_unit_price: MoneyCentavos::new(2_800).unwrap(),
+            current_revision: 2
+        })
+    );
+    assert_eq!(snapshot(&connection), before);
+    let confirmed = confirm_authoritative(
+        &mut connection,
+        captured_request(
+            "550e8400-e29b-41d4-a716-446655440129",
+            2_500,
+            0,
+            Some((2_800, 2)),
+        ),
+    )
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE products SET minimum_unit_price_centavos = 3000, revision = 3 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        confirmed.lines[0].negotiated_unit_price,
+        MoneyCentavos::new(2_800).unwrap()
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT negotiated_unit_price_centavos FROM sale_lines WHERE sale_id = ?1",
+                [confirmed.sale_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2_800
     );
 }
 
@@ -374,13 +481,6 @@ fn resolves_catalog_prices_in_request_order_and_writes_compatibility_snapshots()
             [],
         )
         .unwrap();
-    connection
-        .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 2700 WHERE id = 1",
-            [],
-        )
-        .unwrap();
-
     let sale = confirm_authoritative(
         &mut connection,
         authoritative_request(
@@ -402,9 +502,9 @@ fn resolves_catalog_prices_in_request_order_and_writes_compatibility_snapshots()
     assert_eq!(sale.lines[1].product_id, 1);
     assert_eq!(
         sale.lines[1].negotiated_unit_price,
-        MoneyCentavos::new(2_700).unwrap()
+        MoneyCentavos::new(2_500).unwrap()
     );
-    assert_eq!(sale.total, MoneyCentavos::new(8_400).unwrap());
+    assert_eq!(sale.total, MoneyCentavos::new(8_000).unwrap());
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM sale_lines WHERE negotiated_unit_price_centavos = minimum_unit_price_snapshot_centavos", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
 }
 

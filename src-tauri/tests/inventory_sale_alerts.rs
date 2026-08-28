@@ -20,6 +20,10 @@ fn confirmed_sale_immediately_surfaces_a_derived_low_stock_alert() {
             lines: vec![RequestedLine {
                 product_id: 1,
                 quantity: 1,
+                captured_unit_price_centavos: 2_500,
+                captured_revision: 0,
+                acknowledged_price_centavos: None,
+                acknowledged_revision: None,
             }],
             payment: PaymentInputRequest {
                 amount_tendered_centavos: None,

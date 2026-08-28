@@ -54,20 +54,21 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
             .map(|line| {
                 let product = transaction
                     .query_row(
-                        "SELECT active, minimum_unit_price_centavos FROM products WHERE id = ?1",
+                        "SELECT p.active, c.active, p.minimum_unit_price_centavos, p.revision FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
                         [line.product_id],
-                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
                     )
                     .optional()
                     .map_err(|_| ConfirmSaleError::Persistence)?;
                 match product {
-                    Some((1, catalog_price)) => SaleLine::priced(
-                        line.product_id,
-                        line.quantity,
-                        MoneyCentavos::new(catalog_price)
-                            .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?,
-                    )
-                    .map_err(|_| ConfirmSaleError::MoneyOverflow),
+                    Some((1, 1, price, revision)) => {
+                        let current = MoneyCentavos::new(price).map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
+                        if (line.captured_unit_price != current || line.captured_revision != revision)
+                            && (line.acknowledged_price != Some(current) || line.acknowledged_revision != Some(revision)) {
+                            return Err(ConfirmSaleError::StaleCatalogPrice { product_id: line.product_id, current_unit_price: current, current_revision: revision });
+                        }
+                        SaleLine::priced(line.product_id, line.quantity, current).map_err(|_| ConfirmSaleError::MoneyOverflow)
+                    }
                     Some(_) => Err(ConfirmSaleError::ProductInactive),
                     None => Err(ConfirmSaleError::ProductMissing),
                 }

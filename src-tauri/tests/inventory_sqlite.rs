@@ -11,6 +11,10 @@ fn request(value: &str) -> RequestId {
     RequestId::parse(value).unwrap()
 }
 
+fn scalar(connection: &rusqlite::Connection, query: &str) -> i64 {
+    connection.query_row(query, [], |row| row.get(0)).unwrap()
+}
+
 #[test]
 fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
     let mut connection = open_seeded_catalog().unwrap();
@@ -236,4 +240,45 @@ fn post_insert_balance_failure_rolls_back_the_inventory_operation() {
             .resulting_quantity,
         10
     );
+}
+
+#[test]
+fn archived_categories_exclude_active_products_from_operations_and_alerts_without_mutation() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection
+        .execute_batch("UPDATE categories SET active = 0 WHERE id = 1")
+        .unwrap();
+    let balance = scalar(
+        &connection,
+        "SELECT quantity FROM stock_balances WHERE product_id = 1",
+    );
+    let operation = InventoryOperation::stock_entry(
+        1,
+        request("550e8400-e29b-41d4-a716-446655440110"),
+        1,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(operation),
+        Err(InventoryError::INACTIVE_PRODUCT)
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT quantity FROM stock_balances WHERE product_id = 1"
+        ),
+        balance
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL"
+        ),
+        0
+    );
+    assert!(SqliteInventoryRepository::new(&mut connection)
+        .list_alerts()
+        .unwrap()
+        .is_empty());
 }

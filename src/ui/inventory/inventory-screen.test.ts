@@ -13,7 +13,7 @@ test("describes stock entry and physical-count workflows for accessible navigati
 });
 
 test("runs Catalog search, Select, and renders both inventory operation choices", async () => {
-  const product = { product_id: 1, sku: "FLT", name: "Filter", available_quantity: 8, category_name: "Filters", catalog_unit_price_centavos: 2500 };
+  const product = { product_id: 1, sku: "FLT", name: "Filter", available_quantity: 8, category_name: "Filters", catalog_unit_price_centavos: 2500, revision: 0 };
   const calls: unknown[] = [];
   const searchActiveProducts = createSearchProductsCommand(async (_command, payload) => { calls.push(payload); return [product]; });
   const interaction = createInventoryCatalogInteraction(searchActiveProducts);

@@ -237,6 +237,10 @@ fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
             lines: vec![RequestedLine {
                 product_id: product.product_id,
                 quantity: 2,
+                captured_unit_price_centavos: 4_500,
+                captured_revision: 0,
+                acknowledged_price_centavos: None,
+                acknowledged_revision: None,
             }],
             payment: PaymentInputRequest {
                 amount_tendered_centavos: None,

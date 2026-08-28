@@ -11,6 +11,7 @@ const brakePad: ProductSearchResult = {
   category_name: "Brakes",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_500,
+  revision: 0,
 };
 
 test("presents catalog price as draft guidance from the typed search result", () => {
