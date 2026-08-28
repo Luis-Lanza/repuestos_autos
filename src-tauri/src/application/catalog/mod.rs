@@ -10,7 +10,9 @@ use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
 pub mod repository;
 
-use repository::{CatalogMaintenanceRepository, CreateProductRepository};
+use repository::{
+    CatalogMaintenanceRepository, CatalogMetadataRepository, CreateProductRepository,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MaintainCatalogInput {
@@ -42,6 +44,162 @@ pub enum MaintainCatalogError {
     LifecycleBlocked,
     StaleCatalogRecord,
     PersistenceFailure,
+}
+
+#[derive(Clone, Debug)]
+pub enum EditCatalogInput {
+    Category {
+        entity_id: i64,
+        expected_revision: i64,
+        name: String,
+    },
+    Product {
+        entity_id: i64,
+        expected_revision: i64,
+        sku: String,
+        name: String,
+        catalog_unit_price_centavos: i64,
+        attribute_values: Vec<AttributeValueInput>,
+    },
+}
+impl EditCatalogInput {
+    pub fn category(entity_id: i64, expected_revision: i64, name: impl Into<String>) -> Self {
+        Self::Category {
+            entity_id,
+            expected_revision,
+            name: name.into(),
+        }
+    }
+    pub fn product(
+        entity_id: i64,
+        expected_revision: i64,
+        sku: impl Into<String>,
+        name: impl Into<String>,
+        catalog_unit_price_centavos: i64,
+        attribute_values: Vec<AttributeValueInput>,
+    ) -> Self {
+        Self::Product {
+            entity_id,
+            expected_revision,
+            sku: sku.into(),
+            name: name.into(),
+            catalog_unit_price_centavos,
+            attribute_values,
+        }
+    }
+}
+
+pub struct EditCatalogUseCase<'connection, Repository> {
+    connection: &'connection mut Connection,
+    repository: Repository,
+}
+impl<'connection, Repository> EditCatalogUseCase<'connection, Repository>
+where
+    Repository: CatalogMetadataRepository,
+{
+    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+        Self {
+            connection,
+            repository,
+        }
+    }
+    pub fn execute(
+        self,
+        input: EditCatalogInput,
+    ) -> std::result::Result<CatalogSnapshot, MaintainCatalogError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| MaintainCatalogError::PersistenceFailure)?;
+        let (target, id, revision) = match &input {
+            EditCatalogInput::Category {
+                entity_id,
+                expected_revision,
+                ..
+            } => (CatalogTarget::Category, *entity_id, *expected_revision),
+            EditCatalogInput::Product {
+                entity_id,
+                expected_revision,
+                ..
+            } => (CatalogTarget::Product, *entity_id, *expected_revision),
+        };
+        let snapshot = self
+            .repository
+            .load(&transaction, target, id)
+            .map_err(|_| MaintainCatalogError::PersistenceFailure)?
+            .ok_or(MaintainCatalogError::MissingCatalogRecord)?;
+        if snapshot.revision != revision {
+            return Err(MaintainCatalogError::StaleCatalogRecord);
+        }
+        let persisted = match input {
+            EditCatalogInput::Category { name, .. } => {
+                crate::domain::catalog::validate_maintenance_category(&name)
+                    .map_err(|_| MaintainCatalogError::MissingCatalogRecord)?;
+                if self
+                    .repository
+                    .category_name_exists(&transaction, id, name.trim())
+                    .map_err(|_| MaintainCatalogError::PersistenceFailure)?
+                {
+                    return Err(MaintainCatalogError::MissingCatalogRecord);
+                }
+                self.repository
+                    .edit_category(&transaction, id, revision, name.trim())
+            }
+            EditCatalogInput::Product {
+                sku,
+                name,
+                catalog_unit_price_centavos,
+                attribute_values,
+                ..
+            } => {
+                let metadata = self
+                    .repository
+                    .product_metadata_for_normalized_patch(
+                        &transaction,
+                        id,
+                        sku.trim(),
+                        name.trim(),
+                    )
+                    .map_err(|_| MaintainCatalogError::PersistenceFailure)?
+                    .ok_or(MaintainCatalogError::MissingCatalogRecord)?;
+                let values = attribute_values
+                    .iter()
+                    .map(|value| AttributeValueDraft {
+                        definition_id: value.definition_id,
+                        value: value.value.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let validated = crate::domain::catalog::validate_maintenance_product(
+                    &sku,
+                    &name,
+                    catalog_unit_price_centavos,
+                    &metadata.definitions,
+                    &values,
+                )
+                .map_err(|_| MaintainCatalogError::MissingCatalogRecord)?;
+                if metadata.duplicate_normalized_identity {
+                    return Err(MaintainCatalogError::MissingCatalogRecord);
+                }
+                self.repository.edit_product(
+                    &transaction,
+                    id,
+                    revision,
+                    sku.trim(),
+                    name.trim(),
+                    catalog_unit_price_centavos,
+                    &validated,
+                )
+            }
+        }
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => MaintainCatalogError::StaleCatalogRecord,
+            _ => MaintainCatalogError::PersistenceFailure,
+        })?;
+        transaction
+            .commit()
+            .map_err(|_| MaintainCatalogError::PersistenceFailure)?;
+        Ok(persisted)
+    }
 }
 
 pub struct MaintainCatalogUseCase<'connection, Repository> {
@@ -327,12 +485,7 @@ pub fn create_category(
         .map_err(|_| CreateCategoryError::Persistence)?;
     let category_id = transaction.last_insert_rowid();
     for field in fields {
-        transaction
-            .execute(
-                "INSERT INTO attribute_definitions (category_id, label, field_type, required) VALUES (?1, ?2, ?3, ?4)",
-                params![category_id, field.label.trim(), field.field_type.as_str(), field.required],
-            )
-            .map_err(|_| CreateCategoryError::Persistence)?;
+        transaction.execute("INSERT INTO attribute_definitions (category_id, label, field_type, required) VALUES (?1, ?2, ?3, ?4)", params![category_id, field.label.trim(), field.field_type.as_str(), field.required]).map_err(|_| CreateCategoryError::Persistence)?;
         let definition_id = transaction.last_insert_rowid();
         for option in field.options {
             transaction
@@ -361,9 +514,7 @@ pub fn create_product(
 }
 
 fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec<CategoryField>> {
-    let mut statement = connection.prepare(
-        "SELECT id, label, field_type, required FROM attribute_definitions WHERE category_id = ?1 ORDER BY id",
-    )?;
+    let mut statement = connection.prepare("SELECT id, label, field_type, required FROM attribute_definitions WHERE category_id = ?1 ORDER BY id")?;
     let fields = statement
         .query_map([category_id], |row| {
             Ok((

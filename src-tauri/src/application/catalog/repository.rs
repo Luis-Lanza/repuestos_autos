@@ -6,6 +6,50 @@ use crate::domain::catalog::{
 
 use super::CreateProductInput;
 
+pub trait CatalogMetadataRepository {
+    fn load(
+        &self,
+        transaction: &Transaction<'_>,
+        target: CatalogTarget,
+        entity_id: i64,
+    ) -> Result<Option<CatalogSnapshot>>;
+    fn category_name_exists(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        name: &str,
+    ) -> Result<bool>;
+    fn product_metadata_for_normalized_patch(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        sku: &str,
+        name: &str,
+    ) -> Result<Option<ProductMetadata>>;
+    fn edit_category(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        revision: i64,
+        name: &str,
+    ) -> Result<CatalogSnapshot>;
+    fn edit_product(
+        &self,
+        transaction: &Transaction<'_>,
+        id: i64,
+        revision: i64,
+        sku: &str,
+        name: &str,
+        price: i64,
+        values: &[ValidatedAttributeValue],
+    ) -> Result<CatalogSnapshot>;
+}
+
+pub struct ProductMetadata {
+    pub definitions: Vec<AttributeDefinition>,
+    pub duplicate_normalized_identity: bool,
+}
+
 pub trait CreateProductRepository {
     fn category_name(
         &self,
