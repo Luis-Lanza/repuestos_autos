@@ -13,7 +13,7 @@ pub use backup::{
 };
 pub use inventory_repository::SqliteInventoryRepository;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
@@ -114,6 +114,16 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         ))?;
         validate_foreign_keys(&transaction)?;
         transaction.pragma_update(None, "user_version", 6)?;
+        transaction.commit()?;
+        version = 6;
+    }
+
+    if version == 6 {
+        let transaction = connection.transaction()?;
+        validate_version_six_schema(&transaction)?;
+        transaction.execute_batch(include_str!("migrations/0007_catalog_maintenance.sql"))?;
+        validate_version_seven_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 7)?;
         transaction.commit()?;
     }
 
@@ -242,6 +252,56 @@ fn validate_version_five_schema(connection: &Connection) -> Result<()> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     Ok(())
+}
+
+fn validate_version_six_schema(connection: &Connection) -> Result<()> {
+    validate_version_five_schema(connection)?;
+    for trigger in [
+        "inventory_movements_immutable_update",
+        "inventory_movements_immutable_delete",
+    ] {
+        let exists = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?1)",
+            [trigger],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    Ok(())
+}
+
+fn validate_version_seven_schema(connection: &Connection) -> Result<()> {
+    validate_version_six_schema(connection)?;
+    for (table, columns) in [
+        ("categories", &["active", "revision"][..]),
+        ("products", &["revision"][..]),
+        (
+            "catalog_audit",
+            &[
+                "entity_type",
+                "entity_id",
+                "operation",
+                "before_json",
+                "after_json",
+                "revision",
+                "occurred_at",
+            ][..],
+        ),
+    ] {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+        let actual = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>>>()?;
+        if columns
+            .iter()
+            .any(|column| !actual.iter().any(|item| item == column))
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    validate_foreign_keys(connection)
 }
 
 fn validate_foreign_keys(connection: &Connection) -> Result<()> {
