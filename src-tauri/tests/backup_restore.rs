@@ -11,6 +11,8 @@ use repuestos_autos::commands::backup::{
     confirm_restore, prepare_restore, BackupCommandState, BackupResponse, ConfirmRestoreRequest,
     PrepareRestoreRequest, ALLOWED_COMMANDS,
 };
+#[cfg(feature = "desktop")]
+use repuestos_autos::commands::backup::{select_callback_path, PathSelection};
 use repuestos_autos::infrastructure::filesystem::{BackupStore, StorageError};
 use repuestos_autos::infrastructure::sqlite::{
     create_snapshot, production_database_config, stage_and_validate, BackupValidationError,
@@ -44,11 +46,12 @@ fn versioned_database(path: &Path, version: i64) {
 }
 
 #[test]
-fn publishes_a_synced_non_overwriting_backup_to_native_paths() {
+fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root() {
     let directory = temporary_directory("publish");
     let snapshot = directory.join("snapshot.sqlite3");
-    let destination = directory.join("USB á");
-    fs::create_dir_all(&destination).unwrap();
+    let selected_root = directory.join("USB á");
+    let destination = selected_root.join("backup-restore");
+    fs::create_dir_all(&selected_root).unwrap();
     fs::write(&snapshot, b"consistent snapshot").unwrap();
 
     let store = BackupStore::new(&directory.join("app-data"));
@@ -56,6 +59,7 @@ fn publishes_a_synced_non_overwriting_backup_to_native_paths() {
         .publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3")
         .unwrap();
 
+    assert!(destination.is_dir());
     assert_eq!(fs::read(&published.path).unwrap(), b"consistent snapshot");
     assert!(!destination
         .join("backup-20260827T204000Z.sqlite3.part")
@@ -78,6 +82,26 @@ fn publishes_a_synced_non_overwriting_backup_to_native_paths() {
             .unwrap_err(),
         StorageError::StorageUnavailable
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_a_selected_root_that_disappears_before_publication_without_recreating_it() {
+    let directory = temporary_directory("removed-selected-root");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let selected_root = directory.join("removable-like-mount");
+    let destination = selected_root.join("backup-restore");
+    fs::create_dir_all(&selected_root).unwrap();
+    fs::write(&snapshot, b"consistent snapshot").unwrap();
+    fs::remove_dir_all(&selected_root).unwrap();
+
+    let store = BackupStore::new(&directory.join("app-data"));
+
+    assert_eq!(
+        store.publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3"),
+        Err(StorageError::StorageUnavailable)
+    );
+    assert!(!selected_root.exists());
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -567,4 +591,27 @@ fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes(
         BackupResponse::error("token_invalid")
     );
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(feature = "desktop")]
+#[test]
+fn maps_nonblocking_picker_callbacks_to_the_typed_command_contract() {
+    let selected = tauri::async_runtime::block_on(select_callback_path(|complete| {
+        complete(Some(PathBuf::from("/media/USB á")));
+    }));
+    let cancelled = tauri::async_runtime::block_on(select_callback_path(|complete| {
+        complete(None);
+    }));
+
+    assert_eq!(
+        selected,
+        PathSelection::Selected {
+            path: PathBuf::from("/media/USB á")
+        }
+    );
+    assert_eq!(cancelled, PathSelection::Cancelled);
+    assert_eq!(
+        serde_json::to_value(cancelled).unwrap(),
+        serde_json::json!({ "kind": "cancelled" })
+    );
 }

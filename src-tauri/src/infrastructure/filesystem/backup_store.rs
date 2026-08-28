@@ -62,7 +62,18 @@ impl BackupStore {
         if !file_name.ends_with(".sqlite3") || Path::new(file_name).components().count() != 1 {
             return Err(StorageError::StorageUnavailable);
         }
-        fs::create_dir_all(destination).map_err(|_| StorageError::StorageUnavailable)?;
+        let Some(selected_root) = destination.parent() else {
+            return Err(StorageError::StorageUnavailable);
+        };
+        if !selected_root.is_dir() {
+            return Err(StorageError::StorageUnavailable);
+        }
+        // Create only the application subdirectory: never recreate a selected root.
+        match fs::create_dir(destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && destination.is_dir() => {}
+            Err(_) => return Err(StorageError::StorageUnavailable),
+        }
         let published = destination.join(file_name);
         if published.exists() {
             return Err(StorageError::DestinationExists);

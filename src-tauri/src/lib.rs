@@ -233,31 +233,37 @@ pub fn run() -> Result<(), tauri::Error> {
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn choose_backup_destination_command(
+async fn choose_backup_destination_command(
     window: tauri::WebviewWindow,
 ) -> commands::backup::PathSelection {
-    commands::backup::select_path(
+    commands::backup::select_callback_path(|complete| {
         window
             .app_handle()
             .dialog()
             .file()
-            .blocking_pick_folder()
-            .and_then(|path| path.into_path().ok()),
-    )
+            .pick_folder(move |path| {
+                complete(path.and_then(|path| path.into_path().ok()));
+            });
+    })
+    .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn choose_restore_source_command(window: tauri::WebviewWindow) -> commands::backup::PathSelection {
-    commands::backup::select_path(
+async fn choose_restore_source_command(
+    window: tauri::WebviewWindow,
+) -> commands::backup::PathSelection {
+    commands::backup::select_callback_path(|complete| {
         window
             .app_handle()
             .dialog()
             .file()
             .add_filter("SQLite backup", &["sqlite3"])
-            .blocking_pick_file()
-            .and_then(|path| path.into_path().ok()),
-    )
+            .pick_file(move |path| {
+                complete(path.and_then(|path| path.into_path().ok()));
+            });
+    })
+    .await
 }
 
 #[cfg(feature = "desktop")]
