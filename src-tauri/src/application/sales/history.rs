@@ -42,12 +42,13 @@ fn format_sqlite(value: OffsetDateTime) -> Result<String, HistoryError> {
         .format(SQLITE_TIMESTAMP_FORMAT)
         .map_err(|_| HistoryError::InvalidRange)
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PaymentMethod {
     Cash,
     Qr,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SaleHistorySummary {
     pub sale_id: i64,
     pub confirmed_at: String,
@@ -80,7 +81,7 @@ impl SaleHistoryPage {
         self.has_more
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct HistoricalLine {
     pub product_id: i64,
     pub sku: Option<String>,
@@ -89,7 +90,8 @@ pub struct HistoricalLine {
     pub unit_price_centavos: MoneyCentavos,
     pub line_total_centavos: MoneyCentavos,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "method", rename_all = "snake_case")]
 pub enum HistoricalPayment {
     Cash {
         amount_applied_centavos: MoneyCentavos,
@@ -100,7 +102,7 @@ pub enum HistoricalPayment {
         amount_applied_centavos: MoneyCentavos,
     },
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SaleHistoryDetail {
     pub sale_id: i64,
     pub confirmed_at: String,
