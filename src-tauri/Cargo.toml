@@ -19,6 +19,7 @@ rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
