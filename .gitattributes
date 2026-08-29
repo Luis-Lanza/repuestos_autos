@@ -1,0 +1,5 @@
+# Preserve vendored project skills byte-for-byte with their upstream sources.
+.agents/skills/** -whitespace
+.agents/licenses/*.txt -whitespace
+.claude/skills/** -whitespace
+.pi/skills/** -whitespace
