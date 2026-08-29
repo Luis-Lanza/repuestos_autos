@@ -5,6 +5,7 @@ use rusqlite::{Connection, Result};
 pub mod backup;
 pub mod catalog_repository;
 pub mod inventory_repository;
+pub mod sale_history_repository;
 pub mod sale_repository;
 
 pub use backup::{
@@ -14,7 +15,7 @@ pub use backup::{
 pub use catalog_repository::SqliteCatalogRepository;
 pub use inventory_repository::SqliteInventoryRepository;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationCompatibility {
@@ -156,6 +157,14 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
             "migrations/0008_catalog_metadata_name_uniqueness.sql"
         ))?;
         transaction.pragma_update(None, "user_version", 8)?;
+        transaction.commit()?;
+        version = 8;
+    }
+
+    if version == 8 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!("migrations/0009_sales_history_index.sql"))?;
+        transaction.pragma_update(None, "user_version", 9)?;
         transaction.commit()?;
     }
 

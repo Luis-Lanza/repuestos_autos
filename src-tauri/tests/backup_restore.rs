@@ -22,12 +22,17 @@ use repuestos_autos::{DatabaseState, RestoreState};
 use rusqlite::Connection;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 5] = [
+const MIGRATIONS: [&str; 8] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0005_catalog_onboarding_hardening.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0006_operational_inventory_control.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0007_catalog_maintenance.sql"),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0008_catalog_metadata_name_uniqueness.sql"
+    ),
+    include_str!("../src/infrastructure/sqlite/migrations/0009_sales_history_index.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
