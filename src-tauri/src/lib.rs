@@ -192,7 +192,9 @@ fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Buil
         catalog_metadata_detail_command,
         list_categories_command,
         create_category_command,
-        create_product_command
+        create_product_command,
+        list_sales_history_command,
+        sale_history_detail_command
     ])
 }
 
@@ -213,6 +215,8 @@ fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builde
             list_categories_command,
             create_category_command,
             create_product_command,
+            list_sales_history_command,
+            sale_history_detail_command,
             choose_backup_destination_command,
             choose_restore_source_command,
             create_backup_command,
@@ -410,6 +414,44 @@ fn catalog_metadata_detail_command(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn list_sales_history_command(
+    state: tauri::State<AppState>,
+    request: commands::sales_history::ListSalesHistoryRequest,
+) -> commands::sales_history::SalesHistoryListResponse {
+    state
+        .with_read(|connection| {
+            Ok(commands::sales_history::list_sales_history(
+                connection, request,
+            ))
+        })
+        .unwrap_or_else(|_| {
+            commands::sales_history::SalesHistoryListResponse::Error(
+                commands::sales_history::persistence_failure(),
+            )
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn sale_history_detail_command(
+    state: tauri::State<AppState>,
+    sale_id: i64,
+) -> commands::sales_history::SalesHistoryDetailResponse {
+    state
+        .with_read(|connection| {
+            Ok(commands::sales_history::sale_history_detail(
+                connection, sale_id,
+            ))
+        })
+        .unwrap_or_else(|_| {
+            commands::sales_history::SalesHistoryDetailResponse::Error(
+                commands::sales_history::persistence_failure(),
+            )
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn list_categories_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::onboarding::ListCategoriesResponse, String> {
@@ -579,6 +621,37 @@ mod command_surface_tests {
     fn registers_catalog_maintenance_listing_at_the_tauri_command_seam() {
         let (_app, window) = test_window();
         assert!(get_ipc_response(&window, request("list_catalog_maintenance_command")).is_ok());
+    }
+
+    #[test]
+    fn registers_read_only_sales_history_commands_at_the_tauri_command_seam() {
+        let (app, window) = test_window();
+        let before = app
+            .state::<AppState>()
+            .with_read(|connection| Ok(snapshot(connection)))
+            .unwrap();
+        assert!(get_ipc_response(
+            &window,
+            request_with(
+                "list_sales_history_command",
+                serde_json::json!({
+                    "from_utc": "2024-03-10T05:00:00Z",
+                    "to_exclusive_utc": "2024-03-11T04:00:00Z"
+                }),
+            ),
+        )
+        .is_ok());
+        let detail_request = InvokeRequest {
+            body: serde_json::json!({ "saleId": 999 }).into(),
+            ..request("sale_history_detail_command")
+        };
+        assert!(get_ipc_response(&window, detail_request).is_ok());
+        assert_eq!(
+            app.state::<AppState>()
+                .with_read(|connection| Ok(snapshot(connection)))
+                .unwrap(),
+            before
+        );
     }
 
     #[test]
