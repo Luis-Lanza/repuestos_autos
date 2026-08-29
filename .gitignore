@@ -3,4 +3,9 @@
 
 # Generated dependencies and build output
 node_modules/
+dist/
 src-tauri/target/
+src-tauri/gen/schemas/
+
+# Local Markdown issue workspace
+.scratch/
