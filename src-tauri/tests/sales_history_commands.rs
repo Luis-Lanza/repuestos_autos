@@ -43,7 +43,10 @@ fn sales_history_commands_project_tagged_read_only_outcomes() {
     assert!(!has_more);
     assert_eq!(sales.len(), 1);
     assert_eq!(sales[0].total_centavos.value(), 2_500);
-    assert!(matches!(sales[0].payment_methods.as_slice(), [repuestos_autos::application::sales::PaymentMethod::Cash]));
+    assert!(matches!(
+        sales[0].payment_methods.as_slice(),
+        [repuestos_autos::application::sales::PaymentMethod::Cash]
+    ));
 
     let detail = sale_history_detail(&connection, 71);
     let SalesHistoryDetailResponse::Success { detail } = detail else {
