@@ -13,6 +13,9 @@ use repuestos_autos::commands::backup::{
 };
 #[cfg(feature = "desktop")]
 use repuestos_autos::commands::backup::{select_callback_path, PathSelection};
+use repuestos_autos::commands::catalog::{
+    list_catalog_maintenance, CatalogMaintenanceListResponse,
+};
 use repuestos_autos::infrastructure::filesystem::{BackupStore, StorageError};
 use repuestos_autos::infrastructure::sqlite::{
     create_snapshot, production_database_config, stage_and_validate, BackupValidationError,
@@ -319,6 +322,32 @@ fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_instal
         assert!(directory.join("pre-restore.sqlite3").exists(), "{state:?}");
         fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[test]
+fn startup_recovery_accepts_current_schema_operational_inventory_movements() {
+    let directory = temporary_directory("recover-operational-inventory");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    versioned_database(config.path(), CURRENT_SCHEMA_VERSION);
+    Connection::open(config.path())
+        .unwrap()
+        .execute(
+            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (1, 'stock_entry', 1, 'restart-safe-entry', 9)",
+            [],
+        )
+        .unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+    let listed = recovered
+        .with_read(list_catalog_maintenance)
+        .expect("a valid current-schema inventory movement must not disable the database");
+
+    assert!(matches!(
+        listed,
+        CatalogMaintenanceListResponse::Success { records } if !records.is_empty()
+    ));
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

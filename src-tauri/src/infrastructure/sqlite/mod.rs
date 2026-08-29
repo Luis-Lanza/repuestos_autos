@@ -296,7 +296,37 @@ fn validate_version_five_schema(connection: &Connection) -> Result<()> {
 }
 
 fn validate_version_six_schema(connection: &Connection) -> Result<()> {
-    validate_version_five_schema(connection)?;
+    let mut statement = connection.prepare("PRAGMA table_info(inventory_movements)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    if [
+        "id",
+        "product_id",
+        "sale_id",
+        "sale_line_id",
+        "movement_type",
+        "quantity_delta",
+        "occurred_at",
+        "reason",
+        "operator_id",
+        "source_reference",
+        "request_id",
+        "counted_quantity",
+        "resulting_quantity",
+    ]
+    .iter()
+    .any(|column| !columns.iter().any(|actual| actual == column))
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM inventory_movements WHERE NOT ((movement_type = 'opening_stock' AND quantity_delta > 0 AND sale_id IS NULL AND sale_line_id IS NULL) OR (movement_type = 'stock_entry' AND quantity_delta > 0 AND sale_id IS NULL AND sale_line_id IS NULL AND request_id IS NOT NULL AND trim(request_id) <> '' AND resulting_quantity IS NOT NULL AND resulting_quantity >= 0) OR (movement_type = 'sale' AND quantity_delta < 0 AND sale_id IS NOT NULL AND sale_line_id IS NOT NULL) OR (movement_type = 'return' AND quantity_delta > 0 AND sale_id IS NOT NULL AND sale_line_id IS NOT NULL) OR (movement_type = 'adjustment' AND quantity_delta <> 0 AND sale_id IS NULL AND sale_line_id IS NULL AND reason IS NOT NULL AND trim(reason) <> '' AND request_id IS NOT NULL AND trim(request_id) <> '' AND counted_quantity IS NOT NULL AND resulting_quantity IS NOT NULL AND counted_quantity >= 0 AND counted_quantity = resulting_quantity) OR (movement_type = 'cancellation' AND quantity_delta > 0 AND sale_id IS NOT NULL AND sale_line_id IS NOT NULL AND reason IS NOT NULL AND trim(reason) <> '')))",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     for trigger in [
         "inventory_movements_immutable_update",
         "inventory_movements_immutable_delete",
@@ -310,7 +340,7 @@ fn validate_version_six_schema(connection: &Connection) -> Result<()> {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    Ok(())
+    validate_foreign_keys(connection)
 }
 
 fn validate_version_seven_schema(connection: &Connection) -> Result<()> {
