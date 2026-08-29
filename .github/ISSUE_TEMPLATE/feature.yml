@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose a user-facing capability or product improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - type:feature
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user need or operational problem this feature should solve.
+      placeholder: What cannot the user do today, and why does it matter?
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the observable behavior expected after the feature is delivered.
+      placeholder: What should the user be able to accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: State what is included and explicitly excluded.
+      placeholder: Include the smallest coherent vertical and its non-goals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List testable outcomes that prove the feature is complete.
+      placeholder: Use concrete, observable criteria.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add relevant constraints, references, risks, or supporting evidence.
+    validations:
+      required: false
