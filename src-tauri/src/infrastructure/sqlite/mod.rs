@@ -5,6 +5,8 @@ use rusqlite::{Connection, Result};
 pub mod backup;
 pub mod catalog_repository;
 pub mod inventory_repository;
+pub mod post_sale_repository;
+pub mod post_sale_transaction;
 pub mod sale_history_repository;
 pub mod sale_repository;
 
@@ -14,8 +16,10 @@ pub use backup::{
 };
 pub use catalog_repository::SqliteCatalogRepository;
 pub use inventory_repository::SqliteInventoryRepository;
+pub use post_sale_repository::SqlitePostSaleRepository;
+pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 9;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationCompatibility {
@@ -165,6 +169,16 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         let transaction = connection.transaction()?;
         transaction.execute_batch(include_str!("migrations/0009_sales_history_index.sql"))?;
         transaction.pragma_update(None, "user_version", 9)?;
+        transaction.commit()?;
+        version = 9;
+    }
+
+    if version == 9 {
+        let transaction = connection.transaction()?;
+        validate_version_six_schema(&transaction)?;
+        transaction.execute_batch(include_str!("migrations/0010_post_sale_lifecycle.sql"))?;
+        validate_version_ten_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 10)?;
         transaction.commit()?;
     }
 
@@ -338,6 +352,38 @@ fn validate_version_six_schema(connection: &Connection) -> Result<()> {
         )?;
         if !exists {
             return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    validate_foreign_keys(connection)
+}
+
+fn validate_version_ten_schema(connection: &Connection) -> Result<()> {
+    validate_version_six_schema(connection)?;
+    for table in [
+        "post_sale_requests",
+        "sale_returns",
+        "sale_return_lines",
+        "sale_cancellations",
+        "sale_cancellation_lines",
+    ] {
+        let exists = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        for action in ["update", "delete"] {
+            let trigger = format!("{table}_immutable_{action}");
+            let exists = connection.query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?1)",
+                [trigger],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !exists {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
         }
     }
     validate_foreign_keys(connection)
