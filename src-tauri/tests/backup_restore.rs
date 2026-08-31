@@ -22,10 +22,10 @@ use repuestos_autos::infrastructure::sqlite::{
     CURRENT_SCHEMA_VERSION,
 };
 use repuestos_autos::{DatabaseState, RestoreState};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 8] = [
+const MIGRATIONS: [&str; 9] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -36,6 +36,7 @@ const MIGRATIONS: [&str; 8] = [
         "../src/infrastructure/sqlite/migrations/0008_catalog_metadata_name_uniqueness.sql"
     ),
     include_str!("../src/infrastructure/sqlite/migrations/0009_sales_history_index.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0010_post_sale_lifecycle.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
@@ -51,6 +52,128 @@ fn versioned_database(path: &Path, version: i64) {
             .pragma_update(None, "user_version", (index + 2) as i64)
             .unwrap();
     }
+}
+
+fn lifecycle_database(path: &Path) {
+    versioned_database(path, CURRENT_SCHEMA_VERSION);
+    let connection = Connection::open(path).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_lines (id, sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![21, 10, 1, 1, 5_000, 2_500, 5_000],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![41, 1, 10, 21, "sale", -1, "2025-01-01T12:00:00Z"],
+        )
+        .unwrap();
+    for (id, request_id, operation_kind, payload, payload_sha256) in [
+        (100, "return-request", "return", vec![1_u8], "a".repeat(64)),
+        (
+            101,
+            "cancellation-request",
+            "cancellation",
+            vec![2_u8],
+            "b".repeat(64),
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO post_sale_requests (id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, request_id, operation_kind, 10, 1, payload, payload_sha256],
+            )
+            .unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO sale_returns (id, sale_id, occurred_at) VALUES (?1, ?2, ?3)",
+            params![100, 10, "2025-01-02T12:00:00Z"],
+        )
+        .unwrap();
+    for (id, sale_line_id, quantity) in [(50, 20, 1), (51, 21, 1)] {
+        connection
+            .execute(
+                "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![id, 1, 10, sale_line_id, "return", quantity, "2025-01-02T12:00:00Z"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sale_return_lines (return_id, sale_id, sale_line_id, product_id, quantity, movement_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![100, 10, sale_line_id, 1, quantity, id],
+            )
+            .unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO sale_cancellations (id, sale_id, reason, occurred_at) VALUES (?1, ?2, ?3, ?4)",
+            params![101, 10, "inventory correction", "2025-01-03T12:00:00Z"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, occurred_at, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![52, 1, 10, 20, "cancellation", 1, "2025-01-03T12:00:00Z", "inventory correction"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_cancellation_lines (cancellation_id, sale_id, sale_line_id, product_id, restored_quantity, movement_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![101, 10, 20, 1, 1, 52],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_cancellation_lines (cancellation_id, sale_id, sale_line_id, product_id, restored_quantity, movement_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![101, 10, 21, 1, 0, Option::<i64>::None],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE stock_balances SET quantity = ?1 WHERE product_id = ?2",
+            params![8, 1],
+        )
+        .unwrap();
+}
+
+fn rows(connection: &Connection, query: &str) -> Vec<Vec<String>> {
+    let mut statement = connection.prepare(query).unwrap();
+    statement
+        .query_map([], |row| {
+            (0..row.as_ref().column_count())
+                .map(|index| {
+                    row.get::<_, rusqlite::types::Value>(index)
+                        .map(|value| format!("{value:?}"))
+                })
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+}
+
+fn lifecycle_facts(path: &Path) -> Vec<Vec<Vec<String>>> {
+    let connection = Connection::open(path).unwrap();
+    [
+        "SELECT id, request_id, status, total_centavos, confirmed_at FROM sales ORDER BY id",
+        "SELECT id, sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos FROM sale_lines ORDER BY id",
+        "SELECT id, sale_id, method, amount_applied_centavos, amount_tendered_centavos, change_given_centavos FROM sale_payments ORDER BY id",
+        "SELECT id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256, created_at FROM post_sale_requests ORDER BY id",
+        "SELECT id, sale_id, operation_kind, occurred_at FROM sale_returns ORDER BY id",
+        "SELECT return_id, sale_id, sale_line_id, product_id, quantity, movement_id FROM sale_return_lines ORDER BY return_id, sale_line_id",
+        "SELECT id, sale_id, operation_kind, reason, occurred_at FROM sale_cancellations ORDER BY id",
+        "SELECT cancellation_id, sale_id, sale_line_id, product_id, restored_quantity, movement_id FROM sale_cancellation_lines ORDER BY cancellation_id, sale_line_id",
+        "SELECT id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason FROM inventory_movements ORDER BY id",
+        "SELECT product_id, quantity FROM stock_balances ORDER BY product_id",
+    ]
+    .iter()
+    .map(|query| rows(&connection, query))
+    .collect()
 }
 
 #[test]
@@ -128,6 +251,211 @@ fn stages_each_supported_schema_without_mutating_the_selected_source() {
         assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(fs::read(&source).unwrap(), before);
     }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_cancellation_lines()
+{
+    let directory = temporary_directory("lifecycle-facts");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let source = config.path().to_path_buf();
+    let stage = directory.join("staged-v10-lifecycle.sqlite3");
+    lifecycle_database(&source);
+    let source_bytes = fs::read(&source).unwrap();
+    let expected = lifecycle_facts(&source);
+
+    let metadata = stage_and_validate(&source, &stage).unwrap();
+
+    assert_eq!(metadata.schema_version, 10);
+    assert_eq!(fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(lifecycle_facts(&stage), expected);
+    let staged = Connection::open(&stage).unwrap();
+    assert!(staged
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query([])
+        .unwrap()
+        .next()
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        rows(
+            &staged,
+            "SELECT COUNT(*) FROM sale_return_lines r JOIN inventory_movements m ON m.id = r.movement_id WHERE m.movement_type = 'return' AND m.sale_id = r.sale_id AND m.sale_line_id = r.sale_line_id AND m.product_id = r.product_id AND m.quantity_delta = r.quantity",
+        ),
+        vec![vec![String::from("Integer(2)")]]
+    );
+    assert_eq!(
+        rows(
+            &staged,
+            "SELECT COUNT(*) FROM sale_cancellation_lines c JOIN inventory_movements m ON m.id = c.movement_id WHERE c.restored_quantity > 0 AND m.movement_type = 'cancellation' AND m.sale_id = c.sale_id AND m.sale_line_id = c.sale_line_id AND m.product_id = c.product_id AND m.quantity_delta = c.restored_quantity",
+        ),
+        vec![vec![String::from("Integer(1)")]]
+    );
+    assert_eq!(
+        rows(
+            &staged,
+            "SELECT COUNT(*) FROM sale_cancellation_lines WHERE restored_quantity = 0 AND movement_id IS NULL",
+        ),
+        vec![vec![String::from("Integer(1)")]]
+    );
+    assert_eq!(
+        staged
+            .query_row(
+                "SELECT COUNT(*) FROM sale_lines l WHERE l.sale_id = ?1 AND l.quantity < COALESCE((SELECT SUM(r.quantity) FROM sale_return_lines r WHERE r.sale_line_id = l.id), 0) + COALESCE((SELECT c.restored_quantity FROM sale_cancellation_lines c WHERE c.sale_line_id = l.id), 0)",
+                [10],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    drop(staged);
+    let state = DatabaseState::open(config).unwrap();
+    state
+        .install_validated_stage(&stage, &BackupStore::new(&directory))
+        .unwrap();
+    assert_eq!(lifecycle_facts(&source), expected);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+fn assert_rejected_lifecycle_backup_preserves_selected_source(
+    directory: &Path,
+    name: &str,
+    mutation: &str,
+) {
+    let source = directory.join(format!("{name}.sqlite3"));
+    lifecycle_database(&source);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch(mutation)
+        .unwrap();
+    let source_bytes = fs::read(&source).unwrap();
+
+    assert_eq!(
+        stage_and_validate(&source, &directory.join(format!("{name}-stage.sqlite3"))),
+        Err(BackupValidationError::InvalidBackup),
+        "{name} must be rejected as a lifecycle integrity failure"
+    );
+    assert_eq!(fs::read(&source).unwrap(), source_bytes, "{name}");
+}
+
+#[test]
+fn rejects_lifecycle_backup_missing_required_index_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-missing-index");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "missing-index",
+        "DROP INDEX sale_return_lines_sale_line_idx;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_missing_required_trigger_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-missing-trigger");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "missing-trigger",
+        "DROP TRIGGER sale_return_lines_validate_insert;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_mismatched_movement_link_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-mismatched-movement");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "mismatched-movement",
+        "DROP TRIGGER inventory_movements_immutable_update;
+         UPDATE inventory_movements SET quantity_delta = 2 WHERE id = 50;
+         CREATE TRIGGER inventory_movements_immutable_update BEFORE UPDATE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'inventory movements are immutable'); END;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_excess_cumulative_restoration_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-excess-restoration");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "excess-restoration",
+        "DROP TRIGGER sale_return_lines_immutable_update;
+         DROP TRIGGER inventory_movements_immutable_update;
+         UPDATE sale_return_lines SET quantity = 2 WHERE return_id = 100 AND sale_line_id = 20;
+         UPDATE inventory_movements SET quantity_delta = 2 WHERE id = 50;
+         CREATE TRIGGER inventory_movements_immutable_update BEFORE UPDATE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'inventory movements are immutable'); END;
+         CREATE TRIGGER sale_return_lines_immutable_update BEFORE UPDATE ON sale_return_lines BEGIN SELECT RAISE(ABORT, 'post-sale facts are immutable'); END;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_missing_cancellation_line_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-missing-cancellation-line");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "missing-cancellation-line",
+        "DROP TRIGGER sale_cancellation_lines_immutable_delete;
+         DELETE FROM sale_cancellation_lines WHERE cancellation_id = 101 AND sale_line_id = 21;
+         CREATE TRIGGER sale_cancellation_lines_immutable_delete BEFORE DELETE ON sale_cancellation_lines BEGIN SELECT RAISE(ABORT, 'post-sale facts are immutable'); END;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_lifecycle_backup_changed_original_fact_without_mutating_selected_source() {
+    let directory = temporary_directory("lifecycle-changed-original-fact");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_rejected_lifecycle_backup_preserves_selected_source(
+        &directory,
+        "changed-original-fact",
+        "DROP TRIGGER confirmed_sale_lines_immutable_price;
+         UPDATE sale_lines SET negotiated_unit_price_centavos = 6_000 WHERE id = 20;",
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn accepts_unlinked_legacy_v9_correction_movements() {
+    let directory = temporary_directory("legacy-v9-correction-movement");
+    fs::create_dir_all(&directory).unwrap();
+    let legacy = directory.join("legacy-v9.sqlite3");
+    versioned_database(&legacy, 9);
+    Connection::open(&legacy)
+        .unwrap()
+        .execute(
+            "INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![99, 1, 10, 20, "return", 1],
+        )
+        .unwrap();
+
+    assert_eq!(
+        stage_and_validate(&legacy, &directory.join("legacy-v10.sqlite3"))
+            .unwrap()
+            .schema_version,
+        CURRENT_SCHEMA_VERSION
+    );
+
     fs::remove_dir_all(directory).unwrap();
 }
 
