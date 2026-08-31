@@ -5,6 +5,8 @@ use rusqlite::{Connection, Result};
 pub mod backup;
 pub mod catalog_repository;
 pub mod inventory_repository;
+pub mod post_sale_repository;
+pub mod post_sale_transaction;
 pub mod sale_history_repository;
 pub mod sale_repository;
 
@@ -14,8 +16,10 @@ pub use backup::{
 };
 pub use catalog_repository::SqliteCatalogRepository;
 pub use inventory_repository::SqliteInventoryRepository;
+pub use post_sale_repository::SqlitePostSaleRepository;
+pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 9;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationCompatibility {
@@ -165,6 +169,16 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         let transaction = connection.transaction()?;
         transaction.execute_batch(include_str!("migrations/0009_sales_history_index.sql"))?;
         transaction.pragma_update(None, "user_version", 9)?;
+        transaction.commit()?;
+        version = 9;
+    }
+
+    if version == 9 {
+        let transaction = connection.transaction()?;
+        validate_version_six_schema(&transaction)?;
+        transaction.execute_batch(include_str!("migrations/0010_post_sale_lifecycle.sql"))?;
+        validate_version_ten_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 10)?;
         transaction.commit()?;
     }
 
@@ -341,6 +355,189 @@ fn validate_version_six_schema(connection: &Connection) -> Result<()> {
         }
     }
     validate_foreign_keys(connection)
+}
+
+pub(super) fn validate_version_ten_schema(connection: &Connection) -> Result<()> {
+    validate_version_six_schema(connection)?;
+    const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
+        (
+            "post_sale_requests",
+            &[
+                "id",
+                "request_id",
+                "operation_kind",
+                "sale_id",
+                "payload_version",
+                "canonical_payload",
+                "payload_sha256",
+                "created_at",
+            ],
+        ),
+        (
+            "sale_returns",
+            &["id", "sale_id", "operation_kind", "occurred_at"],
+        ),
+        (
+            "sale_return_lines",
+            &[
+                "return_id",
+                "sale_id",
+                "sale_line_id",
+                "product_id",
+                "quantity",
+                "movement_id",
+            ],
+        ),
+        (
+            "sale_cancellations",
+            &["id", "sale_id", "operation_kind", "reason", "occurred_at"],
+        ),
+        (
+            "sale_cancellation_lines",
+            &[
+                "cancellation_id",
+                "sale_id",
+                "sale_line_id",
+                "product_id",
+                "restored_quantity",
+                "movement_id",
+            ],
+        ),
+    ];
+    for (table, required) in REQUIRED_COLUMNS {
+        if !has_columns(connection, table, required)? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+
+    for index in [
+        "sale_lines_identity_idx",
+        "post_sale_requests_sale_created_idx",
+        "sale_return_lines_sale_line_idx",
+        "sale_cancellation_lines_sale_line_idx",
+    ] {
+        if !schema_object_exists(connection, "index", index)? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    for table in [
+        "post_sale_requests",
+        "sale_returns",
+        "sale_return_lines",
+        "sale_cancellations",
+        "sale_cancellation_lines",
+    ] {
+        for action in ["update", "delete"] {
+            if !schema_object_exists(
+                connection,
+                "trigger",
+                &format!("{table}_immutable_{action}"),
+            )? {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+        }
+    }
+    for trigger in [
+        "confirmed_sale_lines_immutable_price",
+        "sale_return_lines_validate_insert",
+        "sale_cancellation_lines_validate_insert",
+    ] {
+        if !schema_object_exists(connection, "trigger", trigger)? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+
+    const INVALID_LIFECYCLE_FACTS: &str = "
+        SELECT EXISTS (
+            SELECT 1
+            FROM post_sale_requests request
+            LEFT JOIN sale_returns returned
+              ON returned.id = request.id
+             AND returned.sale_id = request.sale_id
+             AND returned.operation_kind = 'return'
+            LEFT JOIN sale_cancellations cancelled
+              ON cancelled.id = request.id
+             AND cancelled.sale_id = request.sale_id
+             AND cancelled.operation_kind = 'cancellation'
+            WHERE (request.operation_kind = 'return' AND returned.id IS NULL)
+               OR (request.operation_kind = 'cancellation' AND cancelled.id IS NULL)
+               OR (request.operation_kind NOT IN ('return', 'cancellation'))
+
+            UNION ALL
+
+            SELECT 1
+            FROM sale_return_lines line
+            LEFT JOIN inventory_movements movement ON movement.id = line.movement_id
+            WHERE movement.id IS NULL
+               OR movement.product_id <> line.product_id
+               OR movement.sale_id <> line.sale_id
+               OR movement.sale_line_id <> line.sale_line_id
+               OR movement.movement_type <> 'return'
+               OR movement.quantity_delta <> line.quantity
+               OR movement.quantity_delta <= 0
+
+            UNION ALL
+
+            SELECT 1
+            FROM sale_cancellation_lines line
+            LEFT JOIN inventory_movements movement ON movement.id = line.movement_id
+            WHERE (line.restored_quantity = 0 AND line.movement_id IS NOT NULL)
+               OR (line.restored_quantity > 0 AND (
+                    movement.id IS NULL
+                    OR movement.product_id <> line.product_id
+                    OR movement.sale_id <> line.sale_id
+                    OR movement.sale_line_id <> line.sale_line_id
+                    OR movement.movement_type <> 'cancellation'
+                    OR movement.quantity_delta <> line.restored_quantity
+                    OR movement.quantity_delta <= 0
+               ))
+
+            UNION ALL
+
+            SELECT 1
+            FROM sale_lines line
+            WHERE line.quantity < COALESCE((
+                SELECT SUM(returned.quantity)
+                FROM sale_return_lines returned
+                WHERE returned.sale_line_id = line.id
+            ), 0) + COALESCE((
+                SELECT SUM(cancelled.restored_quantity)
+                FROM sale_cancellation_lines cancelled
+                WHERE cancelled.sale_line_id = line.id
+            ), 0)
+
+            UNION ALL
+
+            SELECT 1
+            FROM sale_cancellations cancellation
+            JOIN sale_lines line ON line.sale_id = cancellation.sale_id
+            LEFT JOIN sale_cancellation_lines cancellation_line
+              ON cancellation_line.cancellation_id = cancellation.id
+             AND cancellation_line.sale_line_id = line.id
+            WHERE cancellation_line.sale_line_id IS NULL
+        )";
+    if connection.query_row(INVALID_LIFECYCLE_FACTS, [], |row| row.get::<_, bool>(0))? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
+}
+
+fn has_columns(connection: &Connection, table: &str, required: &[&str]) -> Result<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let actual = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(required
+        .iter()
+        .all(|column| actual.iter().any(|actual| actual == column)))
+}
+
+fn schema_object_exists(connection: &Connection, kind: &str, name: &str) -> Result<bool> {
+    connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
+        [kind, name],
+        |row| row.get(0),
+    )
 }
 
 fn validate_version_seven_schema(connection: &Connection) -> Result<()> {

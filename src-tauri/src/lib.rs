@@ -183,6 +183,8 @@ fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Buil
     builder.invoke_handler(tauri::generate_handler![
         search_products_command,
         confirm_sale_command,
+        create_sale_return_command,
+        cancel_sale_command,
         confirm_stock_entry_command,
         confirm_physical_count_command,
         list_inventory_alerts_command,
@@ -205,6 +207,8 @@ fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builde
         .invoke_handler(tauri::generate_handler![
             search_products_command,
             confirm_sale_command,
+            create_sale_return_command,
+            cancel_sale_command,
             confirm_stock_entry_command,
             confirm_physical_count_command,
             list_inventory_alerts_command,
@@ -333,6 +337,36 @@ fn confirm_sale_command(
     request: commands::confirm_sale::ConfirmSaleRequest,
 ) -> Result<commands::confirm_sale::ConfirmSaleResponse, String> {
     state.with_write(|connection| commands::confirm_sale::confirm_sale(connection, request))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn create_sale_return_command(
+    state: tauri::State<AppState>,
+    request: commands::post_sale::CreateSaleReturnRequest,
+) -> commands::post_sale::PostSaleCommandResponse {
+    state
+        .with_write(|connection| Ok(commands::post_sale::create_sale_return(connection, request)))
+        .unwrap_or_else(|_| {
+            commands::post_sale::PostSaleCommandResponse::Error(
+                commands::post_sale::persistence_failure(),
+            )
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn cancel_sale_command(
+    state: tauri::State<AppState>,
+    request: commands::post_sale::CancelSaleRequest,
+) -> commands::post_sale::CancelSaleCommandResponse {
+    state
+        .with_write(|connection| Ok(commands::post_sale::cancel_sale(connection, request)))
+        .unwrap_or_else(|_| {
+            commands::post_sale::CancelSaleCommandResponse::Error(
+                commands::post_sale::persistence_failure(),
+            )
+        })
 }
 
 #[cfg(feature = "desktop")]
@@ -565,8 +599,6 @@ mod command_surface_tests {
 
         for command in [
             "set_cart_line_price_command",
-            "create_return_command",
-            "cancel_sale_command",
             "create_supplier_command",
             "record_supplier_cost_command",
             "update_product_command",
@@ -621,6 +653,32 @@ mod command_surface_tests {
     fn registers_catalog_maintenance_listing_at_the_tauri_command_seam() {
         let (_app, window) = test_window();
         assert!(get_ipc_response(&window, request("list_catalog_maintenance_command")).is_ok());
+    }
+
+    #[test]
+    fn registers_post_sale_commands_at_the_tauri_command_seam() {
+        let (_app, window) = test_window();
+        for (command, payload) in [
+            (
+                "create_sale_return_command",
+                serde_json::json!({
+                    "request_id": "550e8400-e29b-41d4-a716-446655440041",
+                    "sale_id": 1, "lines": []
+                }),
+            ),
+            (
+                "cancel_sale_command",
+                serde_json::json!({
+                    "request_id": "550e8400-e29b-41d4-a716-446655440042",
+                    "sale_id": 1, "reason": "correction"
+                }),
+            ),
+        ] {
+            assert!(
+                get_ipc_response(&window, request_with(command, payload)).is_ok(),
+                "{command}"
+            );
+        }
     }
 
     #[test]

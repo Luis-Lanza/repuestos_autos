@@ -57,6 +57,7 @@ pub struct SaleHistorySummary {
     pub line_count: u32,
     pub payment_count: u32,
     pub payment_methods: Vec<PaymentMethod>,
+    pub has_corrections: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SaleHistoryPage {
@@ -83,12 +84,16 @@ impl SaleHistoryPage {
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct HistoricalLine {
+    pub sale_line_id: i64,
     pub product_id: i64,
     pub sku: Option<String>,
     pub product_name: Option<String>,
     pub quantity: Quantity,
     pub unit_price_centavos: MoneyCentavos,
     pub line_total_centavos: MoneyCentavos,
+    pub returned_quantity: i64,
+    pub cancellation_restored_quantity: i64,
+    pub remaining_returnable_quantity: i64,
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -102,6 +107,34 @@ pub enum HistoricalPayment {
         amount_applied_centavos: MoneyCentavos,
     },
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct HistoricalReturnLine {
+    pub sale_line_id: i64,
+    pub product_id: i64,
+    pub quantity: i64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct HistoricalReturn {
+    pub return_id: i64,
+    pub request_id: String,
+    pub occurred_at: String,
+    pub lines: Vec<HistoricalReturnLine>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct HistoricalCancellationLine {
+    pub sale_line_id: i64,
+    pub product_id: i64,
+    pub restored_quantity: i64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct HistoricalCancellation {
+    pub cancellation_id: i64,
+    pub request_id: String,
+    pub occurred_at: String,
+    pub reason: String,
+    pub lines: Vec<HistoricalCancellationLine>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SaleHistoryDetail {
     pub sale_id: i64,
@@ -110,6 +143,8 @@ pub struct SaleHistoryDetail {
     pub total_centavos: MoneyCentavos,
     pub lines: Vec<HistoricalLine>,
     pub payments: Vec<HistoricalPayment>,
+    pub returns: Vec<HistoricalReturn>,
+    pub cancellation: Option<HistoricalCancellation>,
 }
 pub trait SaleHistorySummaryReader {
     fn list(&self, range: &HistoryRange) -> Result<SaleHistoryPage, HistoryError>;
