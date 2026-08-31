@@ -3,8 +3,8 @@
 ## Delivery context
 
 - Strategy: `ask-on-risk` resolved to `feature-branch-chain`.
-- Current: **PR6C/task 6.4 complete**; PR7 UI is next. No delivery actions were created.
-- Follow-up: PR7 UI; PR8 backup/integrity.
+- Current: **Phase 9 complete**; all 36/36 planned tasks are complete. No delivery actions were created.
+- Follow-up: `sdd-verify`.
 
 ## Completed tasks
 
@@ -29,6 +29,17 @@
 - [x] 6.2 GREEN — cumulative Rust history read model is complete across PR6A1/PR6A2.
 - [x] 6.3 RED/GREEN — cumulative Rust/TypeScript history command contracts are complete across PR6B1/PR6B2A1/A2/B.
 - [x] 6.4 TRIANGULATE/REFACTOR — immutable originals and legacy confirmed history evidence complete.
+- [x] 7.1 RED — accessible correction UI flow tests complete.
+- [x] 7.2 GREEN — return/cancellation state flow complete.
+- [x] 7.3 GREEN — lifecycle presentation adapter complete.
+- [x] 7.4 TRIANGULATE/REFACTOR — interaction/a11y state matrix and human runtime observation complete.
+- [x] 8.1 RED — lifecycle backup fixture complete.
+- [x] 8.2 GREEN — v10 restore validation complete.
+- [x] 8.3 TRIANGULATE — lifecycle corruption matrix complete.
+- [x] 8.4 REFACTOR/REGRESSION — automated regression evidence and bounded manual restore/history smoke evidence complete.
+- [x] 9.1 Requirement traceability — final lifecycle evidence mapping and explicit exclusions complete.
+- [x] 9.2 Diff-budget check — per-slice accounting and rollback boundaries complete.
+- [x] 9.3 Final regression evidence — Rust, frontend, formatting, and diff evidence recorded.
 
 ## Files changed
 
@@ -62,7 +73,7 @@
 
 ## Remaining tasks
 
-- Phases 3–6 are complete. Task 7+ remains pending.
+- All 36/36 planned tasks are complete. `sdd-verify` is next.
 
 ## PR7A1 — return-intent state seam
 
@@ -463,3 +474,128 @@
 - Limitation: these results are human-observed; no screenshot artifact exists beyond the conversation image. No source, test, build, or runtime command was run in this evidence-only update.
 - Exact PR7E evidence-only begin-to-final accounting: `tasks.md` `+3/-3` and this progress record `+5/-3`, total `+8/-6 = 14` changed lines, below the 400-line hard bound. Task accounting is 29/36 complete; Phase 8 remains pending.
 - Rollback: restore the prior unchecked task 7.4 note and remove only the PR7E retry-confirmation/completion accounting; retain the existing commands, reducer orchestration, presentation, and persisted facts.
+
+## PR8A — lifecycle backup fixture (task 8.1 RED)
+
+- [x] 8.1 RED — added a true v10 lifecycle fixture to `backup_restore`: immutable original sale, lines, and payments; return header/lines; cancellation header; a positive residual cancellation movement; and a zero-residual cancellation line without a movement.
+- The baseline RED run was real and focused: the new test failed with `no such table: post_sale_requests` because the test-only `MIGRATIONS` fixture built only v1–v9. Adding the already-shipped `0010_post_sale_lifecycle.sql` to that fixture made it construct a genuine v10 source; no production restore/validation code was changed.
+- The completed test asserts staging for every source schema v1–v10, leaves its selected source byte-identical during staging, compares original, correction, movement, and balance fact rows before/after staging and installation, verifies foreign keys, verifies two linked return movements and one linked positive cancellation movement, retains one zero-residual cancellation line without a movement, and proves no line is over-restored.
+
+### PR8A work-unit evidence
+
+| Evidence | Result |
+| --- | --- |
+| RED | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_cancellation_lines` failed before the test fixture included migration 0010: `no such table: post_sale_requests`. |
+| Focused backup restore | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore` passed: 17 tests. |
+| Migration regression | `cargo test --manifest-path src-tauri/Cargo.toml --test sqlite_migrations` passed: 16 tests. |
+| Formatting and diff | `cargo fmt --manifest-path src-tauri/Cargo.toml --check` and `git diff --check` passed. |
+| Runtime harness | The integration test used `stage_and_validate` followed by `DatabaseState::install_validated_stage` on the lifecycle-bearing SQLite database; it passed with identical restored facts and consistent movement links. |
+| Authored delta | `+214/-3 = 217` changed lines across the fixture, task state, and cumulative progress record; below the 400-line PR8A work-unit budget. |
+| Rollback boundary | Revert the v10 fixture, row snapshots, and task/progress record only; the v10 migration and all production backup behavior remain untouched. |
+
+### PR8A next boundary
+
+- Task 8.2 remains pending. It must add production v10 restore validation and tests for rejected malformed lifecycle facts; this valid-fixture work does not claim that validation.
+
+## PR8B — v10 restore validation (task 8.2 GREEN)
+
+- [x] 8.2 GREEN — `stage_and_validate` now migrates staged v1–v9 copies to v10 and validates v10; `validate_restored_database` uses the same cohesive v10 validator.
+- Validation requires the v10 tables/columns, identity and lookup indexes, immutable and defensive insert triggers, foreign-key consistency, request-to-operation-header identity, exact correction-line movement links, bounded cumulative restoration, and one cancellation line for every original sale line. It intentionally validates only v10 correction lines, so legacy v9 `return`/`cancellation` movements remain valid when they have no new correction-line link.
+- Focused RED: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore rejects_mismatched_v10_correction_movements_but_accepts_unlinked_legacy_v9_movements` failed with `Ok(DatabaseMetadata { schema_version: 10 })` for a mismatched v10 return movement. GREEN: the same test passed after v10 validation was wired into staging/restoration.
+
+### PR8B work-unit evidence
+
+| Evidence | Result |
+| --- | --- |
+| Focused backup restore | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore` passed: 18 tests. |
+| Migration regression | `cargo test --manifest-path src-tauri/Cargo.toml --test sqlite_migrations` passed: 16 tests. |
+| Formatting and diff | `cargo fmt --manifest-path src-tauri/Cargo.toml --check` and `git diff --check` passed. |
+| Runtime harness | Focused migrated SQLite restore seam passed through `stage_and_validate` and `DatabaseState::install_validated_stage`; no GUI is applicable. |
+| Authored delta | PR8B-only source/test/task/progress delta: `+230/-20 = 250` changed lines, below 400. |
+| Rollback boundary | Revert the v10 validator/wiring, focused validation test, task checkbox, and this progress entry; retain the PR8A fixture and additive v10 schema. |
+
+### PR8B next boundary
+
+- Task 8.3 remains pending for the complete corruption matrix (missing triggers/indexes, excess restoration, cancellation coverage, changed original facts, and source-immutability-on-failure).
+
+## PR8C — lifecycle corruption matrix (task 8.3 TRIANGULATE)
+
+- [x] 8.3 TRIANGULATE — added six selected-source corruption cases: missing required index, missing required lifecycle trigger, mismatched correction movement, excess cumulative restoration, missing cancellation audit line, and changed confirmed-sale price after removal of its immutable-fact trigger.
+- Every rejected case snapshots the corrupted selected backup bytes immediately before `stage_and_validate`, asserts only the stable `BackupValidationError::InvalidBackup` class, then compares the source bytes again. The corruptions reach their intended structural or lifecycle invariant after preserving foreign-key validity; no raw SQLite detail is exposed.
+- RED: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore lifecycle_backup` failed with `Ok(DatabaseMetadata { schema_version: 10 })` for the changed original fact, exposing that the v10 validator omitted `confirmed_sale_lines_immutable_price`.
+- GREEN: `validate_version_ten_schema` now requires that original-sale immutable-price trigger alongside the v10 defensive triggers; the six-case focused matrix passed. Legacy v9 unlinked correction movements remain accepted.
+
+### PR8C work-unit evidence
+
+| Evidence | Result |
+| --- | --- |
+| Safety net | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore` passed: 18 tests before this task. |
+| Focused RED | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore lifecycle_backup` failed: changed-original-fact returned `Ok(DatabaseMetadata { schema_version: 10 })`. |
+| Focused GREEN | The same focused command passed: 6 corruption cases. |
+| Focused backup restore | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore` passed: 24 tests. |
+| Migration regression | `cargo test --manifest-path src-tauri/Cargo.toml --test sqlite_migrations` passed: 16 tests. |
+| Formatting and diff | `cargo fmt --manifest-path src-tauri/Cargo.toml --check` and `git diff --check` passed. |
+| Authored delta | PR8C settled baseline: `backup_restore.rs` `+114/-17`, v10 validator `+1/-0`, task state `+1/-1`, progress record `+25/-0`; total `+141/-18 = 159`, below the 400-line budget. |
+| Runtime harness | N/A — the public SQLite staging seam is the applicable restore boundary; no GUI was run. |
+| Rollback boundary | Revert the original-fact trigger requirement, six corruption cases/helper, task checkbox, and this entry; retain PR8A fixture and PR8B v10 validation. |
+
+### PR8C automatic gate correction
+
+- The excess-restoration fixture temporarily removes both update-immutability triggers, changes the return line and its linked movement `50` together to `2`, then restores both triggers. Link equality now holds, so `return 2 + cancellation 1 > sold 2` reaches only cumulative-restoration validation; selected-source byte immutability and `InvalidBackup` assertions are unchanged.
+- The initial settled accounting above is directional and authoritative; prior directional figures are superseded.
+- Correction-attempt delta against the settled PR8C candidate: `backup_restore.rs` `+3/-0 = 3`; no production, task-state, or validator change.
+
+### PR8C next boundary
+
+- Task 8.4 remains pending. It alone owns helper consolidation, full Rust/frontend regression, and the lifecycle restore UI runtime scenario.
+
+## PR8D — task 8.4 refactor/regression
+
+- Consolidated the duplicated restored-database validation call path: after staging and migrating a backup, `stage_and_validate` now delegates to `validate_restored_database`. The shared helper remains the single owner of integrity metadata, v10 structure/lifecycle validation, and foreign-key validation.
+- `OperationalFacts` is unchanged. `git diff --exit-code -- src-tauri/src/application/backup/contracts.rs` passed with no diff.
+- The lifecycle-bearing SQLite scenario passed through the real restore seam: `stage_and_validate` followed by `DatabaseState::install_validated_stage` restored the v10 correction facts, linked movements, zero-residual cancellation line, and balances with fact equality.
+
+### PR8D work-unit evidence
+
+| Evidence | Result |
+| --- | --- |
+| Focused regression | `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore --test sqlite_migrations` passed: 24 backup/restore and 16 migration tests. |
+| Full Rust regression | `cargo test --manifest-path src-tauri/Cargo.toml` passed: 158 tests; 0 failed. |
+| Full frontend regression | `npm test` passed: 62 tests; 0 failed. |
+| Formatting and diff | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` and `git diff --check` passed. |
+| Runtime launch | `GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri:dev` started Vite and the real `target/debug/repuestos-autos` Tauri process successfully. Visible restore/detail interaction has not been observed by this agent. |
+| Rollback boundary | Revert only the `stage_and_validate` delegation to the shared validator and this evidence record. Keep v10 schema and accepted facts readable; disable post-sale surfaces if rollback is required. Never down-migrate or delete accepted facts. |
+
+### Manual runtime completion
+
+- Human-provided smoke evidence confirms a schema-v10 backup was created and the restore UI reported `Restore completed successfully`.
+- After creating a new sale and restoring that earlier backup, the state returned to the earlier expected point; Sales History displayed the restored return/correction.
+- This records only the supplied observations: it does not claim a backup filename, exact row counts, or any additional UI detail. The prior automated restore seam and regression evidence are retained unchanged.
+
+### PR8D manual runtime reconciliation
+
+- Human-provided smoke evidence confirms that a schema-v10 backup was created and the restore UI reported `Restore completed successfully`.
+- After creating a new sale and restoring that earlier backup, the application state returned to the earlier expected point; Sales History displayed the restored return/correction.
+- This reconciliation records only those observations. It does not claim a backup filename, exact restored row counts, or any additional UI detail. PR8D's prior automated Rust/frontend regression and focused restore-seam evidence remain unchanged.
+- Task accounting: 8.4 is checked in the hybrid task artifacts; all Phase 8 tasks are complete. Phase 9 remains pending.
+- Exact PR8D evidence-only correction delta from the pre-reconciliation artifact bytes: `tasks.md` `+2/-1`, `apply-progress.md` `+25/-8`, total `+27/-9 = 36` changed lines.
+- Rollback: return task 8.4 to unchecked and remove only this manual evidence record and its dashboard entries; retain the backup/restore implementation, prior automated evidence, schema, and accepted facts.
+
+## PR9 — final traceability, budget, and regression evidence
+
+- [x] 9.1 Requirement traceability — focused lifecycle integration tests cover multi-line return persistence, atomic rollback/stock restoration, residual and zero-residual cancellation, canonical replay/conflict, and competing writers without double restoration. Sales History tests cover cancelled visibility and immutable original facts; command/UI tests enforce inventory-only language; migration tests cover v9-to-v10 preservation and v10 constraints; backup tests cover lifecycle-bearing v10 staging/restoration and corruption rejection.
+- Explicit exclusions are verified by the final changed-path inventory rather than overstated as runtime behavior: no payment/refund/settlement, report/export, catalog, capability/configuration, or backup-UI paths changed. Automated command/UI tests additionally reject prohibited money-language terms.
+- [x] 9.2 Diff-budget check — retained work-unit records include the per-slice `git diff --stat`/addition-deletion accounting and rollback boundary. Where a cumulative footprint spans a later correction, the record distinguishes that separately bounded correction attempt; no current Phase 9 evidence/documentation update approaches the 400 changed-line limit.
+- [x] 9.3 Final regression evidence — `cargo test --manifest-path src-tauri/Cargo.toml` passed: 158 tests, 0 failed. `npm test` passed: 62 tests, 0 failed. `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` and `git diff --check` passed.
+- Retained human smoke evidence only: a real return and cancellation restored stock; schema-v10 backup restore succeeded; after a later sale, restoring returned the application to the earlier state; Sales History showed the restored correction. No backup filename, row count, screenshot, or unobserved UI behavior is claimed.
+
+### PR9 work-unit evidence
+
+| Evidence | Result |
+| --- | --- |
+| Focused test command and exact result | Full applicable regression: `cargo test --manifest-path src-tauri/Cargo.toml` passed 158 tests; `npm test` passed 62 tests. |
+| Runtime harness command/scenario and exact result | No new runtime command was run. Retained human smoke evidence records return/cancellation stock restoration, successful schema-v10 restore, later-sale reversal by restore, and visible restored correction history. |
+| Scope/inventory check | `git diff --name-only` contains only post-sale artifact, SQLite backup-validation, and backup-test paths; no `Cargo.toml`, capability/configuration, report/export, payment, catalog, or backup-UI path is changed. |
+| Rollback boundary | Revert only the Phase 9 task checkboxes and this evidence section; preserve all established lifecycle behavior and prior evidence. |
+
+- Phase 9 is complete; all 36/36 planned tasks are checked in the OpenSpec artifact. This phase did not change production code or test code.
