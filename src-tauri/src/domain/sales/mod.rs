@@ -1,3 +1,5 @@
+pub mod post_sale;
+
 use serde::Serialize;
 
 use crate::domain::{MoneyCentavos, Quantity};
@@ -246,3 +248,7 @@ impl Payment {
         }
     }
 }
+pub use post_sale::{
+    plan_cancellation, plan_return, CancellationPlan, CancellationPlanLine, OriginalSaleLine,
+    PostSaleDomainError, RequestedReturnLine, ReturnPlan, ReturnPlanLine, SaleCorrectionState,
+};
