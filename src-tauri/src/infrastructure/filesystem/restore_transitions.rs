@@ -243,3 +243,250 @@ impl<F: DurableFs> RestoreTransitions<F> {
         self.root.join("restore-state.json")
     }
 }
+
+#[cfg(windows)]
+mod platform {
+    use std::ffi::{c_void, OsStr};
+    use std::io;
+    use std::mem::{offset_of, size_of};
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
+    use std::ptr::{null, null_mut};
+
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, DeleteFileW, FlushFileBuffers, GetDriveTypeW, GetFileInformationByHandleEx,
+        GetVolumeInformationW, GetVolumePathNameW, ReadFile, ReplaceFileW,
+        SetFileInformationByHandle, WriteFile, CREATE_NEW, DELETE, FILE_ATTRIBUTE_DIRECTORY,
+        FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    use super::{
+        DurableFs, FsOperation, VerificationPhase, CANDIDATE_INSTALLED, LIVE_MOVED,
+        MARKER_BACKUP_LIMIT, PREPARED,
+    };
+
+    const SHARES: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const DRIVE_FIXED: u32 = 3;
+    const FILE_RENAME_INFO_EX_CLASS: i32 = 22;
+    const BUFFER_SIZE: usize = 64 * 1024;
+
+    pub(super) struct WindowsDurableFs;
+
+    impl DurableFs for WindowsDurableFs {
+        fn execute(&self, operation: FsOperation<'_>) -> io::Result<()> {
+            match operation {
+                FsOperation::Verify(root, phase) => verify_layout(root, phase),
+                FsOperation::SyncFile(path) => sync_file(path),
+                FsOperation::SyncDirectory(path) => sync_directory(path),
+                FsOperation::WriteExclusive(path, bytes) => write_exclusive(path, bytes),
+                FsOperation::CopyExclusive(from, to) => copy_exclusive(from, to),
+                FsOperation::Remove(path) => delete_file(path),
+                FsOperation::RenameNoReplace(from, to) => rename_no_replace(from, to),
+                FsOperation::Replace(from, to, backup) => replace_file(from, to, backup),
+            }
+        }
+
+        fn is_present(&self, path: &Path) -> io::Result<bool> {
+            inspect_presence(path)
+        }
+
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            read_regular(path)
+        }
+    }
+
+    fn wide(path: &Path) -> io::Result<Vec<u16>> {
+        if !path.is_absolute() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let mut value: Vec<_> = path.as_os_str().encode_wide().collect();
+        if value.contains(&0) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        value.push(0);
+        Ok(value)
+    }
+
+    fn with_handle<T>(
+        handle: HANDLE,
+        action: impl FnOnce(HANDLE) -> io::Result<T>,
+    ) -> io::Result<T> {
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let result = action(handle);
+        // Handles are closed before any following namespace transition.
+        let closed = unsafe { CloseHandle(handle) };
+        if result.is_ok() && closed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        result
+    }
+
+    #[rustfmt::skip]
+    fn open(path: &Path, access: u32, creation: u32, flags: u32) -> io::Result<HANDLE> {
+        let path = wide(path)?;
+        let handle = unsafe { CreateFileW(path.as_ptr(), access, SHARES, null(), creation, flags, null_mut()) };
+        if handle == INVALID_HANDLE_VALUE { Err(io::Error::last_os_error()) } else { Ok(handle) }
+    }
+
+    #[rustfmt::skip]
+    fn sync_file(path: &Path) -> io::Result<()> {
+        let handle = open(path, GENERIC_READ | GENERIC_WRITE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL)?;
+        with_handle(handle, |handle| bool_result(unsafe { FlushFileBuffers(handle) }))
+    }
+
+    fn sync_directory(path: &Path) -> io::Result<()> {
+        let handle = open(
+            path,
+            GENERIC_WRITE,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        )?;
+        with_handle(handle, |handle| {
+            bool_result(unsafe { FlushFileBuffers(handle) })
+        })
+    }
+
+    #[rustfmt::skip]
+    fn write_exclusive(path: &Path, bytes: &[u8]) -> io::Result<()> {
+        let handle = open(path, GENERIC_READ | GENERIC_WRITE, CREATE_NEW, FILE_ATTRIBUTE_NORMAL)?;
+        with_handle(handle, |handle| write_all(handle, bytes))
+    }
+
+    fn write_all(handle: HANDLE, mut bytes: &[u8]) -> io::Result<()> {
+        while !bytes.is_empty() {
+            let amount = u32::try_from(bytes.len().min(u32::MAX as usize))
+                .map_err(|_| io::ErrorKind::InvalidInput)?;
+            let mut written = 0;
+            bool_result(unsafe {
+                WriteFile(
+                    handle,
+                    bytes.as_ptr().cast(),
+                    amount,
+                    &mut written,
+                    null_mut(),
+                )
+            })?;
+            if written == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
+            }
+            bytes = &bytes[written as usize..];
+        }
+        Ok(())
+    }
+
+    fn copy_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+        let input = open(from, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL)?;
+        with_handle(input, |input| {
+            let output = open(
+                to,
+                GENERIC_READ | GENERIC_WRITE,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+            )?;
+            with_handle(output, |output| {
+                let mut buffer = vec![0_u8; BUFFER_SIZE];
+                loop {
+                    let mut read = 0;
+                    bool_result(unsafe {
+                        ReadFile(
+                            input,
+                            buffer.as_mut_ptr().cast(),
+                            buffer.len() as u32,
+                            &mut read,
+                            null_mut(),
+                        )
+                    })?;
+                    if read == 0 {
+                        return Ok(());
+                    }
+                    write_all(output, &buffer[..read as usize])?;
+                }
+            })
+        })
+    }
+
+    fn delete_file(path: &Path) -> io::Result<()> {
+        let path = wide(path)?;
+        bool_result(unsafe { DeleteFileW(path.as_ptr()) })
+    }
+
+    #[repr(C)]
+    struct RenameInformation {
+        flags: u32,
+        root_directory: HANDLE,
+        file_name_length: u32,
+        file_name: [u16; 1],
+    }
+
+    fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+        if inspect_presence(to)? {
+            return Err(io::ErrorKind::AlreadyExists.into());
+        }
+        let destination = wide(to)?;
+        let name_bytes = (destination.len() - 1)
+            .checked_mul(size_of::<u16>())
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or(io::ErrorKind::InvalidInput)?;
+        let buffer_length =
+            offset_of!(RenameInformation, file_name) + destination.len() * size_of::<u16>();
+        let mut storage = vec![0_usize; buffer_length.div_ceil(size_of::<usize>())];
+        let information = storage.as_mut_ptr().cast::<RenameInformation>();
+        unsafe {
+            (*information).flags = 0;
+            (*information).root_directory = null_mut();
+            (*information).file_name_length = name_bytes;
+            destination
+                .as_ptr()
+                .copy_to_nonoverlapping((*information).file_name.as_mut_ptr(), destination.len());
+        }
+        let source = open(
+            from,
+            DELETE | GENERIC_READ,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+        )?;
+        with_handle(source, |source| {
+            bool_result(unsafe {
+                SetFileInformationByHandle(
+                    source,
+                    FILE_RENAME_INFO_EX_CLASS,
+                    information.cast::<c_void>(),
+                    buffer_length as u32,
+                )
+            })
+        })?;
+        if inspect_presence(from)? || !inspect_presence(to)? {
+            return Err(io::Error::other("rename result was ambiguous"));
+        }
+        Ok(())
+    }
+
+    #[rustfmt::skip]
+    fn replace_file(from: &Path, to: &Path, backup: &Path) -> io::Result<()> {
+        let from_wide = wide(from)?;
+        let to_wide = wide(to)?;
+        let backup_wide = wide(backup)?;
+        let reservation = open(backup, GENERIC_READ | GENERIC_WRITE, CREATE_NEW, FILE_ATTRIBUTE_NORMAL)?;
+        with_handle(reservation, |_| Ok(()))?;
+        // The known-empty path stays reserved by convention after close; this assumes
+        // cooperating product processes and does not protect against adversarial mutation.
+        bool_result(unsafe { ReplaceFileW(to_wide.as_ptr(), from_wide.as_ptr(), backup_wide.as_ptr(), 0, null(), null()) })?;
+        if inspect_presence(from)? || !inspect_presence(to)? || !inspect_presence(backup)? {
+            return Err(io::Error::other("replacement result was ambiguous"));
+        }
+        Ok(())
+    }
+
+    fn has_lexically_ambiguous_component(path: &OsStr) -> bool {
+        let raw: Vec<_> = path.encode_wide().collect();
+        raw.split(|unit| *unit == b'\\' as u16 || *unit == b'/' as u16)
+            .any(|component| component == [b'.' as u16] || component == [b'.' as u16, b'.' as u16])
+    }
+}
