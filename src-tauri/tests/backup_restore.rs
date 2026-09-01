@@ -185,7 +185,7 @@ fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root()
     fs::create_dir_all(&selected_root).unwrap();
     fs::write(&snapshot, b"consistent snapshot").unwrap();
 
-    let store = BackupStore::new(&directory.join("app-data"));
+    let store = BackupStore::new(directory.join("app-data"));
     let published = store
         .publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3")
         .unwrap();
@@ -226,7 +226,7 @@ fn rejects_a_selected_root_that_disappears_before_publication_without_recreating
     fs::write(&snapshot, b"consistent snapshot").unwrap();
     fs::remove_dir_all(&selected_root).unwrap();
 
-    let store = BackupStore::new(&directory.join("app-data"));
+    let store = BackupStore::new(directory.join("app-data"));
 
     assert_eq!(
         store.publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3"),
@@ -543,6 +543,23 @@ fn creates_a_consistent_snapshot_before_releasing_the_live_database_mutex() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+fn restore_state_bytes(state: RestoreState) -> &'static [u8] {
+    match state {
+        RestoreState::Prepared => br#"{"state":"prepared"}"#,
+        RestoreState::LiveMoved => br#"{"state":"live_moved"}"#,
+        RestoreState::CandidateInstalled => br#"{"state":"candidate_installed"}"#,
+    }
+}
+
+fn write_restore_state(directory: &Path, state: RestoreState) {
+    fs::create_dir_all(directory).unwrap();
+    fs::write(
+        directory.join("restore-state.json"),
+        restore_state_bytes(state),
+    )
+    .unwrap();
+}
+
 #[test]
 fn records_each_durable_replacement_transition() {
     let directory = temporary_directory("restore-state");
@@ -553,7 +570,7 @@ fn records_each_durable_replacement_transition() {
         RestoreState::LiveMoved,
         RestoreState::CandidateInstalled,
     ] {
-        store.write_restore_state(state).unwrap();
+        write_restore_state(&directory, state);
         assert_eq!(store.read_restore_state().unwrap(), Some(state));
     }
 
@@ -722,7 +739,7 @@ fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_instal
         database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
         database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
         let store = BackupStore::new(&directory);
-        store.write_restore_state(state).unwrap();
+        write_restore_state(&directory, state);
 
         let recovered = DatabaseState::recover_on_startup(config, &store);
 
@@ -768,7 +785,7 @@ fn startup_recovery_restores_a_valid_rollback_after_live_moved_crash() {
     database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
     database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
     let store = BackupStore::new(&directory);
-    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
 
     let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
 
@@ -787,7 +804,7 @@ fn startup_recovery_uses_the_retained_protective_database_when_rollback_is_unava
     fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
     database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
     let store = BackupStore::new(&directory);
-    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
 
     let recovered = DatabaseState::recover_on_startup(config, &store);
 
@@ -805,7 +822,7 @@ fn startup_recovery_leaves_database_unavailable_without_a_safe_candidate() {
     fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
     fs::write(directory.join("pre-restore.sqlite3"), b"not sqlite").unwrap();
     let store = BackupStore::new(&directory);
-    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
 
     let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
 
@@ -1032,7 +1049,7 @@ fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes(
     let store = BackupStore::new(&directory);
     fs::write(directory.join("restore-rollback.sqlite3"), b"not sqlite").unwrap();
     fs::write(directory.join("pre-restore.sqlite3"), b"not sqlite").unwrap();
-    store.write_restore_state(RestoreState::LiveMoved).unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
     let state = DatabaseState::recover_on_startup(config, &store);
     let mut commands = BackupCommandState::new(&directory);
 
