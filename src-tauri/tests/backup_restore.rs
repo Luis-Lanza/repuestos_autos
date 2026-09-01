@@ -1,5 +1,7 @@
 use std::cell::Cell;
 use std::fs;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -24,6 +26,9 @@ use repuestos_autos::infrastructure::sqlite::{
 use repuestos_autos::{DatabaseState, RestoreState};
 use rusqlite::{params, Connection};
 
+#[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x0000_0001;
+
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
 const MIGRATIONS: [&str; 9] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
@@ -40,7 +45,7 @@ const MIGRATIONS: [&str; 9] = [
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("r-a-{name}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("r-a-{name}-{}", uuid::Uuid::new_v4()))
 }
 
 fn versioned_database(path: &Path, version: i64) {
@@ -141,6 +146,7 @@ fn lifecycle_database(path: &Path) {
         .unwrap();
 }
 
+#[cfg(windows)]
 fn rows(connection: &Connection, query: &str) -> Vec<Vec<String>> {
     let mut statement = connection.prepare(query).unwrap();
     statement
@@ -157,6 +163,7 @@ fn rows(connection: &Connection, query: &str) -> Vec<Vec<String>> {
         .unwrap()
 }
 
+#[cfg(windows)]
 fn lifecycle_facts(path: &Path) -> Vec<Vec<Vec<String>>> {
     let connection = Connection::open(path).unwrap();
     [
@@ -254,6 +261,7 @@ fn stages_each_supported_schema_without_mutating_the_selected_source() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_cancellation_lines()
 {
@@ -261,7 +269,8 @@ fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_c
     fs::create_dir_all(&directory).unwrap();
     let config = production_database_config(&directory);
     let source = config.path().to_path_buf();
-    let stage = directory.join("staged-v10-lifecycle.sqlite3");
+    let stage = directory.join("backup-restore/staging/staged-v10-lifecycle.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
     lifecycle_database(&source);
     let source_bytes = fs::read(&source).unwrap();
     let expected = lifecycle_facts(&source);
@@ -317,6 +326,7 @@ fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_c
         .install_validated_stage(&stage, &BackupStore::new(&directory))
         .unwrap();
     assert_eq!(lifecycle_facts(&source), expected);
+    drop(state);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -540,6 +550,7 @@ fn creates_a_consistent_snapshot_before_releasing_the_live_database_mutex() {
             .unwrap(),
         1
     );
+    drop(live);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -572,11 +583,70 @@ fn records_each_durable_replacement_transition() {
     ] {
         write_restore_state(&directory, state);
         assert_eq!(store.read_restore_state().unwrap(), Some(state));
+        assert_eq!(
+            fs::read(directory.join("restore-state.json")).unwrap(),
+            restore_state_bytes(state)
+        );
     }
 
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(not(windows))]
+#[test]
+fn unsupported_recovery_retains_the_validated_source_and_stale_temporary() {
+    let directory = temporary_directory("unsupported-durable-recovery");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("restore-rollback.sqlite3");
+    let canonical = directory.join("repuestos-autos.sqlite3");
+    let temporary = directory.join("restore-recovery.sqlite3.part");
+    database_with_category(&source, "rollback-data");
+    fs::write(&temporary, b"stale recovery temporary").unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+    let source_before = fs::read(&source).unwrap();
+
+    assert_eq!(
+        store.recover_canonical_durably(&source, &canonical),
+        Err(StorageError::StorageUnavailable)
+    );
+    assert_eq!(fs::read(&source).unwrap(), source_before);
+    assert_eq!(fs::read(&temporary).unwrap(), b"stale recovery temporary");
+    assert!(!canonical.exists());
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::LiveMoved)
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn durable_prepare_fails_before_disruption_on_an_unsupported_host() {
+    let directory = temporary_directory("unsupported-durable-prepare");
+    fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "live-data");
+    let stage = directory.join("backup-restore/staging/candidate.sqlite3");
+    database_with_category(&stage, "candidate-data");
+    let state = DatabaseState::open(config).unwrap();
+    let store = BackupStore::new(&directory);
+
+    assert_eq!(
+        state.install_validated_stage(&stage, &store),
+        Err("restore_failed".into())
+    );
+    assert_eq!(category_count(&state, "live-data"), 1);
+    assert!(stage.exists());
+    assert!(!directory.join("restore-state.json").exists());
+    assert!(!directory.join("restore-rollback.sqlite3").exists());
+
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
 #[test]
 fn live_restore_failure_recovers_valid_rollback_and_returns_restore_failed() {
     let directory = temporary_directory("live-restore-recover-rollback");
@@ -584,7 +654,7 @@ fn live_restore_failure_recovers_valid_rollback_and_returns_restore_failed() {
     let config = production_database_config(&directory);
     database_with_category(config.path(), "prior-data");
     let state = DatabaseState::open(config).unwrap();
-    let stage = directory.join("staging/malformed.sqlite3");
+    let stage = directory.join("backup-restore/staging/malformed.sqlite3");
     fs::create_dir_all(stage.parent().unwrap()).unwrap();
     fs::write(&stage, b"rejected restore candidate").unwrap();
     let store = BackupStore::new(&directory);
@@ -606,12 +676,16 @@ fn live_restore_failure_recovers_valid_rollback_and_returns_restore_failed() {
         })
         .unwrap();
     assert_eq!(category_count(&state, "post-recovery"), 1);
-    assert_eq!(store.read_restore_state().unwrap(), None);
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::CandidateInstalled)
+    );
 
     drop(state);
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn live_restore_failure_enters_unavailable_when_recovery_cannot_establish_canonical() {
     let directory = temporary_directory("live-restore-unavailable");
@@ -619,10 +693,16 @@ fn live_restore_failure_enters_unavailable_when_recovery_cannot_establish_canoni
     let config = production_database_config(&directory);
     database_with_category(config.path(), "prior-data");
     let state = DatabaseState::open(config).unwrap();
-    let stage = directory.join("staging/malformed.sqlite3");
+    let stage = directory.join("backup-restore/staging/malformed.sqlite3");
     fs::create_dir_all(stage.parent().unwrap()).unwrap();
     fs::write(&stage, b"rejected restore candidate").unwrap();
-    fs::create_dir(directory.join("restore-recovery.sqlite3.part")).unwrap();
+    let recovery_temporary = directory.join("restore-recovery.sqlite3.part");
+    fs::write(&recovery_temporary, b"held recovery temporary").unwrap();
+    let recovery_temporary_handle = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&recovery_temporary)
+        .unwrap();
     let store = BackupStore::new(&directory);
     let read_called = Cell::new(false);
     let write_called = Cell::new(false);
@@ -656,9 +736,11 @@ fn live_restore_failure_enters_unavailable_when_recovery_cannot_establish_canoni
         Some(RestoreState::CandidateInstalled)
     );
 
+    drop(recovery_temporary_handle);
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn installs_a_validated_stage_after_closing_the_live_connection() {
     let directory = temporary_directory("replacement");
@@ -666,7 +748,7 @@ fn installs_a_validated_stage_after_closing_the_live_connection() {
     let config = production_database_config(&directory);
     versioned_database(config.path(), CURRENT_SCHEMA_VERSION);
     let state = DatabaseState::open(config.clone()).unwrap();
-    let stage = directory.join("staging/candidate.sqlite3");
+    let stage = directory.join("backup-restore/staging/candidate.sqlite3");
     fs::create_dir_all(stage.parent().unwrap()).unwrap();
     versioned_database(&stage, CURRENT_SCHEMA_VERSION);
     Connection::open(&stage)
@@ -698,6 +780,7 @@ fn installs_a_validated_stage_after_closing_the_live_connection() {
             .unwrap(),
         1
     );
+    drop(state);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -745,8 +828,16 @@ fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_instal
 
         assert_eq!(category_count(&recovered, "canonical"), 1, "{state:?}");
         assert_eq!(category_count(&recovered, "rollback"), 0, "{state:?}");
+        #[cfg(windows)]
         assert_eq!(store.read_restore_state().unwrap(), None, "{state:?}");
+        #[cfg(not(windows))]
+        assert_eq!(
+            store.read_restore_state().unwrap(),
+            Some(state),
+            "{state:?}"
+        );
         assert!(directory.join("pre-restore.sqlite3").exists(), "{state:?}");
+        drop(recovered);
         fs::remove_dir_all(directory).unwrap();
     }
 }
@@ -774,9 +865,11 @@ fn startup_recovery_accepts_current_schema_operational_inventory_movements() {
         listed,
         CatalogMaintenanceListResponse::Success { records } if !records.is_empty()
     ));
+    drop(recovered);
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn startup_recovery_restores_a_valid_rollback_after_live_moved_crash() {
     let directory = temporary_directory("recover-live-moved");
@@ -793,9 +886,11 @@ fn startup_recovery_restores_a_valid_rollback_after_live_moved_crash() {
     assert!(config.path().exists());
     assert_eq!(store.read_restore_state().unwrap(), None);
     assert!(directory.join("pre-restore.sqlite3").exists());
+    drop(recovered);
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn startup_recovery_uses_the_retained_protective_database_when_rollback_is_unavailable() {
     let directory = temporary_directory("recover-protective");
@@ -811,6 +906,7 @@ fn startup_recovery_uses_the_retained_protective_database_when_rollback_is_unava
     assert_eq!(category_count(&recovered, "protective"), 1);
     assert_eq!(store.read_restore_state().unwrap(), None);
     assert!(directory.join("pre-restore.sqlite3").exists());
+    drop(recovered);
     fs::remove_dir_all(directory).unwrap();
 }
 

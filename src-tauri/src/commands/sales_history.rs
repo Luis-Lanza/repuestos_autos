@@ -26,6 +26,10 @@ pub enum SalesHistoryListResponse {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "boxing would change the established command response shape"
+)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SalesHistoryDetailResponse {
     Success { detail: SaleHistoryDetail },
