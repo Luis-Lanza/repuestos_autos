@@ -33,7 +33,7 @@ mod windows_harness {
     const INVALID_ATTRIBUTES: u32 = u32::MAX;
     const FILE_ATTRIBUTE_TAG_INFO_CLASS: i32 = 9;
     const FILE_RENAME_INFO_EX_CLASS: i32 = 22;
-    const FILE_RENAME_FLAG_WRITE_THROUGH: u32 = 0x0000_0002;
+    const FILE_RENAME_NO_REPLACE_FLAGS: u32 = 0;
     const ALL_SHARES: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
     #[repr(C)]
@@ -1020,7 +1020,7 @@ mod windows_harness {
             case_name,
             role,
             path,
-            GENERIC_READ,
+            GENERIC_WRITE,
             ALL_SHARES,
             OPEN_EXISTING,
             flags,
@@ -1034,7 +1034,7 @@ mod windows_harness {
             role,
             path,
             handle,
-            GENERIC_READ,
+            GENERIC_WRITE,
             ALL_SHARES,
             flags,
         );
@@ -1232,7 +1232,7 @@ mod windows_harness {
         // SAFETY: offsets follow the C FILE_RENAME_INFO layout; the usize buffer supplies pointer
         // alignment and has enough initialized storage for the header and UTF-16 filename.
         unsafe {
-            base.cast::<u32>().write(FILE_RENAME_FLAG_WRITE_THROUGH);
+            base.cast::<u32>().write(FILE_RENAME_NO_REPLACE_FLAGS);
             base.add(handle_offset)
                 .cast::<HANDLE>()
                 .write(std::ptr::null_mut());
@@ -1281,7 +1281,7 @@ mod windows_harness {
                 expectation_name,
                 access,
                 ALL_SHARES,
-                FILE_RENAME_FLAG_WRITE_THROUGH,
+                FILE_RENAME_NO_REPLACE_FLAGS,
                 FILE_RENAME_INFO_EX_CLASS
             ),
         );
@@ -1295,7 +1295,36 @@ mod windows_harness {
             if call_ok { destination } else { source },
             handle,
         );
-        expected
+        let source_exists = path_exists(source);
+        let destination_exists = path_exists(destination);
+        let postcondition = match expectation {
+            Expectation::Success => !source_exists && destination_exists,
+            Expectation::DestinationExistsFailure => source_exists && destination_exists,
+            Expectation::SharingFailure => source_exists,
+        };
+        recorder.event(
+            case_name,
+            if postcondition { "PASS" } else { "UNPROVEN" },
+            "verify_rename_postcondition",
+            role,
+            Some(destination),
+            Some(postcondition),
+            0,
+            &format!(
+                "\"source_exists\":{},\"destination_exists\":{},\"access\":0,\"share\":0,\"flags\":0",
+                source_exists, destination_exists
+            ),
+        );
+        if !postcondition {
+            recorder.failures += 1;
+        }
+        expected && postcondition
+    }
+
+    fn path_exists(path: &Path) -> bool {
+        let wide = wide(path);
+        // SAFETY: `wide` is a live, NUL-terminated UTF-16 path buffer.
+        unsafe { GetFileAttributesW(wide.as_ptr()) != INVALID_ATTRIBUTES }
     }
 
     fn replace_file(
