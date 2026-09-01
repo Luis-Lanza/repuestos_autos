@@ -1220,7 +1220,15 @@ mod windows_harness {
             return matches!(expectation, Expectation::SharingFailure);
         }
 
-        let destination_wide: Vec<u16> = destination.as_os_str().encode_wide().collect();
+        let same_directory = source.parent() == destination.parent();
+        let rename_name = if same_directory {
+            destination
+                .file_name()
+                .unwrap_or_else(|| destination.as_os_str())
+        } else {
+            destination.as_os_str()
+        };
+        let destination_wide: Vec<u16> = rename_name.encode_wide().collect();
         let pointer_align = std::mem::align_of::<HANDLE>();
         let handle_offset = align_up(std::mem::size_of::<u32>(), pointer_align);
         let length_offset = handle_offset + std::mem::size_of::<HANDLE>();
@@ -1276,8 +1284,9 @@ mod windows_harness {
             Some(call_ok),
             error,
             &format!(
-                "\"destination\":\"{}\",\"expected\":\"{}\",\"no_replace\":true,\"access\":{},\"share\":{},\"flags\":{},\"information_class\":{}",
+                "\"destination\":\"{}\",\"destination_form\":\"{}\",\"expected\":\"{}\",\"no_replace\":true,\"access\":{},\"share\":{},\"flags\":{},\"information_class\":{}",
                 json_escape(&recorder.label(destination)),
+                if same_directory { "same_directory_name" } else { "absolute_path" },
                 expectation_name,
                 access,
                 ALL_SHARES,
