@@ -1179,6 +1179,141 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn failpoints_before_and_after_every_operation_keep_recovery_evidence() {
+        let stage = Path::new("/app/backup-restore/staging/stage.sqlite3");
+        let canonical = Path::new("/app/repuestos-autos.sqlite3");
+        assert_all_failpoints(completed_cycle, |value| {
+            value.prepare_durable_restore(stage, Path::new("/app/pre-restore.sqlite3"), canonical)
+        });
+        assert_all_failpoints(
+            || protocol(seeded()),
+            |value| value.install_durable_restore(stage, canonical),
+        );
+        assert_all_failpoints(
+            || protocol(seeded()),
+            |value| {
+                value.recover_canonical_durably(Path::new("/app/pre-restore.sqlite3"), canonical)
+            },
+        );
+        assert_all_failpoints(
+            || protocol(seeded()),
+            |value| value.complete_durable_restore(|| Ok(())),
+        );
+    }
+
+    #[test]
+    fn marker_replacement_reserves_slots_and_exhaustion_fails_closed() {
+        let transitions = protocol(seeded());
+        let occupied = PathBuf::from("/app/restore-state.json.previous-0");
+        transitions
+            .fs
+            .0
+            .borrow_mut()
+            .files
+            .insert(occupied.clone(), b"arbitrary evidence".to_vec());
+        transitions.fs.0.borrow_mut().hidden_from_exists = Some(occupied.clone());
+
+        transitions.publish_marker(LIVE_MOVED).unwrap();
+
+        let model = transitions.fs.0.borrow();
+        assert_eq!(
+            model.files.get(&occupied),
+            Some(&b"arbitrary evidence".to_vec())
+        );
+        assert_eq!(
+            model
+                .files
+                .get(Path::new("/app/restore-state.json.previous-1")),
+            Some(&PREPARED.to_vec())
+        );
+        drop(model);
+
+        let exhausted = protocol(seeded());
+        for slot in 0..MARKER_BACKUP_LIMIT {
+            exhausted.fs.0.borrow_mut().files.insert(
+                PathBuf::from(format!("/app/restore-state.json.previous-{slot}")),
+                if slot == 3 {
+                    Vec::new()
+                } else {
+                    PREPARED.to_vec()
+                },
+            );
+        }
+        assert_eq!(
+            exhausted.publish_marker(LIVE_MOVED),
+            Err(StorageError::StorageUnavailable)
+        );
+        assert_eq!(
+            exhausted
+                .fs
+                .0
+                .borrow()
+                .files
+                .get(Path::new("/app/restore-state.json")),
+            Some(&PREPARED.to_vec())
+        );
+    }
+
+    #[test]
+    fn ambiguous_replacement_retains_and_consumes_its_reserved_slot() {
+        let transitions = protocol(seeded());
+        transitions.fs.0.borrow_mut().failpoint = Some((Kind::Replace, 0, Moment::After));
+
+        assert_eq!(
+            transitions.publish_marker(LIVE_MOVED),
+            Err(StorageError::StorageUnavailable)
+        );
+        let first = Path::new("/app/restore-state.json.previous-0");
+        let ambiguous = transitions.fs.0.borrow();
+        assert_eq!(
+            ambiguous.operations.last(),
+            Some(&Recorded {
+                kind: Kind::SyncDirectory,
+                paths: vec![PathBuf::from("/app")],
+            })
+        );
+        assert_eq!(ambiguous.files.get(first), Some(&PREPARED.to_vec()));
+        assert_eq!(ambiguous.durable.get(first), Some(&PREPARED.to_vec()));
+        assert_eq!(
+            ambiguous.durable.get(Path::new("/app/restore-state.json")),
+            Some(&LIVE_MOVED.to_vec())
+        );
+        drop(ambiguous);
+
+        transitions.fs.0.borrow_mut().failpoint = None;
+        transitions.publish_marker(LIVE_MOVED).unwrap();
+        let model = transitions.fs.0.borrow();
+        assert_eq!(model.files.get(first), Some(&PREPARED.to_vec()));
+        assert!(model
+            .files
+            .contains_key(Path::new("/app/restore-state.json.previous-1")));
+    }
+
+    #[test]
+    fn unsupported_layout_and_readiness_failure_stop_before_marker_mutation() {
+        let transitions = protocol(seeded());
+        transitions.fs.0.borrow_mut().supported = false;
+        assert_eq!(
+            transitions.prepare_durable_restore(
+                Path::new("/cross-volume/stage"),
+                Path::new("/app/restore-protective.sqlite3"),
+                Path::new("/app/db.sqlite3")
+            ),
+            Err(StorageError::StorageUnavailable)
+        );
+        let completion = protocol(seeded());
+        assert_eq!(
+            completion.complete_durable_restore(|| Err(StorageError::StorageUnavailable)),
+            Err(StorageError::StorageUnavailable)
+        );
+        assert!(completion
+            .fs
+            .is_present(Path::new("/app/restore-state.json"))
+            .unwrap());
+    }
+
     fn completed_cycle() -> RestoreTransitions<RecordingFs> {
         protocol(RecordingFs::seeded(&[
             ("/app/repuestos-autos.sqlite3", b"live"),
@@ -1190,4 +1325,92 @@ mod tests {
     const STAGE: &str = "/app/backup-restore/staging/stage.sqlite3";
     const CANONICAL: &str = "/app/repuestos-autos.sqlite3";
     const PROTECTIVE: &str = "/app/pre-restore.sqlite3";
+
+    #[rustfmt::skip]
+    #[test]
+    fn five_completed_cycles_reuse_sidecar_slots() {
+        let transitions = completed_cycle();
+        for cycle in 0..5 {
+            if cycle > 0 { transitions.fs.0.borrow_mut().files.insert(STAGE.into(), format!("stage-{cycle}").into_bytes()); }
+            transitions.prepare_durable_restore(Path::new(STAGE), Path::new(PROTECTIVE), Path::new(CANONICAL)).unwrap();
+            transitions.install_durable_restore(Path::new(STAGE), Path::new(CANONICAL)).unwrap();
+            transitions.complete_durable_restore(|| Ok(())).unwrap();
+        }
+        let model = transitions.fs.0.borrow();
+        assert!(model.files.contains_key(Path::new(CANONICAL)));
+        assert!(!model.files.contains_key(Path::new("/app/restore-state.json")));
+        assert_eq!((0..MARKER_BACKUP_LIMIT).filter(|slot| model.files.contains_key(&PathBuf::from(format!("/app/restore-state.json.previous-{slot}")))).count(), 2);
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn prepare_cleanup_failures_are_pre_disruption_and_retryable() {
+        for failpoint in [(Kind::SyncDirectory, 0, Moment::Before), (Kind::Remove, 0, Moment::Before), (Kind::SyncDirectory, 1, Moment::After)] {
+            let transitions = completed_cycle();
+            transitions.fs.0.borrow_mut().files.insert("/app/restore-state.json.previous-0".into(), Vec::new());
+            transitions.fs.0.borrow_mut().failpoint = Some(failpoint);
+            assert_eq!(transitions.prepare_durable_restore(Path::new(STAGE), Path::new(PROTECTIVE), Path::new(CANONICAL)), Err(StorageError::StorageUnavailable));
+            assert_eq!(transitions.fs.0.borrow().files.get(Path::new(CANONICAL)), Some(&b"live".to_vec()));
+            transitions.fs.0.borrow_mut().failpoint = None;
+            transitions.prepare_durable_restore(Path::new(STAGE), Path::new(PROTECTIVE), Path::new(CANONICAL)).unwrap();
+        }
+    }
+
+    fn no_mutation(transitions: &RestoreTransitions<RecordingFs>) -> bool {
+        transitions
+            .fs
+            .0
+            .borrow()
+            .operations
+            .iter()
+            .all(|operation| {
+                !matches!(
+                    operation.kind,
+                    Kind::Remove | Kind::Copy | Kind::Rename | Kind::Replace
+                )
+            })
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn malformed_sidecar_and_recovery_preconditions_fail_before_mutation() {
+        let malformed = completed_cycle();
+        malformed.fs.0.borrow_mut().files.insert("/app/restore-state.json.previous-0".into(), b"malformed".to_vec());
+        assert!(malformed.prepare_durable_restore(Path::new(STAGE), Path::new(PROTECTIVE), Path::new(CANONICAL)).is_err());
+        assert!(no_mutation(&malformed));
+        for (marker, source, canonical) in [(None, "/app/restore-rollback.sqlite3", CANONICAL), (Some(b"invalid".as_slice()), "/app/restore-rollback.sqlite3", CANONICAL), (Some(PREPARED), "/app/wrong.sqlite3", CANONICAL), (Some(PREPARED), "/app/restore-rollback.sqlite3", "/app/wrong.sqlite3")] {
+            let transitions = completed_cycle();
+            transitions.fs.0.borrow_mut().files.insert("/app/restore-rollback.sqlite3".into(), b"rollback".to_vec());
+            if let Some(bytes) = marker { transitions.fs.0.borrow_mut().files.insert("/app/restore-state.json".into(), bytes.to_vec()); }
+            assert!(transitions.recover_canonical_durably(Path::new(source), Path::new(canonical)).is_err());
+            assert!(no_mutation(&transitions));
+        }
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn completion_verifies_supported_boundary_before_absence_or_removal() {
+        for marker in [None, Some(CANDIDATE_INSTALLED)] {
+            let transitions = completed_cycle();
+            transitions.fs.0.borrow_mut().supported = false;
+            if let Some(bytes) = marker { transitions.fs.0.borrow_mut().files.insert("/app/restore-state.json".into(), bytes.to_vec()); }
+            assert_eq!(transitions.complete_durable_restore(|| Ok(())), Err(StorageError::StorageUnavailable));
+            assert!(no_mutation(&transitions));
+        }
+        completed_cycle().complete_durable_restore(|| Ok(())).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn production_adapter_is_unsupported_before_any_transition() {
+        let transitions = RestoreTransitions::new("/app".into(), UnsupportedDurableFs);
+        assert_eq!(
+            transitions.prepare_durable_restore(
+                Path::new("/app/backup-restore/staging/stage.sqlite3"),
+                Path::new("/app/restore-protective.sqlite3"),
+                Path::new("/app/db.sqlite3")
+            ),
+            Err(StorageError::StorageUnavailable)
+        );
+    }
 }
