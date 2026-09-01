@@ -941,7 +941,7 @@ mod windows_harness {
         let write_ok = unsafe {
             WriteFile(
                 handle,
-                bytes.as_ptr().cast::<c_void>(),
+                bytes.as_ptr(),
                 bytes.len() as u32,
                 &mut written,
                 std::ptr::null_mut(),
