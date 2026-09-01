@@ -45,13 +45,20 @@ $envFacts = [ordered]@{
 $envFacts | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runDir 'environment.json') -Encoding utf8
 
 $exitCodes = [ordered]@{}
-& cargo tree --manifest-path (Join-Path $scriptRoot 'Cargo.toml') *>&1 |
-    Tee-Object -FilePath (Join-Path $runDir 'cargo-tree.txt') | Out-Host
-$exitCodes.cargo_tree = $LASTEXITCODE
+$manifestPath = Join-Path $scriptRoot 'Cargo.toml'
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    & cargo tree --manifest-path $manifestPath *>&1 |
+        Tee-Object -FilePath (Join-Path $runDir 'cargo-tree.txt') | Out-Host
+    $exitCodes.cargo_tree = $LASTEXITCODE
 
-& cargo build --manifest-path (Join-Path $scriptRoot 'Cargo.toml') *>&1 |
-    Tee-Object -FilePath (Join-Path $runDir 'build.txt') | Out-Host
-$exitCodes.cargo_build = $LASTEXITCODE
+    & cargo build --manifest-path $manifestPath *>&1 |
+        Tee-Object -FilePath (Join-Path $runDir 'build.txt') | Out-Host
+    $exitCodes.cargo_build = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
 
 $runtimeExit = 125
 if ($exitCodes.cargo_build -eq 0) {
