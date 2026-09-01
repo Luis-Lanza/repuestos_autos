@@ -1220,13 +1220,51 @@ mod windows_harness {
             return matches!(expectation, Expectation::SharingFailure);
         }
 
-        let same_directory = source.parent() == destination.parent();
-        let rename_name = if same_directory {
-            destination
-                .file_name()
-                .unwrap_or_else(|| destination.as_os_str())
-        } else {
-            destination.as_os_str()
+        let Some(destination_parent) = destination.parent() else {
+            recorder.unproven(
+                case_name,
+                "resolve_rename_destination_parent",
+                role,
+                Some(destination),
+                0,
+                "\"reason\":\"destination has no parent directory\",\"access\":0,\"share\":0,\"flags\":0",
+            );
+            close_handle(recorder, case_name, role, source, handle);
+            return false;
+        };
+        let destination_directory_flags = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
+        let destination_directory = open_handle(
+            recorder,
+            case_name,
+            role,
+            destination_parent,
+            GENERIC_WRITE,
+            ALL_SHARES,
+            OPEN_EXISTING,
+            destination_directory_flags,
+        );
+        if destination_directory == INVALID_HANDLE_VALUE {
+            close_handle(recorder, case_name, role, source, handle);
+            return false;
+        }
+        let Some(rename_name) = destination.file_name() else {
+            recorder.unproven(
+                case_name,
+                "resolve_rename_destination_name",
+                role,
+                Some(destination),
+                0,
+                "\"reason\":\"destination has no file name\",\"access\":0,\"share\":0,\"flags\":0",
+            );
+            close_handle(
+                recorder,
+                case_name,
+                role,
+                destination_parent,
+                destination_directory,
+            );
+            close_handle(recorder, case_name, role, source, handle);
+            return false;
         };
         let destination_wide: Vec<u16> = rename_name.encode_wide().collect();
         let pointer_align = std::mem::align_of::<HANDLE>();
@@ -1243,7 +1281,7 @@ mod windows_harness {
             base.cast::<u32>().write(FILE_RENAME_NO_REPLACE_FLAGS);
             base.add(handle_offset)
                 .cast::<HANDLE>()
-                .write(std::ptr::null_mut());
+                .write(destination_directory);
             base.add(length_offset)
                 .cast::<u32>()
                 .write((destination_wide.len() * 2) as u32);
@@ -1284,9 +1322,8 @@ mod windows_harness {
             Some(call_ok),
             error,
             &format!(
-                "\"destination\":\"{}\",\"destination_form\":\"{}\",\"expected\":\"{}\",\"no_replace\":true,\"access\":{},\"share\":{},\"flags\":{},\"information_class\":{}",
+                "\"destination\":\"{}\",\"destination_form\":\"root_directory_relative_name\",\"expected\":\"{}\",\"no_replace\":true,\"access\":{},\"share\":{},\"flags\":{},\"information_class\":{}",
                 json_escape(&recorder.label(destination)),
-                if same_directory { "same_directory_name" } else { "absolute_path" },
                 expectation_name,
                 access,
                 ALL_SHARES,
@@ -1303,6 +1340,13 @@ mod windows_harness {
             role,
             if call_ok { destination } else { source },
             handle,
+        );
+        close_handle(
+            recorder,
+            case_name,
+            role,
+            destination_parent,
+            destination_directory,
         );
         let source_exists = path_exists(source);
         let destination_exists = path_exists(destination);
