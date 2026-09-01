@@ -33,6 +33,10 @@ pub trait CatalogMetadataRepository {
         revision: i64,
         name: &str,
     ) -> Result<CatalogSnapshot>;
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the repository seam keeps the validated product patch fields explicit"
+    )]
     fn edit_product(
         &self,
         transaction: &Transaction<'_>,

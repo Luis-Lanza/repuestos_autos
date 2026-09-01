@@ -48,24 +48,25 @@ impl DatabaseState {
     }
 
     pub fn recover_on_startup(config: DatabaseConfig, store: &BackupStore) -> Self {
-        let recovered = match store.read_restore_state() {
-            Ok(None) => open_database(&config)
+        match store.read_restore_state() {
+            Ok(None) => match open_database(&config)
                 .map_err(|_| ())
                 .and_then(|connection| {
                     validate_restored_database(&connection).map_err(|_| ())?;
                     Ok(connection)
-                }),
-            Ok(Some(_)) => {
-                open_validated_recovery_database(&config, store).and_then(|connection| {
-                    store.clear_restore_state().map_err(|_| ())?;
-                    Ok(connection)
-                })
-            }
-            Err(_) => Err(()),
-        };
-        match recovered {
-            Ok(connection) => Self::from_connection(config, connection),
-            Err(()) => Self::unavailable(config),
+                }) {
+                Ok(connection) => Self::from_connection(config, connection),
+                Err(_) => Self::unavailable(config),
+            },
+            Ok(Some(_)) => match open_validated_recovery_database(&config, store) {
+                Ok(connection) => {
+                    let recovered = Self::from_connection(config, connection);
+                    let _ = store.complete_durable_restore();
+                    recovered
+                }
+                Err(()) => Self::unavailable(config),
+            },
+            Err(_) => Self::unavailable(config),
         }
     }
 
@@ -105,7 +106,7 @@ impl DatabaseState {
         store: &BackupStore,
     ) -> Result<(), String> {
         self.install_validated_stage_with_cleanup(stage, store, || {
-            store.clear_restore_state().map_err(|_| ())
+            store.complete_durable_restore().map_err(|_| ())
         })
     }
 
@@ -136,23 +137,14 @@ impl DatabaseState {
             validate_restored_database(&protective_connection).map_err(|_| "restore_failed")?;
         }
         store
-            .write_restore_state(RestoreState::Prepared)
+            .prepare_durable_restore(stage, &protective)
             .map_err(|_| "restore_failed")?;
         state.status = DatabaseStatus::Restoring;
         drop(state.connection.take());
 
         let replacement = (|| {
             store
-                .move_live_to_rollback(state.config.path())
-                .map_err(|_| ())?;
-            store
-                .write_restore_state(RestoreState::LiveMoved)
-                .map_err(|_| ())?;
-            store
-                .install_stage(stage, state.config.path())
-                .map_err(|_| ())?;
-            store
-                .write_restore_state(RestoreState::CandidateInstalled)
+                .install_durable_restore(stage, state.config.path())
                 .map_err(|_| ())?;
             let connection = open_database(&state.config).map_err(|_| ())?;
             validate_restored_database(&connection).map_err(|_| ())?;
@@ -169,7 +161,6 @@ impl DatabaseState {
                 Ok(connection) => {
                     state.connection = Some(connection);
                     state.status = DatabaseStatus::Ready;
-                    let _ = clear_restore_state();
                     Err("restore_failed".into())
                 }
                 Err(()) => {
@@ -195,7 +186,7 @@ fn open_validated_recovery_database(
             .find(|path| is_valid_database(path))
             .ok_or(())?;
         store
-            .restore_canonical_from(recovery_source, canonical)
+            .recover_canonical_durably(recovery_source, canonical)
             .map_err(|_| ())?;
     }
     let connection = open_database(config).map_err(|_| ())?;
@@ -217,6 +208,35 @@ mod database_state_tests {
     use super::*;
 
     #[test]
+    fn post_disruption_failure_recovers_ready_without_clearing_evidence() {
+        let directory = std::env::temp_dir().join(format!(
+            "r-a-post-disruption-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let state = DatabaseState::open(config).unwrap();
+        let stage = directory.join("backup-restore/staging/candidate.sqlite3");
+        fs::write(&stage, b"invalid candidate after preparation").unwrap();
+        let store = BackupStore::new(&directory);
+
+        assert_eq!(
+            state.install_validated_stage(&stage, &store),
+            Err("restore_failed".into())
+        );
+        assert!(state.with_read(|_| Ok(())).is_ok());
+        assert!(directory.join("restore-rollback.sqlite3").exists());
+        assert_eq!(
+            store.read_restore_state().unwrap(),
+            Some(RestoreState::CandidateInstalled)
+        );
+
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn validated_candidate_remains_ready_when_final_marker_cleanup_fails() {
         let directory = std::env::temp_dir().join(format!(
             "r-a-cleanup-failure-{}-{}",
@@ -226,7 +246,7 @@ mod database_state_tests {
         fs::create_dir_all(&directory).unwrap();
         let config = infrastructure::sqlite::production_database_config(&directory);
         let state = DatabaseState::open(config).unwrap();
-        let stage = directory.join("staging/candidate.sqlite3");
+        let stage = directory.join("backup-restore/staging/candidate.sqlite3");
         fs::create_dir_all(stage.parent().unwrap()).unwrap();
         state
             .with_read(|connection| {

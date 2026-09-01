@@ -123,6 +123,10 @@ pub struct PersistedInventoryOperation {
 }
 
 impl PersistedInventoryOperation {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the constructor validates one complete persisted inventory operation"
+    )]
     pub fn new(
         kind: OperationKind,
         request_id: RequestId,

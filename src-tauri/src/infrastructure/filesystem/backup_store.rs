@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::restore_transitions;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreState {
     Prepared,
@@ -12,14 +14,6 @@ pub enum RestoreState {
 }
 
 impl RestoreState {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Prepared => "prepared",
-            Self::LiveMoved => "live_moved",
-            Self::CandidateInstalled => "candidate_installed",
-        }
-    }
-
     fn parse(value: &str) -> Option<Self> {
         match value {
             "prepared" => Some(Self::Prepared),
@@ -128,21 +122,32 @@ impl BackupStore {
         )
     }
 
-    pub fn write_marker(&self, contents: &[u8]) -> Result<PathBuf, StorageError> {
-        fs::create_dir_all(&self.root).map_err(|_| StorageError::StorageUnavailable)?;
-        let marker = self.root.join("restore-state.json");
-        let temporary = self.root.join("restore-state.json.part");
-        let mut file = File::create(&temporary).map_err(|_| StorageError::StorageUnavailable)?;
-        std::io::Write::write_all(&mut file, contents)
-            .map_err(|_| StorageError::StorageUnavailable)?;
-        file.sync_all()
-            .map_err(|_| StorageError::StorageUnavailable)?;
-        fs::rename(temporary, &marker).map_err(|_| StorageError::StorageUnavailable)?;
-        Ok(marker)
+    pub fn prepare_durable_restore(
+        &self,
+        stage: &Path,
+        protective: &Path,
+    ) -> Result<(), StorageError> {
+        restore_transitions::prepare(&self.root, stage, protective)
     }
 
-    pub fn write_restore_state(&self, state: RestoreState) -> Result<PathBuf, StorageError> {
-        self.write_marker(format!(r#"{{"state":"{}"}}"#, state.as_str()).as_bytes())
+    pub fn install_durable_restore(
+        &self,
+        stage: &Path,
+        canonical: &Path,
+    ) -> Result<(), StorageError> {
+        restore_transitions::install(&self.root, stage, canonical)
+    }
+
+    pub fn recover_canonical_durably(
+        &self,
+        source: &Path,
+        canonical: &Path,
+    ) -> Result<(), StorageError> {
+        restore_transitions::recover(&self.root, source, canonical)
+    }
+
+    pub fn complete_durable_restore(&self) -> Result<(), StorageError> {
+        restore_transitions::complete(&self.root)
     }
 
     pub fn read_restore_state(&self) -> Result<Option<RestoreState>, StorageError> {
@@ -157,55 +162,6 @@ impl BackupStore {
             .and_then(RestoreState::parse)
             .ok_or(StorageError::StorageUnavailable)?;
         Ok(Some(state))
-    }
-
-    pub fn move_live_to_rollback(&self, canonical: &Path) -> Result<(), StorageError> {
-        let rollback = canonical.with_file_name("restore-rollback.sqlite3");
-        if rollback.exists() {
-            fs::remove_file(&rollback).map_err(|_| StorageError::StorageUnavailable)?;
-        }
-        fs::rename(canonical, rollback).map_err(|_| StorageError::StorageUnavailable)
-    }
-
-    pub fn install_stage(&self, stage: &Path, canonical: &Path) -> Result<(), StorageError> {
-        fs::rename(stage, canonical).map_err(|_| StorageError::StorageUnavailable)
-    }
-
-    pub fn restore_canonical_from(
-        &self,
-        source: &Path,
-        canonical: &Path,
-    ) -> Result<(), StorageError> {
-        let temporary = canonical.with_file_name("restore-recovery.sqlite3.part");
-        if temporary.exists() {
-            fs::remove_file(&temporary).map_err(|_| StorageError::StorageUnavailable)?;
-        }
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_| StorageError::StorageUnavailable)?;
-        io::copy(
-            &mut File::open(source).map_err(|_| StorageError::StorageUnavailable)?,
-            &mut output,
-        )
-        .map_err(|_| StorageError::StorageUnavailable)?;
-        output
-            .sync_all()
-            .map_err(|_| StorageError::StorageUnavailable)?;
-        drop(output);
-        if canonical.exists() {
-            fs::remove_file(canonical).map_err(|_| StorageError::StorageUnavailable)?;
-        }
-        fs::rename(temporary, canonical).map_err(|_| StorageError::StorageUnavailable)
-    }
-
-    pub fn clear_restore_state(&self) -> Result<(), StorageError> {
-        let marker = self.root.join("restore-state.json");
-        if marker.exists() {
-            fs::remove_file(marker).map_err(|_| StorageError::StorageUnavailable)?;
-        }
-        Ok(())
     }
 }
 

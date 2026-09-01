@@ -845,7 +845,6 @@ fn immediate_writer_busy_failure_has_no_partial_return_and_can_retry() {
     assert_eq!(return_effects(&contender), (0, 0, 0, 0, 0));
     assert_eq!(stocks(&contender), stock_before_contention);
     drop(lock);
-    drop(writer_factory);
 
     let result = {
         let mut contender_factory = SqlitePostSaleTransactionFactory::new(&mut contender);

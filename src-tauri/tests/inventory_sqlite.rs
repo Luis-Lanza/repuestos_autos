@@ -111,7 +111,6 @@ fn adjustment_uses_current_balance_and_invalid_requests_leave_no_movement() {
         ),
         Err(InventoryError::INACTIVE_PRODUCT)
     );
-    drop(repository);
     connection
         .execute(
             "UPDATE stock_balances SET quantity = 9223372036854775807 WHERE product_id = 1",
