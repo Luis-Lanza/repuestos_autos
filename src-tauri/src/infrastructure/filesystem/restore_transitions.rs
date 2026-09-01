@@ -794,3 +794,400 @@ mod platform {
         }
     }
 }
+
+#[cfg(not(windows))]
+struct UnsupportedDurableFs;
+
+#[cfg(not(windows))]
+impl DurableFs for UnsupportedDurableFs {
+    fn execute(&self, operation: FsOperation<'_>) -> io::Result<()> {
+        match operation {
+            FsOperation::Verify(root, phase) => {
+                let _ = root;
+                touch_phase(phase);
+            }
+            FsOperation::SyncFile(a) | FsOperation::SyncDirectory(a) | FsOperation::Remove(a) => {
+                let _ = a;
+            }
+            FsOperation::WriteExclusive(a, b) => {
+                let _ = (a, b);
+            }
+            FsOperation::CopyExclusive(a, b) | FsOperation::RenameNoReplace(a, b) => {
+                let _ = (a, b);
+            }
+            FsOperation::Replace(a, b, c) => {
+                let _ = (a, b, c);
+            }
+        }
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    fn is_present(&self, path: &Path) -> io::Result<bool> {
+        Ok(inspect_host_path(path)?.is_some())
+    }
+    fn read(&self, _path: &Path) -> io::Result<Vec<u8>> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[cfg(not(windows))]
+#[rustfmt::skip]
+fn touch_phase(phase: VerificationPhase<'_>) {
+    match phase {
+        VerificationPhase::Prepare { stage, protective, canonical } => { let _ = (stage, protective, canonical); }
+        VerificationPhase::Recovery { marker, source, canonical } => { let _ = (marker, source, canonical); }
+        VerificationPhase::Completion { marker, canonical } => { let _ = (marker, canonical); }
+    }
+}
+
+#[cfg(not(windows))]
+fn inspect_host_path(path: &Path) -> io::Result<Option<bool>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata.file_type().is_file())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+struct TestDurableFs;
+
+#[cfg(all(test, not(windows)))]
+impl DurableFs for TestDurableFs {
+    fn execute(&self, operation: FsOperation<'_>) -> io::Result<()> {
+        match operation {
+            FsOperation::Verify(root, phase) => verify_test_layout(root, phase),
+            FsOperation::SyncFile(path) => File::open(path)?.sync_all(),
+            FsOperation::SyncDirectory(path) => File::open(path)?.sync_all(),
+            FsOperation::WriteExclusive(path, bytes) => {
+                let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+                file.write_all(bytes)?;
+                file.sync_all()
+            }
+            FsOperation::CopyExclusive(from, to) => {
+                let mut output = OpenOptions::new().write(true).create_new(true).open(to)?;
+                io::copy(&mut File::open(from)?, &mut output)?;
+                Ok(())
+            }
+            FsOperation::Remove(path) => fs::remove_file(path),
+            FsOperation::RenameNoReplace(from, to) => {
+                if to.exists() {
+                    return Err(io::ErrorKind::AlreadyExists.into());
+                }
+                fs::rename(from, to)
+            }
+            FsOperation::Replace(from, to, backup) => {
+                drop(
+                    OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(backup)?,
+                );
+                fs::rename(to, backup).map_err(io::Error::other)?;
+                fs::rename(from, to).map_err(io::Error::other)
+            }
+        }
+    }
+
+    fn is_present(&self, path: &Path) -> io::Result<bool> {
+        Ok(inspect_host_path(path)?.is_some())
+    }
+
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        fs::read(path)
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+#[rustfmt::skip]
+fn verify_test_layout(root: &Path, phase: VerificationPhase<'_>) -> io::Result<()> {
+    verify_test_phase(root, phase, inspect_host_path, |path| fs::read(path), |path| fs::read_dir(path)?.map(|entry| Ok(entry?.path())).collect())
+}
+
+#[cfg(all(test, not(windows)))]
+type ProductionDurableFs = TestDurableFs;
+#[cfg(all(not(test), not(windows)))]
+type ProductionDurableFs = UnsupportedDurableFs;
+#[cfg(windows)]
+type ProductionDurableFs = platform::WindowsDurableFs;
+
+fn production(root: &Path) -> RestoreTransitions<ProductionDurableFs> {
+    #[cfg(all(test, not(windows)))]
+    let fs = TestDurableFs;
+    #[cfg(all(not(test), not(windows)))]
+    let fs = UnsupportedDurableFs;
+    #[cfg(windows)]
+    let fs = platform::WindowsDurableFs;
+    RestoreTransitions::new(root.to_path_buf(), fs)
+}
+
+pub(super) fn prepare(root: &Path, stage: &Path, protective: &Path) -> Result<(), StorageError> {
+    production(root).prepare_durable_restore(
+        stage,
+        protective,
+        &root.join("repuestos-autos.sqlite3"),
+    )
+}
+
+pub(super) fn install(root: &Path, stage: &Path, canonical: &Path) -> Result<(), StorageError> {
+    production(root).install_durable_restore(stage, canonical)
+}
+
+pub(super) fn recover(root: &Path, source: &Path, canonical: &Path) -> Result<(), StorageError> {
+    production(root).recover_canonical_durably(source, canonical)
+}
+
+pub(super) fn complete(root: &Path) -> Result<(), StorageError> {
+    production(root).complete_durable_restore(|| Ok(()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[rustfmt::skip]
+    #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+    enum Kind { Verify, SyncFile, SyncDirectory, Write, Copy, Remove, Rename, Replace }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Recorded {
+        kind: Kind,
+        paths: Vec<PathBuf>,
+    }
+
+    #[rustfmt::skip]
+    impl Recorded {
+        fn from(operation: FsOperation<'_>) -> Self {
+            let (kind, paths) = match operation {
+                FsOperation::Verify(root, phase) => { let mut paths = vec![root.into()]; match phase { VerificationPhase::Prepare { stage, protective, canonical } => paths.extend([stage.into(), protective.into(), canonical.into()]), VerificationPhase::Recovery { marker, source, canonical } => paths.extend([marker.into(), source.into(), canonical.into()]), VerificationPhase::Completion { marker, canonical } => paths.extend([marker.into(), canonical.into()]) }; (Kind::Verify, paths) },
+                FsOperation::SyncFile(path) => (Kind::SyncFile, vec![path.into()]),
+                FsOperation::SyncDirectory(path) => (Kind::SyncDirectory, vec![path.into()]),
+                FsOperation::WriteExclusive(path, _) => (Kind::Write, vec![path.into()]),
+                FsOperation::CopyExclusive(from, to) => (Kind::Copy, vec![from.into(), to.into()]),
+                FsOperation::Remove(path) => (Kind::Remove, vec![path.into()]),
+                FsOperation::RenameNoReplace(from, to) => (Kind::Rename, vec![from.into(), to.into()]),
+                FsOperation::Replace(from, to, backup) => (Kind::Replace, vec![from.into(), to.into(), backup.into()]),
+            };
+            Self { kind, paths }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Moment {
+        Before,
+        After,
+    }
+
+    #[derive(Clone)]
+    struct Model {
+        files: HashMap<PathBuf, Vec<u8>>,
+        durable: HashMap<PathBuf, Vec<u8>>,
+        operations: Vec<Recorded>,
+        failpoint: Option<(Kind, usize, Moment)>,
+        hidden_from_exists: Option<PathBuf>,
+        unsafe_entries: Vec<PathBuf>,
+        supported: bool,
+    }
+
+    struct RecordingFs(RefCell<Model>);
+
+    impl RecordingFs {
+        fn seeded(paths: &[(&str, &[u8])]) -> Self {
+            let files: HashMap<_, _> = paths
+                .iter()
+                .map(|(path, bytes)| (PathBuf::from(path), bytes.to_vec()))
+                .collect();
+            Self(RefCell::new(Model {
+                durable: files.clone(),
+                files,
+                operations: vec![],
+                failpoint: None,
+                hidden_from_exists: None,
+                unsafe_entries: Vec::new(),
+                supported: true,
+            }))
+        }
+    }
+
+    impl DurableFs for RecordingFs {
+        fn execute(&self, operation: FsOperation<'_>) -> io::Result<()> {
+            let recorded = Recorded::from(operation);
+            let mut model = self.0.borrow_mut();
+            let ordinal = model
+                .operations
+                .iter()
+                .filter(|item| item.kind == recorded.kind)
+                .count();
+            model.operations.push(recorded.clone());
+            if matches!(model.failpoint, Some((kind, at, Moment::Before)) if kind == recorded.kind && at == ordinal)
+            {
+                return Err(io::Error::other("injected before"));
+            }
+            match operation {
+                FsOperation::Verify(root, phase) => verify_model(root, phase, &model)?,
+                FsOperation::SyncDirectory(_) => model.durable = model.files.clone(),
+                FsOperation::WriteExclusive(path, bytes) => {
+                    model.files.insert(path.into(), bytes.into());
+                }
+                FsOperation::CopyExclusive(from, to) => {
+                    let bytes = model.files.get(from).cloned().unwrap_or_default();
+                    model.files.insert(to.into(), bytes);
+                }
+                FsOperation::Remove(path) => {
+                    model.files.remove(path);
+                }
+                FsOperation::RenameNoReplace(from, to) => {
+                    let bytes = model.files.remove(from).unwrap_or_default();
+                    model.files.insert(to.into(), bytes);
+                }
+                FsOperation::Replace(from, to, backup) => {
+                    if model.files.contains_key(backup) {
+                        return Err(io::ErrorKind::AlreadyExists.into());
+                    }
+                    model.files.insert(backup.into(), Vec::new());
+                    let old = model.files.remove(to).unwrap_or_default();
+                    model.files.insert(backup.into(), old);
+                    let bytes = model.files.remove(from).unwrap_or_default();
+                    model.files.insert(to.into(), bytes);
+                }
+                FsOperation::SyncFile(_) => {}
+            }
+            if matches!(model.failpoint, Some((kind, at, Moment::After)) if kind == recorded.kind && at == ordinal)
+            {
+                return Err(io::Error::other("injected after"));
+            }
+            Ok(())
+        }
+
+        fn is_present(&self, path: &Path) -> io::Result<bool> {
+            let model = self.0.borrow();
+            Ok(model.hidden_from_exists.as_deref() != Some(path) && model.files.contains_key(path))
+        }
+
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.0
+                .borrow()
+                .files
+                .get(path)
+                .cloned()
+                .ok_or_else(|| io::ErrorKind::NotFound.into())
+        }
+    }
+
+    fn verify_model(root: &Path, phase: VerificationPhase<'_>, model: &Model) -> io::Result<()> {
+        if !model.supported {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        verify_test_phase(
+            root,
+            phase,
+            |path| {
+                Ok(model
+                    .files
+                    .contains_key(path)
+                    .then(|| !model.unsafe_entries.iter().any(|entry| entry == path)))
+            },
+            |path| {
+                model
+                    .files
+                    .get(path)
+                    .cloned()
+                    .ok_or_else(|| io::ErrorKind::NotFound.into())
+            },
+            |directory| {
+                Ok(model
+                    .files
+                    .keys()
+                    .filter(|path| path.parent() == Some(directory))
+                    .cloned()
+                    .collect())
+            },
+        )
+    }
+
+    fn seeded() -> RecordingFs {
+        RecordingFs::seeded(&[
+            ("/app/repuestos-autos.sqlite3", b"live"),
+            ("/app/backup-restore/staging/stage.sqlite3", b"stage"),
+            ("/app/pre-restore.sqlite3", b"protective"),
+            ("/app/restore-state.json", PREPARED),
+            ("/app/restore-state.json.part", b"stale"),
+            ("/app/restore-recovery.sqlite3.part", b"stale"),
+        ])
+    }
+
+    fn protocol(fs: RecordingFs) -> RestoreTransitions<RecordingFs> {
+        RestoreTransitions::new("/app".into(), fs)
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn protocol_orders_exact_markers_barriers_installation_and_retained_recovery() {
+        let stage = Path::new("/app/backup-restore/staging/stage.sqlite3");
+        let canonical = Path::new("/app/repuestos-autos.sqlite3");
+        let interrupted = completed_cycle();
+        interrupted.prepare_durable_restore(stage, Path::new("/app/pre-restore.sqlite3"), canonical).unwrap();
+        assert_eq!(interrupted.fs.0.borrow().durable.get(Path::new("/app/restore-state.json")), Some(&PREPARED.to_vec()));
+        interrupted.fs.0.borrow_mut().failpoint = Some((Kind::Rename, 2, Moment::Before));
+        assert_eq!(interrupted.install_durable_restore(stage, canonical), Err(StorageError::StorageUnavailable));
+        assert_eq!(interrupted.fs.0.borrow().durable.get(Path::new("/app/restore-state.json")), Some(&LIVE_MOVED.to_vec()));
+
+        let completed = completed_cycle();
+        completed.prepare_durable_restore(stage, Path::new("/app/pre-restore.sqlite3"), canonical).unwrap();
+        completed.install_durable_restore(stage, canonical).unwrap();
+        completed.recover_canonical_durably(Path::new("/app/restore-rollback.sqlite3"), canonical).unwrap();
+        let model = completed.fs.0.borrow();
+        assert_eq!(model.durable.get(Path::new("/app/restore-state.json")), Some(&CANDIDATE_INSTALLED.to_vec()));
+        assert_eq!(model.durable.get(Path::new("/app/restore-rollback.sqlite3")), Some(&b"live".to_vec()));
+        assert!(model.operations.iter().any(|item| item.kind == Kind::Replace));
+    }
+
+    fn assert_all_failpoints(
+        seed: impl Fn() -> RestoreTransitions<RecordingFs>,
+        action: impl Fn(&RestoreTransitions<RecordingFs>) -> Result<(), StorageError>,
+    ) {
+        let baseline = seed();
+        action(&baseline).unwrap();
+        let operations = baseline.fs.0.borrow().operations.clone();
+        for (index, operation) in operations.iter().enumerate() {
+            let ordinal = operations[..index]
+                .iter()
+                .filter(|item| item.kind == operation.kind)
+                .count();
+            for moment in [Moment::Before, Moment::After] {
+                let transitions = seed();
+                transitions.fs.0.borrow_mut().failpoint = Some((operation.kind, ordinal, moment));
+                assert_eq!(
+                    action(&transitions),
+                    Err(StorageError::StorageUnavailable),
+                    "failpoint {:?} ordinal {ordinal} at {}",
+                    operation.kind,
+                    match moment {
+                        Moment::Before => "before",
+                        Moment::After => "after",
+                    }
+                );
+                assert!(transitions
+                    .fs
+                    .0
+                    .borrow()
+                    .durable
+                    .contains_key(Path::new("/app/pre-restore.sqlite3")));
+            }
+        }
+    }
+    fn completed_cycle() -> RestoreTransitions<RecordingFs> {
+        protocol(RecordingFs::seeded(&[
+            ("/app/repuestos-autos.sqlite3", b"live"),
+            (STAGE, b"stage"),
+            (PROTECTIVE, b"protective"),
+        ]))
+    }
+
+    const STAGE: &str = "/app/backup-restore/staging/stage.sqlite3";
+    const CANONICAL: &str = "/app/repuestos-autos.sqlite3";
+    const PROTECTIVE: &str = "/app/pre-restore.sqlite3";
+}
