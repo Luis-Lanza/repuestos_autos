@@ -1,12 +1,6 @@
 {
   "version": 1,
   "skills": {
-    "SQLite Database Expert": {
-      "source": "martinholovsky/claude-skills-generator",
-      "sourceType": "github",
-      "skillPath": "skills/sqlite/SKILL.md",
-      "computedHash": "0e75baa1c3159dba4c6db79330634327039c9813410256b73357dcbb0ed9d0ea"
-    },
     "codebase-design": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -54,12 +48,6 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/setup-matt-pocock-skills/SKILL.md",
       "computedHash": "552b0f48b9fe054aa93c5d432fefbd7bd9645e3f2d20b4e22432453a81800b21"
-    },
-    "tauri-development": {
-      "source": "mindrally/skills",
-      "sourceType": "github",
-      "skillPath": "tauri-development/SKILL.md",
-      "computedHash": "0edb30d9211bebab653e1ced97835c77f5efd7bfe2922550ec52c47a6fa09ff9"
     },
     "tauri-v2": {
       "source": "nodnarbnitram/claude-code-extensions",

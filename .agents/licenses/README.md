@@ -5,8 +5,6 @@ The project skill set is vendored for consistent behavior across supported agent
 | Upstream repository | License | Project skills |
 | --- | --- | --- |
 | `apollographql/skills` | MIT | `rust-best-practices` |
-| `martinholovsky/claude-skills-generator` | Unlicense | `sqlite-database-expert` |
 | `mattpocock/skills` | MIT | `codebase-design`, `domain-modeling`, `grill-with-docs`, `grilling`, `improve-codebase-architecture`, `setup-matt-pocock-skills`, `tdd`, `to-spec` |
-| `mindrally/skills` | Apache-2.0 | `tauri-development` |
 | `nodnarbnitram/claude-code-extensions` | MIT | `tauri-v2` |
 | `wshobson/agents` | MIT | `rust-async-patterns` |
