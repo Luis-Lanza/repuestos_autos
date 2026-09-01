@@ -561,6 +561,88 @@ fn records_each_durable_replacement_transition() {
 }
 
 #[test]
+fn live_restore_failure_recovers_valid_rollback_and_returns_restore_failed() {
+    let directory = temporary_directory("live-restore-recover-rollback");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "prior-data");
+    let state = DatabaseState::open(config).unwrap();
+    let stage = directory.join("staging/malformed.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    fs::write(&stage, b"rejected restore candidate").unwrap();
+    let store = BackupStore::new(&directory);
+
+    assert_eq!(
+        state.install_validated_stage(&stage, &store),
+        Err("restore_failed".into())
+    );
+    assert_eq!(category_count(&state, "prior-data"), 1);
+    state
+        .with_write(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO categories (name) VALUES (?1)",
+                    ["post-recovery"],
+                )
+                .map_err(|_| "database_unavailable".to_string())?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(category_count(&state, "post-recovery"), 1);
+    assert_eq!(store.read_restore_state().unwrap(), None);
+
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn live_restore_failure_enters_unavailable_when_recovery_cannot_establish_canonical() {
+    let directory = temporary_directory("live-restore-unavailable");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "prior-data");
+    let state = DatabaseState::open(config).unwrap();
+    let stage = directory.join("staging/malformed.sqlite3");
+    fs::create_dir_all(stage.parent().unwrap()).unwrap();
+    fs::write(&stage, b"rejected restore candidate").unwrap();
+    fs::create_dir(directory.join("restore-recovery.sqlite3.part")).unwrap();
+    let store = BackupStore::new(&directory);
+    let read_called = Cell::new(false);
+    let write_called = Cell::new(false);
+
+    assert_eq!(
+        state.install_validated_stage(&stage, &store),
+        Err("database_unavailable".into())
+    );
+    assert_eq!(
+        state
+            .with_read(|_| {
+                read_called.set(true);
+                Ok(())
+            })
+            .unwrap_err(),
+        "database_unavailable"
+    );
+    assert_eq!(
+        state
+            .with_write(|_| {
+                write_called.set(true);
+                Ok(())
+            })
+            .unwrap_err(),
+        "database_unavailable"
+    );
+    assert!(!read_called.get());
+    assert!(!write_called.get());
+    assert_eq!(
+        store.read_restore_state().unwrap(),
+        Some(RestoreState::CandidateInstalled)
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn installs_a_validated_stage_after_closing_the_live_connection() {
     let directory = temporary_directory("replacement");
     fs::create_dir_all(&directory).unwrap();
@@ -910,6 +992,29 @@ fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes(
             "message": "The selected backup is invalid.",
         })
     );
+    for (code, message) in [
+        ("restore_failed", "The restore could not be completed."),
+        ("database_unavailable", "The database is unavailable."),
+    ] {
+        let serialized = serde_json::to_value(BackupResponse::error(code)).unwrap();
+        assert_eq!(
+            serialized,
+            serde_json::json!({ "kind": "error", "code": code, "message": message })
+        );
+        let text = serialized.to_string();
+        for internal in [
+            "SQLite",
+            "restore-state.json",
+            "restore-rollback.sqlite3",
+            "pre-restore.sqlite3",
+            "recovery source",
+        ] {
+            assert!(
+                !text.contains(internal),
+                "leaked internal detail: {internal}"
+            );
+        }
+    }
     assert_eq!(
         ALLOWED_COMMANDS,
         [

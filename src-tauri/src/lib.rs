@@ -55,7 +55,12 @@ impl DatabaseState {
                     validate_restored_database(&connection).map_err(|_| ())?;
                     Ok(connection)
                 }),
-            Ok(Some(_)) => recover_marked_database(&config, store),
+            Ok(Some(_)) => {
+                open_validated_recovery_database(&config, store).and_then(|connection| {
+                    store.clear_restore_state().map_err(|_| ())?;
+                    Ok(connection)
+                })
+            }
             Err(_) => Err(()),
         };
         match recovered {
@@ -99,6 +104,17 @@ impl DatabaseState {
         stage: &std::path::Path,
         store: &BackupStore,
     ) -> Result<(), String> {
+        self.install_validated_stage_with_cleanup(stage, store, || {
+            store.clear_restore_state().map_err(|_| ())
+        })
+    }
+
+    fn install_validated_stage_with_cleanup(
+        &self,
+        stage: &std::path::Path,
+        store: &BackupStore,
+        clear_restore_state: impl FnOnce() -> Result<(), ()>,
+    ) -> Result<(), String> {
         let mut state = self.0.lock().map_err(|_| "persistence_failure")?;
         if state.status != DatabaseStatus::Ready {
             return Err("database_unavailable".into());
@@ -124,29 +140,49 @@ impl DatabaseState {
             .map_err(|_| "restore_failed")?;
         state.status = DatabaseStatus::Restoring;
         drop(state.connection.take());
-        store
-            .move_live_to_rollback(state.config.path())
-            .map_err(|_| "restore_failed")?;
-        store
-            .write_restore_state(RestoreState::LiveMoved)
-            .map_err(|_| "restore_failed")?;
-        store
-            .install_stage(stage, state.config.path())
-            .map_err(|_| "restore_failed")?;
-        store
-            .write_restore_state(RestoreState::CandidateInstalled)
-            .map_err(|_| "restore_failed")?;
-        let connection = open_database(&state.config).map_err(|_| "restore_failed")?;
-        validate_restored_database(&connection).map_err(|_| "restore_failed")?;
-        state.connection = Some(connection);
-        state.status = DatabaseStatus::Ready;
-        store
-            .clear_restore_state()
-            .map_err(|_| "restore_failed".to_string())
+
+        let replacement = (|| {
+            store
+                .move_live_to_rollback(state.config.path())
+                .map_err(|_| ())?;
+            store
+                .write_restore_state(RestoreState::LiveMoved)
+                .map_err(|_| ())?;
+            store
+                .install_stage(stage, state.config.path())
+                .map_err(|_| ())?;
+            store
+                .write_restore_state(RestoreState::CandidateInstalled)
+                .map_err(|_| ())?;
+            let connection = open_database(&state.config).map_err(|_| ())?;
+            validate_restored_database(&connection).map_err(|_| ())?;
+            Ok::<_, ()>(connection)
+        })();
+
+        match replacement {
+            Ok(connection) => {
+                state.connection = Some(connection);
+                state.status = DatabaseStatus::Ready;
+                clear_restore_state().map_err(|_| "restore_failed".to_string())
+            }
+            Err(()) => match open_validated_recovery_database(&state.config, store) {
+                Ok(connection) => {
+                    state.connection = Some(connection);
+                    state.status = DatabaseStatus::Ready;
+                    let _ = clear_restore_state();
+                    Err("restore_failed".into())
+                }
+                Err(()) => {
+                    state.connection = None;
+                    state.status = DatabaseStatus::Unavailable;
+                    Err("database_unavailable".into())
+                }
+            },
+        }
     }
 }
 
-fn recover_marked_database(
+fn open_validated_recovery_database(
     config: &DatabaseConfig,
     store: &BackupStore,
 ) -> Result<rusqlite::Connection, ()> {
@@ -164,7 +200,6 @@ fn recover_marked_database(
     }
     let connection = open_database(config).map_err(|_| ())?;
     validate_restored_database(&connection).map_err(|_| ())?;
-    store.clear_restore_state().map_err(|_| ())?;
     Ok(connection)
 }
 
@@ -173,6 +208,71 @@ fn is_valid_database(path: &std::path::Path) -> bool {
     connection
         .as_ref()
         .is_ok_and(|connection| validate_restored_database(connection).is_ok())
+}
+
+#[cfg(test)]
+mod database_state_tests {
+    use std::{cell::Cell, fs};
+
+    use super::*;
+
+    #[test]
+    fn validated_candidate_remains_ready_when_final_marker_cleanup_fails() {
+        let directory = std::env::temp_dir().join(format!(
+            "r-a-cleanup-failure-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let state = DatabaseState::open(config).unwrap();
+        let stage = directory.join("staging/candidate.sqlite3");
+        fs::create_dir_all(stage.parent().unwrap()).unwrap();
+        state
+            .with_read(|connection| {
+                create_snapshot(connection, &stage).map_err(|_| "snapshot_failed".into())
+            })
+            .unwrap();
+        rusqlite::Connection::open(&stage)
+            .unwrap()
+            .execute(
+                "INSERT INTO categories (name) VALUES (?1)",
+                ["validated-candidate"],
+            )
+            .unwrap();
+        let store = BackupStore::new(&directory);
+        let cleanup_called = Cell::new(false);
+
+        assert_eq!(
+            state.install_validated_stage_with_cleanup(&stage, &store, || {
+                cleanup_called.set(true);
+                Err(())
+            }),
+            Err("restore_failed".into())
+        );
+        assert!(cleanup_called.get());
+        assert_eq!(
+            state
+                .with_read(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT COUNT(*) FROM categories WHERE name = ?1",
+                            ["validated-candidate"],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .map_err(|_| "database_unavailable".into())
+                })
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.read_restore_state().unwrap(),
+            Some(RestoreState::CandidateInstalled)
+        );
+
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 #[cfg(feature = "desktop")]
