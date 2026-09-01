@@ -489,4 +489,308 @@ mod platform {
         raw.split(|unit| *unit == b'\\' as u16 || *unit == b'/' as u16)
             .any(|component| component == [b'.' as u16] || component == [b'.' as u16, b'.' as u16])
     }
+
+    #[rustfmt::skip]
+    fn verify_layout(root: &Path, phase: VerificationPhase<'_>) -> io::Result<()> {
+        if !root.is_absolute() || has_lexically_ambiguous_component(root.as_os_str()) { return Err(io::ErrorKind::Unsupported.into()); }
+        let canonical_expected = root.join("repuestos-autos.sqlite3"); let marker_expected = root.join("restore-state.json");
+        let root_volume = volume_path(root)?;
+        if volume_filesystem(&root_volume)? != OsStr::new("NTFS") || unsafe { GetDriveTypeW(root_volume.as_ptr()) } != DRIVE_FIXED { return Err(io::ErrorKind::Unsupported.into()); }
+        let mut sidecars = Vec::new();
+        for entry in std::fs::read_dir(root)? {
+            let path = entry?.path(); let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+            if name.starts_with("restore-state.json.previous-") {
+                let known = (0..MARKER_BACKUP_LIMIT).any(|slot| path == root.join(format!("restore-state.json.previous-{slot}")));
+                if !known || !valid_sidecar(&path)? { return Err(io::ErrorKind::InvalidData.into()); }
+                sidecars.push(path);
+            }
+        }
+        let mut required = Vec::<PathBuf>::new(); let mut stage_path = None;
+        match phase {
+            VerificationPhase::Prepare { stage, protective, canonical } => {
+                let staging = root.join("backup-restore/staging");
+                if !stage.starts_with(&staging) || stage == staging || protective != root.join("pre-restore.sqlite3") || canonical != canonical_expected || inspect_presence(&marker_expected)? { return Err(io::ErrorKind::Unsupported.into()); }
+                required.extend([stage.to_path_buf(), protective.to_path_buf(), canonical.to_path_buf()]); stage_path = Some(stage);
+            }
+            VerificationPhase::Recovery { marker, source, canonical } => {
+                let sources = [root.join("restore-rollback.sqlite3"), root.join("pre-restore.sqlite3")];
+                if marker != marker_expected || canonical != canonical_expected || !sources.iter().any(|path| source == path) || !valid_marker(marker)? { return Err(io::ErrorKind::Unsupported.into()); }
+                required.extend([marker.to_path_buf(), source.to_path_buf()]); if inspect_presence(canonical)? { required.push(canonical.to_path_buf()); }
+            }
+            VerificationPhase::Completion { marker, canonical } => {
+                if marker != marker_expected || canonical != canonical_expected || !inspect_presence(canonical)? || (inspect_presence(marker)? && !valid_marker(marker)?) { return Err(io::ErrorKind::Unsupported.into()); }
+                required.push(canonical.to_path_buf()); if inspect_presence(marker)? { required.push(marker.to_path_buf()); }
+            }
+        }
+        let mut ancestor = Some(root); while let Some(path) = ancestor { reject_reparse(path, true)?; ancestor = path.parent(); }
+        for path in required { inspect_required_file(&path, &root_volume)?; }
+        let mut optional = vec![root.join("restore-rollback.sqlite3"), root.join("pre-restore.sqlite3"), root.join("restore-state.json.part"), root.join("restore-recovery.sqlite3.part")]; optional.extend(sidecars);
+        for path in optional { if inspect_presence(&path)? { inspect_required_file(&path, &root_volume)?; } }
+        if let Some(stage) = stage_path {
+            let mut ancestor = stage.parent(); while let Some(path) = ancestor { reject_reparse(path, true)?; if path == root { return Ok(()); } ancestor = path.parent(); }
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        Ok(())
+    }
+
+    fn inspect_required_file(path: &Path, root_volume: &[u16]) -> io::Result<()> {
+        if !path.is_absolute() || has_lexically_ambiguous_component(path.as_os_str()) {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        require_same_volume(root_volume, &volume_path(path)?)?;
+        reject_reparse(path, false)
+    }
+
+    fn inspect_presence(path: &Path) -> io::Result<bool> {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn valid_marker(path: &Path) -> io::Result<bool> {
+        Ok(matches!(
+            read_regular(path)?.as_slice(),
+            PREPARED | LIVE_MOVED | CANDIDATE_INSTALLED
+        ))
+    }
+
+    fn valid_sidecar(path: &Path) -> io::Result<bool> {
+        let bytes = read_regular(path)?;
+        Ok(bytes.is_empty()
+            || matches!(
+                bytes.as_slice(),
+                PREPARED | LIVE_MOVED | CANDIDATE_INSTALLED
+            ))
+    }
+
+    #[rustfmt::skip]
+    fn read_regular(path: &Path) -> io::Result<Vec<u8>> {
+        let handle = open(path, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT)?;
+        with_handle(handle, |handle| {
+            validate_handle_kind(handle, false)?; let mut bytes = Vec::new(); let mut buffer = [0_u8; 4096];
+            loop {
+                let mut read = 0; bool_result(unsafe { ReadFile(handle, buffer.as_mut_ptr().cast(), buffer.len() as u32, &mut read, null_mut()) })?;
+                if read == 0 { return Ok(bytes); } bytes.extend_from_slice(&buffer[..read as usize]);
+            }
+        })
+    }
+
+    fn volume_path(path: &Path) -> io::Result<Vec<u16>> {
+        let path = wide(path)?;
+        let mut capacity = 260_usize;
+        loop {
+            let mut volume = vec![0_u16; capacity];
+            if unsafe {
+                GetVolumePathNameW(path.as_ptr(), volume.as_mut_ptr(), volume.len() as u32)
+            } != 0
+            {
+                let length = volume
+                    .iter()
+                    .position(|value| *value == 0)
+                    .ok_or(io::ErrorKind::InvalidData)?;
+                volume.truncate(length + 1);
+                return Ok(volume);
+            }
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(122) || capacity >= 32_768 {
+                return Err(error);
+            }
+            capacity = (capacity * 2).min(32_768);
+        }
+    }
+
+    fn require_same_volume(expected: &[u16], actual: &[u16]) -> io::Result<()> {
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(io::ErrorKind::Unsupported.into())
+        }
+    }
+
+    fn volume_filesystem(volume: &[u16]) -> io::Result<std::ffi::OsString> {
+        let mut capacity = 32_usize;
+        loop {
+            let mut filesystem = vec![0_u16; capacity];
+            if unsafe {
+                GetVolumeInformationW(
+                    volume.as_ptr(),
+                    null_mut(),
+                    0,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                    filesystem.as_mut_ptr(),
+                    filesystem.len() as u32,
+                )
+            } != 0
+            {
+                let length = filesystem
+                    .iter()
+                    .position(|value| *value == 0)
+                    .ok_or(io::ErrorKind::InvalidData)?;
+                return Ok(std::ffi::OsString::from_wide(&filesystem[..length]));
+            }
+            let error = io::Error::last_os_error();
+            if !matches!(error.raw_os_error(), Some(122) | Some(234)) || capacity >= 256 {
+                return Err(error);
+            }
+            capacity = (capacity * 2).min(256);
+        }
+    }
+
+    fn reject_reparse(path: &Path, directory: bool) -> io::Result<()> {
+        let flags = if directory {
+            FILE_FLAG_BACKUP_SEMANTICS
+        } else {
+            FILE_ATTRIBUTE_NORMAL
+        };
+        let handle = open(
+            path,
+            GENERIC_READ,
+            OPEN_EXISTING,
+            flags | FILE_FLAG_OPEN_REPARSE_POINT,
+        )?;
+        with_handle(handle, |handle| validate_handle_kind(handle, directory))
+    }
+
+    fn validate_handle_kind(handle: HANDLE, directory: bool) -> io::Result<()> {
+        let mut information = FILE_ATTRIBUTE_TAG_INFO::default();
+        bool_result(unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                9,
+                (&mut information as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+                size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+            )
+        })?;
+        let attributes = information.FileAttributes;
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || (attributes & FILE_ATTRIBUTE_DIRECTORY != 0) != directory
+        {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        Ok(())
+    }
+
+    fn bool_result(result: i32) -> io::Result<()> {
+        if result == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::fs;
+
+        use super::*;
+
+        fn directory(name: &str) -> std::path::PathBuf {
+            std::env::temp_dir().join(format!("r-a-native-{name}-{}", uuid::Uuid::new_v4()))
+        }
+
+        fn verify_prepare(
+            root: &Path,
+            stage: &Path,
+            protective: &Path,
+            canonical: &Path,
+        ) -> io::Result<()> {
+            verify_layout(
+                root,
+                VerificationPhase::Prepare {
+                    stage,
+                    protective,
+                    canonical,
+                },
+            )
+        }
+
+        #[test]
+        fn closed_reservation_allows_preserved_replacement_and_keeps_collision_evidence() {
+            let root = directory("exclusive-replace");
+            fs::create_dir_all(&root).unwrap();
+            let source = root.join("source");
+            let destination = root.join("destination");
+            let backup = root.join("preserved-old");
+            fs::write(&source, b"new").unwrap();
+            fs::write(&destination, b"old").unwrap();
+
+            assert!(write_exclusive(&destination, b"overwrite").is_err());
+            assert!(copy_exclusive(&source, &destination).is_err());
+            assert!(rename_no_replace(&source, &destination).is_err());
+            replace_file(&source, &destination, &backup).unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), b"new");
+            assert_eq!(fs::read(&backup).unwrap(), b"old");
+
+            fs::write(&source, b"newer").unwrap();
+            assert_eq!(
+                replace_file(&source, &destination, &backup)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::AlreadyExists
+            );
+            assert_eq!(fs::read(&destination).unwrap(), b"new");
+            assert_eq!(fs::read(&source).unwrap(), b"newer");
+            assert_eq!(fs::read(&backup).unwrap(), b"old");
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn layout_rejects_parent_ambiguity_and_the_actual_missing_protective_file() {
+            let root = directory("layout");
+            let staging = root.join("backup-restore").join("staging");
+            fs::create_dir_all(&staging).unwrap();
+            let canonical = root.join("repuestos-autos.sqlite3");
+            let protective = root.join("pre-restore.sqlite3");
+            let stage = staging.join("candidate.sqlite3");
+            for path in [&canonical, &protective, &stage] {
+                fs::write(path, b"data").unwrap();
+            }
+            verify_prepare(&root, &stage, &protective, &canonical).unwrap();
+            assert!(require_same_volume(&[b'C' as u16, 0], &[b'D' as u16, 0]).is_err());
+
+            let ambiguous = staging.join("..").join("escape.sqlite3");
+            fs::write(root.join("backup-restore").join("escape.sqlite3"), b"data").unwrap();
+            assert!(verify_prepare(&root, &ambiguous, &protective, &canonical).is_err());
+            fs::remove_file(&protective).unwrap();
+            assert!(verify_prepare(&root, &stage, &protective, &canonical).is_err());
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn layout_rejects_lexical_interior_dot_component() {
+            let root = directory("layout-interior-dot");
+            let staging = root.join("backup-restore").join("staging");
+            fs::create_dir_all(&staging).unwrap();
+            let canonical = root.join("repuestos-autos.sqlite3");
+            let protective = root.join("pre-restore.sqlite3");
+            let stage = staging.join(".").join("candidate.sqlite3");
+            for path in [&canonical, &protective, &stage] {
+                fs::write(path, b"data").unwrap();
+            }
+
+            assert!(verify_prepare(&root, &stage, &protective, &canonical).is_err());
+
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn all_share_handles_allow_rename_and_native_failures_remain_errors() {
+            let root = directory("sharing");
+            fs::create_dir_all(&root).unwrap();
+            let source = root.join("source");
+            let destination = root.join("destination");
+            fs::write(&source, b"data").unwrap();
+            let held = open(&source, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL).unwrap();
+            with_handle(held, |_| rename_no_replace(&source, &destination)).unwrap();
+            assert!(sync_file(&source).is_err());
+            let consumed = root.join("backup");
+            assert!(replace_file(&source, &destination, &consumed).is_err());
+            assert_eq!(fs::read(consumed).unwrap(), b"");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 }
