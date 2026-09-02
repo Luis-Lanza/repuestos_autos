@@ -2,6 +2,7 @@ import { createElement, type ChangeEvent, type FormEvent, useEffect, useReducer,
 
 import { searchProducts } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
+import { Action } from "../visual-system/controls.ts";
 import { createInventoryFlow, initialInventoryState, projectedBalance, type InventoryState } from "./inventory-flow.ts";
 
 export const inventoryScreenDescription = "Inventory stock entry and physical count workflow.";
@@ -63,7 +64,7 @@ export function InventoryScreen() {
         : createElement("label", null, "Physical count", createElement("input", { type: "number", min: 0, step: 1, value: state.physical_count, onChange: (event) => dispatch({ type: "physical_count_changed", value: event.target.value }) }), createElement("input", { "aria-label": "Reason", required: true, value: state.reason, onChange: (event) => dispatch({ type: "reason_changed", value: event.target.value }) })),
       projection !== null ? createElement("p", null, `Projected balance: ${projection}`) : null,
       state.advisory_notice ? createElement("p", { role: "status" }, state.advisory_notice) : null,
-      createElement("button", { type: "button", disabled: state.confirmation === "pending" || (state.operation === "physical_count" && !state.reason.trim()), onClick: confirm }, state.confirmation === "pending" ? "Saving…" : "Confirm operation"),
+      createElement(Action, { variant: "primary", pending: state.confirmation === "pending", pendingLabel: "Saving…", disabled: state.operation === "physical_count" && !state.reason.trim(), onClick: confirm }, "Confirm operation"),
       createElement("button", { type: "button", onClick: () => dispatch({ type: "discard" }) }, "New operation")) : null,
     state.result ? createElement("p", { role: "status" }, `Saved ${state.result.quantity_delta}; balance is ${state.result.resulting_quantity}.`) : null,
     state.feedback ? createElement("p", { role: "alert" }, state.feedback) : null,
