@@ -188,6 +188,22 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-badge="out-of-stock"], [data-ui-badge="cancelled"] { color: var(--color-danger); background: var(--color-danger-surface); }
 [data-ui-badge="archived"], [data-ui-badge="unavailable"] { background: var(--color-unavailable-surface); }
 
+[data-ui-panel] {
+  min-inline-size: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+[data-ui-data-scroll] { max-inline-size: 100%; overflow-x: auto; }
+[data-ui-aligned-data] { inline-size: 100%; border-collapse: collapse; }
+[data-ui-aligned-data] caption { padding-block-end: var(--space-3); text-align: start; }
+[data-ui-aligned-data] :is(th, td) { min-block-size: var(--size-control-prominent); padding: var(--space-3); border-block-end: 1px solid var(--color-border); vertical-align: middle; }
+[data-ui-align="start"] { text-align: start; }
+[data-ui-align="end"] { text-align: end; }
+[data-ui-kind="sku"] { font-family: var(--font-mono); }
+[data-ui-kind="numeric"], [data-ui-kind="money"] { font-variant-numeric: tabular-nums; }
+
 [data-ui-status] {
   border: 1px solid currentColor;
   border-inline-start-width: 4px;
@@ -201,7 +217,15 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 main, section, form, fieldset, table { min-inline-size: 0; max-inline-size: 100%; }
 img, svg, video { max-inline-size: 100%; }
 
-@media (max-width: 960px) { :root { --space-page: var(--space-5); } }
+@media (max-width: 960px) {
+  :root { --space-page: var(--space-5); }
+  [data-ui-panel] { padding: var(--space-4); }
+  [data-ui-aligned-data] thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+  [data-ui-aligned-data] :is(tbody, tr, td) { display: block; }
+  [data-ui-aligned-data] tr { padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
+  [data-ui-aligned-data] td { display: grid; grid-template-columns: minmax(8rem, 40%) 1fr; gap: var(--space-3); border: 0; text-align: start; }
+  [data-ui-aligned-data] td::before { content: attr(data-label); font-size: var(--type-label-size); font-weight: var(--weight-semibold); }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
@@ -212,7 +236,7 @@ img, svg, video { max-inline-size: 100%; }
   [data-ui-action]:not(:disabled):not([aria-busy="true"]):active { transform: none; }
 }
 @media (forced-colors: active) {
-  button, input, select, textarea, [role="button"], [data-ui-status] { border-color: CanvasText; forced-color-adjust: auto; }
+  button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   :where(button, input, select, textarea, a[href], [role="button"]):focus-visible,
   [data-ui-focus-visible="true"] { outline-color: Highlight; }
 }
