@@ -86,6 +86,7 @@
   --elevation-sticky: 0 1px 2px rgb(41 37 43 / 10%);
   --elevation-modal: 0 12px 32px rgb(41 37 43 / 18%);
   --motion-fast: 140ms;
+  --size-shell-sidebar: 208px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -222,8 +223,61 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 main, section, form, fieldset, table { min-inline-size: 0; max-inline-size: 100%; }
 img, svg, video { max-inline-size: 100%; }
 
+[data-ui-app-shell] {
+  display: grid;
+  grid-template-columns: var(--size-shell-sidebar) minmax(0, 1fr);
+  min-block-size: 100vh;
+  background: var(--color-canvas);
+}
+[data-ui-shell-sidebar] {
+  position: sticky;
+  inset-block-start: 0;
+  block-size: 100vh;
+  overflow-y: auto;
+  padding: var(--space-6);
+  color: var(--color-text-inverse);
+  background: var(--palette-plum-500);
+}
+[data-ui-shell-identity] {
+  display: flex;
+  min-block-size: 72px;
+  align-items: flex-start;
+  border-block-end: 2px solid var(--color-accent);
+  font-size: var(--type-h2-size);
+  line-height: var(--type-h2-line);
+  font-weight: var(--weight-emphasis);
+}
+[data-ui-shell-navigation] { display: grid; gap: var(--space-2); padding-block-start: var(--space-4); }
+[data-ui-shell-navigation] button {
+  min-inline-size: 0;
+  min-block-size: var(--size-control-default);
+  padding-inline: var(--space-3);
+  border: 0;
+  border-inline-start: 4px solid transparent;
+  color: var(--color-text-inverse);
+  background: transparent;
+  text-align: start;
+}
+[data-ui-shell-navigation] button:hover { background: rgb(244 239 230 / 10%); }
+[data-ui-shell-navigation] button:active { background: rgb(244 239 230 / 18%); box-shadow: inset 0 2px 0 var(--color-text); }
+[data-ui-shell-navigation] button[aria-current="page"] {
+  border-inline-start-color: var(--color-accent);
+  background: rgb(244 239 230 / 14%);
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: var(--space-1);
+}
+[data-ui-shell-content] {
+  min-inline-size: 0;
+  max-block-size: 100vh;
+  overflow: auto;
+  padding: var(--space-page);
+}
+
 @media (max-width: 960px) {
-  :root { --space-page: var(--space-5); }
+  :root { --space-page: var(--space-5); --size-shell-sidebar: 176px; }
+  [data-ui-shell-sidebar] { padding-inline: var(--space-4); }
+  [data-ui-shell-identity] { min-block-size: 64px; }
   [data-ui-panel] { padding: var(--space-4); }
   [data-ui-aligned-data] thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
   [data-ui-aligned-data] :is(tbody, tr, td) { display: block; }
