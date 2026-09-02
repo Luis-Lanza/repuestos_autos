@@ -6,7 +6,7 @@ import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { catalogResultDetails } from "./catalog-result.ts";
 import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, effectiveDraftUnitPriceCentavos, formatBs, initialSaleState, parseOptionalBs } from "./sale-flow.ts";
-import { persistedSummaryDetails } from "./persisted-summary";
+import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
 
 const INVALID_BS = "Ingresá un monto válido en Bs, con hasta dos decimales.";
 const failureByCode: Record<string, string> = {
@@ -24,6 +24,7 @@ export function SaleScreen() {
   const [state, dispatch] = useReducer(createSaleFlow, initialSaleState);
   const [query, setQuery] = useState("");
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
+  const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null);
   const searchSequence = useRef(0), confirmationSequence = useRef(0), confirming = useRef(false), mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; }, []);
@@ -63,7 +64,10 @@ export function SaleScreen() {
     try {
       const response = await confirmSale(request);
       if (!mounted.current || attempt !== confirmationSequence.current) return;
-      if (response.kind === "success") dispatch({ type: "confirmation_succeeded", summary: response });
+      if (response.kind === "success") {
+        setPersistedDetails(projectPersistedSaleSummary(response));
+        dispatch({ type: "confirmation_succeeded", summary: response });
+      }
       else if (response.kind === "stale_catalog_record") dispatch({ type: "stale_price_detected", ...response });
       else dispatch({ type: "confirmation_failed", message: failureByCode[response.code] ?? "No se pudo confirmar la venta. Intentá nuevamente." });
     } catch {
@@ -73,23 +77,13 @@ export function SaleScreen() {
     }
   }
 
-  if (state.persisted_summary) {
-    const details = persistedSummaryDetails(state.persisted_summary);
-    return createElement(
-      "main",
-      { "aria-labelledby": "sale-summary-heading" },
-      createElement("h1", { id: "sale-summary-heading" }, "Sale confirmed"),
-      createElement("p", null, `Sale ${details.saleId} · ${details.status} · ${details.outcome}`),
-      createElement("dl", null,
-        createElement("dt", null, "Request ID"), createElement("dd", null, details.requestId),
-        createElement("dt", null, "Confirmed at"), createElement("dd", null, details.confirmedAt),
-        createElement("dt", null, "Total"), createElement("dd", null, details.total)),
-      createElement("h2", null, "Products"),
-      createElement("ul", null, details.lines.map((line) => createElement("li", { key: line }, line))),
-      createElement("h2", null, "Payments"),
-      createElement("ul", null, details.payments.map((payment) => createElement("li", { key: payment }, payment))),
-      createElement("button", { type: "button", onClick: () => dispatch({ type: "discard" }) }, "New sale"),
-    );
+  if (state.persisted_summary && persistedDetails) {
+    return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => {
+      setPersistedDetails(null);
+      setQuery("");
+      setPaymentErrors({});
+      dispatch({ type: "discard" });
+    } });
   }
 
   const discovery = state.catalog_discovery;

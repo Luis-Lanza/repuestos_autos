@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { SaleScreen } from "./sale-screen.ts";
@@ -73,7 +73,7 @@ test("parses cash-only, QR-only and mixed Bs values into the exact command envel
     const view = render(createElement(SaleScreen)); const u = await addFirst();
     if (cash) await u.type(screen.getByRole("textbox", { name: "Efectivo recibido" }), cash);
     if (qr) await u.type(screen.getByRole("textbox", { name: "Pago QR" }), qr);
-    await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Sale confirmed" });
+    await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" });
     assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2 }], payment: { amount_tendered_centavos: expected[0], qr_applied_centavos: expected[1] } } });
     view.unmount();
   }
@@ -106,7 +106,7 @@ test("blocks a stale price until exact acknowledgement and retries with the same
   screen.getByText("El precio de Filtro aceite cambió de Bs 85,50 a Bs 90,00."); const accept = screen.getByRole("button", { name: "Aceptar precio actual" });
   assert.equal(document.activeElement, accept); assert.equal((screen.getByRole("button", { name: "Confirmar venta" }) as HTMLButtonElement).disabled, true);
   await u.click(accept); screen.getByText("Precio actual aceptado. Confirmá nuevamente para continuar.");
-  await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Sale confirmed" }); assert.deepEqual(ids, [UUID, UUID]);
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" }); assert.deepEqual(ids, [UUID, UUID]);
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
@@ -114,4 +114,43 @@ test("discards late confirmation after unmount and keeps the existing success ha
   const view = render(createElement(SaleScreen)); await addFirst(); fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" }));
   assert.equal((screen.getByRole("button", { name: "Descartar borrador" }) as HTMLButtonElement).disabled, true); view.unmount();
   await act(() => { pending.resolve(success); return pending.promise; }); assert.equal(document.body.textContent, "");
+});
+
+test("replaces the draft with a stable persisted summary and resets through its sole action", async () => {
+  installUuid();
+  const catalog = [{ ...products[0] }];
+  const confirmed = {
+    ...success, confirmed_at: "2026-08-14T10:42:00Z", total_centavos: 10_050,
+    lines: [
+      { product_id: 1, sku: "HIST-1", product_name: "Filtro histórico", quantity: 2, unit_price_centavos: 4_000, line_total_centavos: 8_000 },
+      { product_id: 99, sku: "SKU no disponible", product_name: "Producto no disponible", quantity: 1, unit_price_centavos: 2_050, line_total_centavos: 2_050 },
+    ],
+    payments: [
+      { method: "cash" as const, amount_applied_centavos: 6_000, amount_tendered_centavos: 7_000, change_given_centavos: 1_000 },
+      { method: "qr" as const, amount_applied_centavos: 4_050 },
+    ],
+  };
+  let response = confirmed;
+  mockIPC((command) => command === "search_products_command" ? catalog : response);
+  const view = render(createElement(SaleScreen)); const u = await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("heading", { name: "Venta confirmada" });
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-persisted-summary"), "true");
+  screen.getByText("Venta #9"); screen.getByText("14/08/2026, 10:42"); screen.getByText("Filtro histórico"); screen.getByText("SKU no disponible");
+  for (const fact of ["Bs 40,00", "Bs 80,00", "Bs 60,00", "Bs 70,00", "Bs 10,00", "Bs 40,50", "Bs 100,50"]) screen.getByText(fact);
+  assert.equal(screen.getAllByText("Bs 20,50").length, 2);
+  const summaryMain = screen.getByRole("main"), beforeMutation = summaryMain.textContent;
+  const roles = ["button", "link", "textbox", "spinbutton", "combobox", "checkbox", "radio", "menuitem"] as const;
+  const controls = roles.flatMap((role) => within(summaryMain).queryAllByRole(role));
+  assert.deepEqual(controls.map((control) => control.textContent), ["Nueva venta"]);
+  for (const role of roles) assert.equal(within(summaryMain).queryAllByRole(role, { name: /editar|imprimir|compartir|reembolsar|recibo|edit|print|share|refund|receipt/i }).length, 0);
+  catalog[0].name = "Catálogo mutado";
+  confirmed.lines.forEach((line) => Object.assign(line, { product_id: 0, sku: "MUT", product_name: "Resultado mutado", quantity: 0, unit_price_centavos: 0, line_total_centavos: 0 }));
+  confirmed.payments.forEach((payment) => Object.assign(payment, { amount_applied_centavos: 0, amount_tendered_centavos: 0, change_given_centavos: 0 })); confirmed.total_centavos = 0;
+  view.rerender(createElement(SaleScreen)); assert.equal(screen.getByRole("main").textContent, beforeMutation);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-persisted-summary[\s\S]*overflow-x: visible/);
+  await u.click(screen.getByRole("button", { name: "Nueva venta" }));
+  response = { ...success, sale_id: 0, confirmed_at: "2026-08-14 10:42:00", lines: [{ product_id: 0, sku: "ZERO", product_name: "Valor cero", quantity: 0, unit_price_centavos: 0, line_total_centavos: 0 }], payments: [], total_centavos: 0 };
+  await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByText("Venta #0");
+  screen.getByText("14/08/2026, 10:42"); assert.ok(screen.getAllByText("Bs 0,00").length >= 3);
+  assert.equal(within(screen.getByRole("table", { name: "Pagos confirmados" })).queryAllByRole("row").length, 1);
 });

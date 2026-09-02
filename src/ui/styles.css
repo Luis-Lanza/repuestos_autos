@@ -285,6 +285,15 @@ img, svg, video { max-inline-size: 100%; }
 [data-ui-sale-list] > li > div:first-child { display: grid; min-inline-size: 0; }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
+[data-ui-persisted-summary] { display: grid; min-inline-size: 0; gap: var(--space-5); }
+[data-ui-summary-header], [data-ui-persisted-summary] > section { padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface); }
+[data-ui-summary-header] { border-inline-start: 4px solid var(--color-success-edge); background: var(--color-success-surface); }
+[data-ui-persisted-summary] dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
+[data-ui-persisted-summary] :is(dt, dd) { margin: 0; }
+[data-ui-persisted-summary] [data-ui-data-scroll] { overflow-x: visible; }
+[data-ui-persisted-summary] [data-ui-aligned-data] { table-layout: fixed; }
+[data-ui-summary-total] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); margin: 0; padding: var(--space-5); border-block: 2px solid var(--color-border-strong); font-size: var(--type-total-size); font-variant-numeric: tabular-nums; }
+
 @media (max-width: 960px) {
   :root { --space-page: var(--space-5); --size-shell-sidebar: 176px; }
   [data-ui-shell-sidebar] { padding-inline: var(--space-4); }
@@ -293,6 +302,8 @@ img, svg, video { max-inline-size: 100%; }
   [data-ui-sale-layout] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-sale-layout] > :is(:nth-child(2), :nth-child(3), :nth-child(4)) { grid-column: 1; grid-row: auto; }
   [data-ui-sale-search], [data-ui-sale-list] > li { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-persisted-summary] { gap: var(--space-4); overflow-x: visible; }
+  [data-ui-persisted-summary] dl { grid-template-columns: minmax(0, 1fr); }
   [data-ui-aligned-data] thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
   [data-ui-aligned-data] :is(tbody, tr, td) { display: block; }
   [data-ui-aligned-data] tr { padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
