@@ -66,10 +66,12 @@ test("keeps Saving disabled until confirmation resolves and announces success", 
     resolveConfirmation = resolve;
   });
   let confirmationRequestId = "";
+  let confirmationCalls = 0;
   mockIPC((command, payload) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "search_products_command") return [product];
     if (command === "confirm_stock_entry_command") {
+      confirmationCalls += 1;
       confirmationRequestId = String((payload?.request as { request_id?: unknown }).request_id);
       return confirmation;
     }
@@ -83,6 +85,8 @@ test("keeps Saving disabled until confirmation resolves and announces success", 
 
   const saving = screen.getByRole("button", { name: "Saving…" });
   assert.equal((saving as HTMLButtonElement).disabled, true);
+  await user.click(saving);
+  assert.equal(confirmationCalls, 1);
 
   assert.match(confirmationRequestId, /^[0-9a-f-]{36}$/i);
   resolveConfirmation(successfulOperation(confirmationRequestId));
