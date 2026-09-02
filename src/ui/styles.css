@@ -1,0 +1,182 @@
+/* Light-first values stay separate from semantic roles for future theme replacement. */
+:root {
+  color-scheme: light;
+  --palette-ivory: #f4efe6;
+  --palette-warm-white: #fffcf7;
+  --palette-stone-100: #eee7dc;
+  --palette-stone-300: #e4ddd2;
+  --palette-stone-600: #8d8177;
+  --palette-ink: #29252b;
+  --palette-muted-ink: #625a63;
+  --palette-plum-500: #3d3042;
+  --palette-plum-700: #312535;
+  --palette-copper-500: #c56845;
+  --palette-sage-100: #e7ece3;
+  --palette-sage-500: #71806a;
+  --palette-sage-700: #52634d;
+  --palette-amber-100: #f5e9d2;
+  --palette-amber-500: #c7923e;
+  --palette-garnet-100: #f5e2e2;
+  --palette-garnet-500: #a33f46;
+  --palette-garnet-700: #873139;
+
+  --color-canvas: var(--palette-ivory);
+  --color-surface: var(--palette-warm-white);
+  --color-surface-subtle: var(--palette-stone-100);
+  --color-surface-elevated: #fff;
+  --color-text: var(--palette-ink);
+  --color-text-muted: var(--palette-muted-ink);
+  --color-text-inverse: #fff;
+  --color-border: var(--palette-stone-300);
+  --color-border-strong: var(--palette-stone-600);
+  --color-action: var(--palette-plum-500);
+  --color-action-hover: var(--palette-plum-700);
+  --color-focus: var(--palette-copper-500);
+  --color-accent: var(--palette-copper-500);
+  --color-success: var(--palette-sage-700);
+  --color-success-edge: var(--palette-sage-500);
+  --color-success-surface: var(--palette-sage-100);
+  --color-warning: var(--palette-ink);
+  --color-warning-edge: var(--palette-amber-500);
+  --color-warning-surface: var(--palette-amber-100);
+  --color-danger: var(--palette-garnet-500);
+  --color-danger-hover: var(--palette-garnet-700);
+  --color-danger-surface: var(--palette-garnet-100);
+  --color-unavailable-surface: var(--palette-stone-300);
+  --color-stale: var(--color-warning);
+  --color-stale-edge: var(--color-warning-edge);
+  --color-stale-surface: var(--color-warning-surface);
+  --color-disabled-text: #817982;
+  --color-disabled-surface: var(--palette-stone-100);
+
+  --font-ui: "Segoe UI", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-emphasis: 650;
+  --type-display-size: 28px; --type-display-line: 34px;
+  --type-h1-size: 24px; --type-h1-line: 30px;
+  --type-h2-size: 18px; --type-h2-line: 24px;
+  --type-h3-size: 16px; --type-h3-line: 22px;
+  --type-body-size: 15px; --type-body-line: 22px;
+  --type-label-size: 13px; --type-label-line: 18px;
+  --type-caption-size: 13px; --type-caption-line: 18px;
+  --type-overline-size: 12px; --type-overline-line: 16px;
+  --type-mono-size: 13px; --type-mono-line: 18px;
+  --type-numeric-size: 15px; --type-numeric-line: 20px;
+  --type-total-size: 24px; --type-total-line: 30px;
+
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-page: var(--space-6);
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --radius-modal: 10px;
+  --size-control-default: 44px;
+  --size-control-prominent: 48px;
+  --elevation-sticky: 0 1px 2px rgb(41 37 43 / 10%);
+  --elevation-modal: 0 12px 32px rgb(41 37 43 / 18%);
+  --motion-fast: 140ms;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { min-inline-size: 0; background: var(--color-canvas); color: var(--color-text); }
+body {
+  min-block-size: 100vh;
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--weight-regular);
+  overflow-wrap: anywhere;
+  text-rendering: optimizeLegibility;
+}
+h1 { margin-block: 0 var(--space-4); font-size: var(--type-h1-size); line-height: var(--type-h1-line); font-weight: var(--weight-emphasis); }
+h2 { margin-block: 0 var(--space-3); font-size: var(--type-h2-size); line-height: var(--type-h2-line); font-weight: var(--weight-emphasis); }
+h3 { margin-block: 0 var(--space-2); font-size: var(--type-h3-size); line-height: var(--type-h3-line); font-weight: var(--weight-semibold); }
+p { margin-block: 0 var(--space-4); }
+strong, b, [data-ui-type="strong"] { font-weight: var(--weight-semibold); }
+label, legend, th, [data-ui-type="label"] { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--weight-semibold); }
+small, figcaption, caption, [data-ui-type="caption"] { font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--color-text-muted); }
+code, kbd, samp, [data-ui-type="mono"], [data-ui-sku] { font-family: var(--font-mono); font-size: var(--type-mono-size); line-height: var(--type-mono-line); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+[data-ui-type="display"] { font-size: var(--type-display-size); line-height: var(--type-display-line); font-weight: var(--weight-emphasis); font-variant-numeric: tabular-nums; }
+[data-ui-type="overline"] { font-size: var(--type-overline-size); line-height: var(--type-overline-line); font-weight: var(--weight-semibold); letter-spacing: .08em; text-transform: uppercase; }
+[data-ui-type="numeric"], [data-ui-money], [data-ui-quantity] { font-size: var(--type-numeric-size); line-height: var(--type-numeric-line); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+[data-ui-type="total"] { font-size: var(--type-total-size); line-height: var(--type-total-line); font-weight: var(--weight-emphasis); font-variant-numeric: tabular-nums; }
+
+button, input, select, textarea {
+  font-family: var(--font-ui);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--weight-regular);
+  color: inherit;
+}
+:where(button, input:not([type="checkbox"]):not([type="radio"]), select, textarea, [role="button"]) {
+  --ui-control-min-size: var(--size-control-default);
+  min-width: var(--ui-control-min-size);
+  min-height: var(--ui-control-min-size);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+}
+button, [role="button"] { cursor: pointer; }
+label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
+  display: inline-flex;
+  min-height: var(--size-control-default);
+  align-items: center;
+  gap: var(--space-2);
+}
+[data-ui-control-size="prominent"] {
+  --ui-control-min-size: var(--size-control-prominent);
+}
+:where(button, input, select, textarea, a[href], [role="button"]):focus-visible,
+[data-ui-focus-visible="true"] {
+  outline-color: var(--color-focus);
+  outline-style: solid;
+  outline-width: 3px;
+  outline-offset: 2px;
+}
+:where(button, input, select, textarea, [role="button"]):disabled,
+:where(button, input, select, textarea, [role="button"])[aria-disabled="true"] {
+  color: var(--color-disabled-text);
+  background: var(--color-disabled-surface);
+  cursor: not-allowed;
+  opacity: .8;
+}
+[aria-busy="true"] { cursor: progress; }
+
+[data-ui-status] {
+  border: 1px solid currentColor;
+  border-inline-start-width: 4px;
+  border-radius: var(--radius-control);
+  padding: var(--space-3) var(--space-4);
+  font-weight: var(--weight-semibold);
+}
+[data-ui-status="success"] { color: var(--color-success); border-inline-start-color: var(--color-success-edge); background: var(--color-success-surface); }
+[data-ui-status="warning"], [data-ui-status="stale"] { color: var(--color-warning); border-inline-start-color: var(--color-warning-edge); background: var(--color-warning-surface); }
+[data-ui-status="danger"] { color: var(--color-danger); background: var(--color-danger-surface); }
+main, section, form, fieldset, table { min-inline-size: 0; max-inline-size: 100%; }
+img, svg, video { max-inline-size: 100%; }
+
+@media (max-width: 960px) { :root { --space-page: var(--space-5); } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+@media (forced-colors: active) {
+  button, input, select, textarea, [role="button"], [data-ui-status] { border-color: CanvasText; forced-color-adjust: auto; }
+  :where(button, input, select, textarea, a[href], [role="button"]):focus-visible,
+  [data-ui-focus-visible="true"] { outline-color: Highlight; }
+}
