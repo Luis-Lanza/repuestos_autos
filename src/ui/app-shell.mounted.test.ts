@@ -73,7 +73,7 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   render(createElement(App));
 
   const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
-  assert.ok(screen.getByRole("heading", { level: 1, name: "Confirm sale" }));
+  assert.ok(screen.getByRole("heading", { level: 1, name: "Ventas" }));
   assert.equal(within(navigation).getByRole("button", { name: "Ventas" }).getAttribute("aria-current"), "page");
 
   const backup = within(navigation).getByRole("button", { name: "Copia y restauración" });
@@ -86,7 +86,7 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   const sales = within(navigation).getByRole("button", { name: "Ventas" });
   await user.click(sales);
   assert.equal(screen.getByRole("navigation", { name: "Navegación principal" }), navigation);
-  assert.ok(screen.getByRole("heading", { level: 1, name: "Confirm sale" }));
+  assert.ok(screen.getByRole("heading", { level: 1, name: "Ventas" }));
   assert.equal(sales.getAttribute("aria-current"), "page");
   assert.equal(document.activeElement, sales);
 });
