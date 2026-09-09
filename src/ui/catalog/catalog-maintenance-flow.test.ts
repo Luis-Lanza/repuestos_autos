@@ -18,10 +18,10 @@ test("surfaces loading, unavailable, validation, conflict, failure, recovery, an
   const restored = createCatalogMaintenanceFlow(ready, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3, label: "" } });
   assert.equal(loading.status, "loading");
   assert.equal(ready.records[0].activity, "archived");
-  assert.equal(validation.feedback, "Review the catalog values and try again.");
-  assert.equal(conflict.feedback, "This catalog record changed. Reload and try again.");
+  assert.equal(validation.feedback, "Revisá los valores del catálogo e intentá nuevamente.");
+  assert.equal(conflict.feedback, "Registro desactualizado. Recargá los registros del catálogo.");
   assert.equal(conflict.recovery_required, true);
-  assert.match(renderToStaticMarkup(createElement(CatalogMaintenanceRecovery, { required: conflict.recovery_required, onReload: () => undefined })), /Reload catalog records/);
+  assert.match(renderToStaticMarkup(createElement(CatalogMaintenanceRecovery, { required: conflict.recovery_required, onReload: () => undefined })), /Recargar registros del catálogo/);
   assert.equal(failure.status, "unavailable");
   assert.equal(restored.records[0].label, "Filter");
 });
@@ -33,17 +33,21 @@ test("loads editable metadata, validates typed values, and reloads stable confli
   const pending = createCatalogMaintenanceFlow(ready, { type: "edit_started" });
   const conflict = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_catalog_record" });
   const unavailable = createCatalogMaintenanceFlow(ready, { type: "detail_failed", code: "catalog_unavailable" });
-  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", catalog_unit_price_centavos: "2500", attribute_values: { 4: "Paper" } });
-  assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", catalog_unit_price_centavos: "2.5", attribute_values: { 4: "Paper" } }), null);
+  const reactivated = createCatalogMaintenanceFlow({ ...ready, records: [archived], selected: archived }, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3 } });
+  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", catalog_unit_price_centavos: "25,00", attribute_values: { 4: "Paper" } });
+  assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", catalog_unit_price_centavos: "inválido", attribute_values: { 4: "Paper" } }), null);
+  assert.equal(createCatalogEditRequest(detail, formForCatalogDetail(detail))?.catalog_unit_price_centavos, 2500);
   assert.equal(pending.status, "pending");
   assert.equal(conflict.recovery_required, true);
   assert.equal(unavailable.status, "unavailable");
+  assert.deepEqual([reactivated.records[0].activity, reactivated.selected?.activity, reactivated.detail?.activity], ["active", "active", "active"]);
+  assert.deepEqual([reactivated.records[0].revision, reactivated.selected?.revision, reactivated.detail?.revision], [3, 3, 3]);
   const screen = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: true, feedback: "Price must be whole centavos.", fieldErrors: { catalog_unit_price_centavos: "Price must be whole centavos." }, onChange: () => undefined, onSubmit: () => undefined }));
-  assert.match(screen, /Current catalog price.*centavos.*future sales/i);
+  assert.match(screen, /Precio actual del catálogo \(Bs\).*Afecta solo ventas futuras/i);
   assert.match(screen, /Material/);
   assert.match(screen, /disabled/);
   assert.match(screen, /aria-invalid="true"/);
-  assert.match(screen, /Archived record/);
+  assert.match(screen, /Registro archivado/);
 });
 
 test("keeps selected detail identity through failure and retries the same request", async () => {
@@ -64,16 +68,16 @@ test("keeps selected detail identity through failure and retries the same reques
 
 test("keeps success announced during refresh and scopes validation to invalid fields", () => {
   const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
-  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", catalog_unit_price_centavos: "2.5", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
+  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", catalog_unit_price_centavos: "inválido", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
   const saved = createCatalogMaintenanceFlow({ ...initialCatalogMaintenanceState, detail }, { type: "edit_succeeded" });
   const loading = createCatalogMaintenanceFlow(saved, { type: "load_started" });
   const listed = createCatalogMaintenanceFlow(loading, { type: "loaded", records: [] });
   const refreshed = createCatalogMaintenanceFlow(listed, { type: "detail_loaded", detail });
   const conflict = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: false, feedback: "This catalog record changed. Reload and try again.", fieldErrors: {}, onChange: () => undefined, onSubmit: () => undefined }));
   assert.deepEqual(Object.keys(invalid).sort(), ["attribute-4", "attribute-5", "attribute-6", "catalog_unit_price_centavos", "name", "sku"]);
-  assert.equal(loading.success_notice, "Catalog updated.");
-  assert.match(renderToStaticMarkup(createElement(CatalogSuccessNotice, { notice: listed.success_notice })), /role="status".*Catalog updated/);
-  assert.equal(refreshed.success_notice, null);
+  assert.equal(loading.success_notice, "Catálogo actualizado.");
+  assert.match(renderToStaticMarkup(createElement(CatalogSuccessNotice, { notice: listed.success_notice })), /role="status".*Catálogo actualizado/);
+  assert.equal(refreshed.success_notice, "Catálogo actualizado.");
   assert.doesNotMatch(conflict, /aria-invalid/);
   assert.match(conflict, /role="alert"/);
 });
