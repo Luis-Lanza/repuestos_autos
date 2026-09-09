@@ -62,14 +62,14 @@ export type HistoryAction =
   | { type: "return_line_selected"; sale_line_id: number; selected: boolean }
   | { type: "return_quantity_changed"; sale_line_id: number; value: string }
   | { type: "return_submit_started" }
-  | { type: "return_submit_failed"; message: string }
-  | { type: "return_submit_succeeded" }
+  | { type: "return_submit_failed"; request_id: string; message: string }
+  | { type: "return_submit_succeeded"; request_id: string }
   | { type: "cancellation_intent_opened"; request_id: string }
   | { type: "cancellation_reason_changed"; value: string }
   | { type: "cancellation_confirmation_changed"; confirmed: boolean }
   | { type: "cancellation_submit_started" }
-  | { type: "cancellation_submit_failed"; message: string }
-  | { type: "cancellation_submit_succeeded" }
+  | { type: "cancellation_submit_failed"; request_id: string; message: string }
+  | { type: "cancellation_submit_succeeded"; request_id: string }
   | { type: "back_to_list" };
 
 const returnableLine = (detail: SalesHistoryDetail, saleLineId: number) =>
@@ -78,6 +78,7 @@ const returnableLine = (detail: SalesHistoryDetail, saleLineId: number) =>
 export function canOpenReturn(state: HistoryState): boolean {
   return (
     state.return_intent === null &&
+    state.cancellation_intent === null &&
     state.detail?.status === "confirmed" &&
     state.detail.lines.some(
       (line) =>
@@ -89,7 +90,9 @@ export function canOpenReturn(state: HistoryState): boolean {
 
 export function canOpenCancellation(state: HistoryState): boolean {
   return (
-    state.cancellation_intent === null && state.detail?.status === "confirmed"
+    state.cancellation_intent === null &&
+    state.return_intent === null &&
+    state.detail?.status === "confirmed"
   );
 }
 
@@ -124,7 +127,7 @@ function returnIntentValidation(
     state.detail.status !== "confirmed"
   )
     return {
-      message: "This sale is no longer eligible for returns. Reload history.",
+      message: "Esta venta ya no admite devoluciones. Recargá el detalle.",
       focus_target: returnFocusTarget(state, intent),
     };
   const entries = Object.entries(intent.lines).sort(
@@ -132,7 +135,7 @@ function returnIntentValidation(
   );
   if (!entries.length)
     return {
-      message: "Select at least one return line.",
+      message: "Seleccioná al menos una línea para devolver.",
       focus_target: returnFocusTarget(state, intent),
     };
   for (const [saleLineId, value] of entries) {
@@ -144,24 +147,19 @@ function returnIntentValidation(
       line.remaining_returnable_quantity <= 0
     )
       return {
-        message: "This line is no longer eligible for return.",
-        focus_target: focusTarget,
-      };
-    if (!/^[1-9]\d*$/.test(value))
-      return {
-        message: "Return quantities must be positive whole numbers.",
+        message: "Esta línea ya no admite devoluciones.",
         focus_target: focusTarget,
       };
     const quantity = Number(value);
-    if (!Number.isSafeInteger(quantity))
+    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(quantity))
       return {
-        message: "Return quantities must be positive whole numbers.",
+        message: "Ingresá una cantidad entera positiva.",
         focus_target: focusTarget,
       };
     if (quantity > line.remaining_returnable_quantity)
       return {
         message:
-          "Return quantity exceeds the persisted remaining availability.",
+          "La cantidad supera las unidades disponibles guardadas.",
         focus_target: focusTarget,
       };
   }
@@ -182,17 +180,17 @@ function cancellationIntentValidation(
   )
     return {
       message:
-        "This sale is no longer eligible for cancellation. Reload history.",
+        "Esta venta ya no admite cancelación. Recargá el detalle.",
       focus_target: "cancellation-reason",
     };
   if (!intent.reason)
     return {
-      message: "A cancellation reason is required.",
+      message: "Ingresá un motivo de cancelación.",
       focus_target: "cancellation-reason",
     };
   if (!intent.confirmed)
     return {
-      message: "Confirm the cancellation before submitting.",
+      message: "Confirmá la corrección de inventario antes de continuar.",
       focus_target: "cancellation-confirmation",
     };
   return null;
@@ -360,7 +358,9 @@ export function createHistoryFlow(
       };
     }
     case "return_submit_failed":
-      return state.return_intent?.status === "pending"
+      return state.return_intent?.request_id === action.request_id &&
+        (state.return_intent.status === "pending" ||
+          state.return_intent.status === "reload_requested")
         ? {
             ...state,
             return_intent: {
@@ -372,7 +372,8 @@ export function createHistoryFlow(
           }
         : state;
     case "return_submit_succeeded":
-      return state.return_intent?.status === "pending"
+      return state.return_intent?.status === "pending" &&
+        state.return_intent.request_id === action.request_id
         ? {
             ...state,
             return_intent: {
@@ -443,7 +444,9 @@ export function createHistoryFlow(
       };
     }
     case "cancellation_submit_failed":
-      return state.cancellation_intent?.status === "pending"
+      return state.cancellation_intent?.request_id === action.request_id &&
+        (state.cancellation_intent.status === "pending" ||
+          state.cancellation_intent.status === "reload_requested")
         ? {
             ...state,
             cancellation_intent: {
@@ -455,7 +458,8 @@ export function createHistoryFlow(
           }
         : state;
     case "cancellation_submit_succeeded":
-      return state.cancellation_intent?.status === "pending"
+      return state.cancellation_intent?.status === "pending" &&
+        state.cancellation_intent.request_id === action.request_id
         ? {
             ...state,
             cancellation_intent: {

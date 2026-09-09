@@ -31,6 +31,20 @@ export function projectHistoryDetail(detail: SalesHistoryDetail) {
   };
 }
 
+export function projectCorrectionHistory(detail: SalesHistoryDetail) {
+  const correctionLine = (line: { sale_line_id: number; product_id: number }, quantity: number) =>
+    [String(line.sale_line_id), String(line.product_id), String(quantity)];
+  return {
+    returns: detail.returns.map((record) => ({ identity: `Devolución #${record.return_id}`,
+      requestId: record.request_id, occurredAt: record.occurred_at, status: "Confirmada",
+      lines: record.lines.map((line) => correctionLine(line, line.quantity)) })),
+    cancellation: detail.cancellation ? { identity: `Cancelación #${detail.cancellation.cancellation_id}`,
+      requestId: detail.cancellation.request_id, occurredAt: detail.cancellation.occurred_at,
+      status: "Cancelada", reason: detail.cancellation.reason,
+      lines: detail.cancellation.lines.map((line) => correctionLine(line, line.restored_quantity)) } : null,
+  };
+}
+
 export function historySummaryCells(sale: SalesHistorySummary) {
   const methods = sale.payment_methods.map((method) => method === "cash" ? "Efectivo" : "QR").join(" y ");
   return {
