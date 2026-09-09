@@ -273,6 +273,15 @@ img, svg, video { max-inline-size: 100%; }
   overflow: auto;
   padding: var(--space-page);
 }
+[data-ui-shell-navigation] button { display: grid; gap: var(--space-1); }
+[data-ui-inventory-cue] { color: inherit; font-size: var(--type-caption-size); }
+[data-ui-inventory-layout] { display: grid; grid-template-columns: minmax(0, 600px) minmax(0, 324px); gap: var(--space-5); align-items: start; }
+[data-ui-inventory-results], [data-ui-inventory-alerts] { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+[data-ui-inventory-results] > li, [data-ui-inventory-alerts] > li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2); padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
+[data-ui-inventory-operation], [data-ui-inventory-selection] { display: grid; gap: var(--space-3); margin-block-start: var(--space-5); }
+[data-ui-inventory-selection] { grid-template-columns: minmax(0, 1fr) auto auto; padding: var(--space-3); background: var(--color-surface-subtle); }
+[data-ui-inventory-projection] { padding: var(--space-3); border-inline-start: 4px solid var(--color-accent); font-variant-numeric: tabular-nums; }
+[data-ui-inventory-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
 [data-ui-sale-layout] { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 364px); gap: var(--space-5); align-items: start; }
 [data-ui-sale-layout] > :nth-child(2) { grid-column: 1; }
@@ -299,6 +308,7 @@ img, svg, video { max-inline-size: 100%; }
   [data-ui-shell-sidebar] { padding-inline: var(--space-4); }
   [data-ui-shell-identity] { min-block-size: 64px; }
   [data-ui-panel] { padding: var(--space-4); }
+  [data-ui-inventory-layout], [data-ui-inventory-selection] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-sale-layout] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-sale-layout] > :is(:nth-child(2), :nth-child(3), :nth-child(4)) { grid-column: 1; grid-row: auto; }
   [data-ui-sale-search], [data-ui-sale-list] > li { grid-template-columns: minmax(0, 1fr); }

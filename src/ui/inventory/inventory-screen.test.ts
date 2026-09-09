@@ -8,8 +8,8 @@ import { createInventoryCatalogInteraction, InventoryOperationChoices, inventory
 import { createInventoryFlow, initialInventoryState } from "./inventory-flow.ts";
 
 test("describes stock entry and physical-count workflows for accessible navigation", () => {
-  assert.match(inventoryScreenDescription, /stock entry/i);
-  assert.match(inventoryScreenDescription, /physical count/i);
+  assert.match(inventoryScreenDescription, /entrada de stock/i);
+  assert.match(inventoryScreenDescription, /conteo físico/i);
 });
 
 test("runs Catalog search, Select, and renders both inventory operation choices", async () => {
@@ -22,6 +22,6 @@ test("runs Catalog search, Select, and renders both inventory operation choices"
   const screen = renderToStaticMarkup(createElement(InventoryOperationChoices, { operation: selected.operation, onChange: () => undefined }));
   assert.deepEqual(calls, [{ request: { query: "filter" } }]);
   assert.equal(selected.product?.product_id, product.product_id);
-  assert.match(screen, /Stock entry/);
-  assert.match(screen, /Physical count/);
+  assert.match(screen, /Entrada de stock/);
+  assert.match(screen, /Conteo físico/);
 });

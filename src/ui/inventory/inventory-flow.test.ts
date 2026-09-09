@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createInventoryFlow, initialInventoryState } from "./inventory-flow.ts";
+import { createInventoryFlow, initialInventoryState, projectedBalance } from "./inventory-flow.ts";
 
 test("retains one request through failures, reports stale projections, refreshes alerts, and resets intents", () => {
   const selected = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8 } });
@@ -13,4 +13,11 @@ test("retains one request through failures, reports stale projections, refreshes
   assert.equal(success.advisory_notice, "Stock changed after the preview.");
   assert.equal(refreshed.alerts[0].classification, "out_of_stock");
   assert.deepEqual(createInventoryFlow(refreshed, { type: "discard" }), initialInventoryState);
+});
+
+test("projects an explicit physical zero but not a blank count", () => {
+  const selected = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8 } });
+  const physical = createInventoryFlow(selected, { type: "operation_changed", operation: "physical_count" });
+  assert.equal(projectedBalance(physical), null);
+  assert.equal(projectedBalance(createInventoryFlow(physical, { type: "physical_count_changed", value: "0" })), 0);
 });

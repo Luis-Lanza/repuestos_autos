@@ -39,13 +39,13 @@ export function screenAfter(
     : SCREEN.SALES;
 }
 
-function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void) {
+function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void, onInventoryCue: (cue: string | null) => void) {
   if (screen === SCREEN.ONBOARDING) {
     return createElement(OnboardingScreen, {
       onBack: () => onNavigate(NAVIGATION_ACTION.RETURN_TO_SALES),
     });
   }
-  if (screen === SCREEN.INVENTORY) return createElement(InventoryScreen);
+  if (screen === SCREEN.INVENTORY) return createElement(InventoryScreen, { onAlertCueChange: onInventoryCue });
   if (screen === SCREEN.BACKUP) return createElement(BackupScreen);
   if (screen === SCREEN.CATALOG) return createElement(CatalogMaintenanceScreen);
   if (screen === SCREEN.SALES_HISTORY) return createElement(SalesHistoryScreen);
@@ -54,8 +54,11 @@ function screenContent(screen: Screen, onNavigate: (action: NavigationAction) =>
 
 export function App() {
   const [screen, setScreen] = useState<Screen>(SCREEN.SALES);
-  const navigate = (action: NavigationAction) =>
+  const [inventoryCue, setInventoryCue] = useState<string | null>(null);
+  const navigate = (action: NavigationAction) => {
+    setInventoryCue(null);
     setScreen((current) => screenAfter(current, action));
+  };
 
-  return createElement(AppShell, { screen, onNavigate: navigate }, screenContent(screen, navigate));
+  return createElement(AppShell, { screen, onNavigate: navigate, inventoryCue }, screenContent(screen, navigate, setInventoryCue));
 }
