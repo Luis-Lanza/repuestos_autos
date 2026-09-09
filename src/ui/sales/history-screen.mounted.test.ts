@@ -82,10 +82,10 @@ test("late correction success cannot replace a newer selected sale", async () =>
   const user = userEvent.setup({ document });
   await screen.findByText("Venta #71");
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[0]);
-  await user.click(await screen.findByRole("button", { name: "Begin item return" }));
-  await user.click(screen.getByRole("checkbox", { name: "Include this original sale line" }));
-  await user.type(screen.getByRole("spinbutton", { name: "Return quantity" }), "1");
-  await user.click(screen.getByRole("button", { name: "Record inventory return" }));
+  await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
+  await user.click(screen.getByRole("checkbox", { name: "Incluir este artículo" }));
+  await user.type(screen.getByRole("textbox", { name: "Cantidad a devolver" }), "1");
+  await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
   await user.click(screen.getByRole("button", { name: "Volver al historial" }));
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[1]);
   assert.ok(await screen.findByText("Venta #72"));
@@ -103,6 +103,79 @@ test("late correction success cannot replace a newer selected sale", async () =>
   });
   await waitFor(() => assert.ok(screen.getByText("Venta #72")));
   assert.deepEqual(detailCalls, [71, 72]);
+});
+
+test("runs inline return validation, lock, retry, and persisted success evidence", async () => {
+  const sale = { ...detail(184), lines: [
+    { ...detail(184).lines[0], sale_line_id: 41, quantity: 2, remaining_returnable_quantity: 2 },
+    { ...detail(184).lines[0], sale_line_id: 42, remaining_returnable_quantity: 0 },
+  ] };
+  const firstReturn = deferred<unknown>();
+  const refreshed = [deferred<unknown>(), deferred<unknown>()];
+  const requests: Array<{ request_id: string; sale_id: number; lines: Array<{ sale_line_id: number; quantity: number }> }> = [];
+  let detailCalls = 0;
+  mockIPC((command, payload) => {
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") return ++detailCalls === 1 ? { kind: "success", detail: sale } : refreshed[detailCalls - 2].promise;
+    if (command === "create_sale_return_command") {
+      requests.push(payload?.request as typeof requests[number]);
+      return requests.length === 1 ? firstReturn.promise : {
+        kind: "success", result: { request_id: requests[0].request_id, return_id: 9, sale_id: 184,
+          status: "confirmed", occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 41, product_id: 4, quantity: 1 }] },
+      };
+    }
+    throw new Error(command);
+  });
+  render(createElement(SalesHistoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+  await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
+
+  const form = screen.getByRole("form", { name: "Devolución de artículos" });
+  assert.match(form.textContent ?? "", /Línea de venta 41 · Máximo disponible: 2 unidades/);
+  assert.match(form.textContent ?? "", /Línea de venta 42 · Máximo disponible: 0 unidades.*Sin unidades disponibles para devolver/s);
+  fireEvent.submit(form);
+  const selection = screen.getByRole("checkbox", { name: "Incluir este artículo" });
+  assert.equal(document.activeElement, selection);
+  assert.equal(selection.getAttribute("aria-describedby"), "return-line-41-error");
+
+  await user.click(selection);
+  const quantity = screen.getByRole("textbox", { name: "Cantidad a devolver" });
+  await user.type(quantity, "1.5");
+  fireEvent.submit(form);
+  assert.equal(document.activeElement, quantity);
+  assert.equal(quantity.getAttribute("aria-describedby"), "return-quantity-41-error");
+  assert.equal((quantity as HTMLInputElement).value, "1.5");
+  await user.clear(quantity);
+  await user.type(quantity, "1");
+  fireEvent.submit(form);
+  assert.ok(screen.getByRole("button", { name: "Registrando devolución…" }).hasAttribute("disabled"));
+  fireEvent.submit(form);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].lines, [{ sale_line_id: 41, quantity: 1 }]);
+
+  firstReturn.resolve({ kind: "error", code: "request_conflict", message: "private native detail" });
+  assert.ok(await screen.findByRole("button", { name: "Recargar detalle de venta" }));
+  assert.equal(screen.queryByText(/private native/i), null);
+  await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+  await waitFor(() => assert.equal(requests.length, 2));
+  assert.equal(requests[1].request_id, requests[0].request_id);
+  assert.equal(screen.queryByText("Devolución #9"), null);
+  refreshed[0].resolve({ kind: "success", detail: { ...sale, returns: [
+    { return_id: 8, request_id: "different-return-uuid", occurred_at: "2026-08-15 08:00:00", lines: [] },
+  ] } });
+  assert.ok(await screen.findByRole("form", { name: "Devolución de artículos" }));
+  assert.ok(screen.getByRole("button", { name: "Recargar detalle de venta" }));
+  await user.click(screen.getByRole("button", { name: "Recargar detalle de venta" }));
+  refreshed[1].resolve({ kind: "success", detail: { ...sale,
+    lines: sale.lines.map((line) => line.sale_line_id === 41 ? { ...line, returned_quantity: 1, remaining_returnable_quantity: 1 } : line),
+    returns: [{ return_id: 9, request_id: requests[0].request_id, occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 41, product_id: 4, quantity: 1 }] }],
+  } });
+  assert.ok(await screen.findByRole("region", { name: "Devolución #9" }));
+  assert.equal(screen.queryByRole("form", { name: "Devolución de artículos" }), null);
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-history-return[^}]*min-inline-size: 0/);
+  assert.match(css, /max-width: 960px[\s\S]*data-ui-history-return[^}]*overflow-x: hidden/);
 });
 
 test("ignores mounted list completion after unmount", async () => {
