@@ -36,6 +36,7 @@ export function createInventoryFlow(state: InventoryState, action: InventoryActi
 
 export function projectedBalance(state: InventoryState): number | null {
   if (!state.product) return null;
-  const value = Number(state.operation === OPERATION.STOCK_ENTRY ? state.entry_quantity : state.physical_count);
-  return Number.isSafeInteger(value) && value >= 0 ? state.operation === OPERATION.STOCK_ENTRY ? state.product.available_quantity + value : value : null;
+  const raw = state.operation === OPERATION.STOCK_ENTRY ? state.entry_quantity : state.physical_count;
+  const value = Number(raw);
+  return raw.trim() !== "" && Number.isSafeInteger(value) && value >= 0 ? state.operation === OPERATION.STOCK_ENTRY ? state.product.available_quantity + value : value : null;
 }

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { mockIPC } from "@tauri-apps/api/mocks";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { App, NAVIGATION_ACTION, SCREEN, screenAfter } from "./app.ts";
@@ -54,9 +55,25 @@ test("AppShell exposes identity and the six existing actions through persistent 
 
   const inventory = within(navigation).getByRole("button", { name: "Inventario" });
   assert.equal(inventory.textContent, "Inventario");
-  assert.equal(inventory.children.length, 0);
+  assert.equal(inventory.children.length, 1);
   assert.equal(inventory.getAttribute("aria-describedby"), null);
   assert.doesNotMatch(inventory.outerHTML, /badge|count|status|alert|warning|stock|dot/i);
+});
+
+test("App shows only the mounted Inventory-owned cue and clears it on screen replacement", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [{ product_id: 7, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(App));
+  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  const inventory = within(navigation).getByRole("button", { name: "Inventario" });
+  assert.equal(inventory.textContent, "Inventario");
+  await user.click(inventory);
+  await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
+  await user.click(within(navigation).getByRole("button", { name: "Ventas" }));
+  assert.equal(inventory.textContent, "Inventario");
 });
 
 test("screenAfter preserves the complete transition table and Sales fallback", () => {
@@ -96,4 +113,6 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /--size-shell-sidebar:\s*208px/);
   assert.match(source, /grid-template-columns:\s*var\(--size-shell-sidebar\)\s+minmax\(0,\s*1fr\)/);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar:\s*176px/);
+  assert.match(source, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 600px\) minmax\(0, 324px\)/);
+  assert.match(source, /@media \(max-width: 960px\)[\s\S]*data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
 });
