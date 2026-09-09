@@ -26,11 +26,21 @@ import {
   type HistoryState,
   type ReturnIntent,
 } from "./history-flow.ts";
-import { historyListError, historySummaryCells } from "./history-presentation.ts";
+import { historyListError, historySummaryCells, projectHistoryDetail } from "./history-presentation.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData } from "../visual-system/structure.ts";
 
-const formatBs = (centavos: number) => `Bs ${(centavos / 100).toFixed(2)}`;
+const originalItemColumns = [
+  { label: "Producto", align: "start", kind: "text" },
+  { label: "SKU", align: "start", kind: "sku" },
+  { label: "Cantidad", align: "end", kind: "numeric" },
+  { label: "Precio unitario", align: "end", kind: "money" },
+  { label: "Subtotal", align: "end", kind: "money" },
+] as const;
+const originalPaymentColumns = [
+  { label: "Dato de pago", align: "start", kind: "text" },
+  { label: "Importe", align: "end", kind: "money" },
+] as const;
 const localToday = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -215,71 +225,28 @@ export function HistoryScreen({
   }, [focusTarget, findFocusable]);
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); onReload(from, to); };
   if (state.view === "detail") {
-    return createElement("main", { "aria-labelledby": "sales-history-detail-heading", "aria-busy": state.status === "loading" },
-      createElement("button", { type: "button", onClick: onBack }, "Back to history"),
-      createElement("h1", { id: "sales-history-detail-heading" }, "Sale history detail"),
-      state.status === "loading" ? createElement("p", { role: "status" }, "Loading sale details…") : null,
-      state.status === "error" ? createElement("p", { role: "alert" }, state.message) : null,
-      state.detail
+    const original = state.detail ? projectHistoryDetail(state.detail) : null;
+    return createElement("main", { "aria-labelledby": "sales-history-detail-heading", "aria-busy": state.status === "loading", "data-ui-history-detail": true },
+      createElement(Action, { variant: "tertiary", onClick: onBack }, "Volver al historial"),
+      createElement("h1", { id: "sales-history-detail-heading" }, "Detalle de venta"),
+      state.status === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando detalle de venta…") : null,
+      state.status === "error" ? createElement(Feedback, { kind: "error" } as never, "No se pudo cargar el detalle de venta.") : null,
+      state.detail && original
         ? createElement(
             "section",
-            null,
-            createElement(
-              "p",
-              null,
-              `Sale ${state.detail.sale_id} · ${state.detail.confirmed_at}`,
-            ),
-            createElement(
-              "p",
-              null,
-              `Lifecycle status: ${state.detail.status === "confirmed" ? "Confirmed" : "Cancelled"}`,
-            ),
-            createElement(
-              "p",
-              null,
-              `Original sale total: ${formatBs(state.detail.total_centavos)}`,
-            ),
+            { "data-ui-history-detail-content": true },
             createElement(
               "section",
-              { "aria-labelledby": "original-sale-items-heading" },
-              createElement(
-                "h2",
-                { id: "original-sale-items-heading" },
-                "Original sale items",
-              ),
-              createElement(
-                "ul",
-                { "aria-label": "Original sale items" },
-                state.detail.lines.map((line) =>
-                  createElement(
-                    "li",
-                    { key: line.sale_line_id },
-                    `Sale line ${line.sale_line_id}: ${line.sku ?? "Unavailable"} — ${line.product_name ?? "Unavailable"}; ${line.quantity} × ${formatBs(line.unit_price_centavos)} = ${formatBs(line.line_total_centavos)}`,
-                  ),
-                ),
-              ),
-            ),
-            createElement(
-              "section",
-              { "aria-labelledby": "original-payment-facts-heading" },
-              createElement(
-                "h2",
-                { id: "original-payment-facts-heading" },
-                "Original payment facts",
-              ),
-              createElement(
-                "ul",
-                { "aria-label": "Original payment facts" },
-                state.detail.payments.map((payment, index) =>
-                  createElement(
-                    "li",
-                    { key: `${payment.method}-${index}` },
-                    payment.method === "cash"
-                      ? `Cash applied: ${formatBs(payment.amount_applied_centavos)}; Tendered: ${formatBs(payment.amount_tendered_centavos)}; Change: ${formatBs(payment.change_given_centavos)}`
-                      : `QR applied: ${formatBs(payment.amount_applied_centavos)}`,
-                  ),
-                ),
-              ),
+              { "aria-labelledby": "original-sale-heading", "data-ui-history-original": true },
+              createElement("h2", { id: "original-sale-heading" }, "Datos originales de la venta"),
+              createElement("dl", { "data-ui-history-identity": true },
+                createElement("dt", null, "Venta"), createElement("dd", null, original.identity),
+                createElement("dt", null, "Fecha y hora"), createElement("dd", { "data-ui-type": "numeric" }, original.date),
+                createElement("dt", null, "Estado"), createElement("dd", null,
+                  createElement(Badge, { kind: state.detail.status === "confirmed" ? "confirmed" : "cancelled", text: original.status }))),
+              createElement(AlignedData, { caption: "Artículos originales", columns: originalItemColumns, rows: original.lines }),
+              createElement(AlignedData, { caption: "Pagos originales", columns: originalPaymentColumns, rows: original.payments }),
+              createElement("p", { "data-ui-history-total": true }, createElement("span", null, "Total original"), createElement("strong", null, original.total)),
             ),
             createElement(
               "section",

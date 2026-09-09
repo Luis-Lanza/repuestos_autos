@@ -96,7 +96,7 @@ test("runs asynchronous history list, detail, and back through the production UI
   assert.equal(state.status, "loading");
   await selected;
   assert.equal(state.detail?.lines[0].sku, null);
-  assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Unavailable/);
+  assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Producto no disponible.*SKU no disponible/s);
   dispatch({ type: "back_to_list" });
   assert.deepEqual(calls.map(({ command }) => command), ["list_sales_history_command", "sale_history_detail_command"]);
   assert.equal((calls[1].payload as { saleId: number }).saleId, 71);
@@ -483,12 +483,12 @@ test("renders centavo money, unavailable snapshots, payment facts, and the narro
   const shown = createHistoryFlow(createHistoryFlow(state, { type: "detail_started", sale_id: summary.sale_id }), { type: "detail_loaded", detail });
   const markup = renderToStaticMarkup(createElement(HistoryScreen, { state: shown, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined }));
 
-  assert.match(markup, /Bs 25\.00/);
-  assert.match(markup, /Unavailable/);
-  assert.match(markup, /Cash applied: Bs 20\.00/);
-  assert.match(markup, /Tendered: Bs 30\.00/);
-  assert.match(markup, /Change: Bs 5\.00/);
-  assert.match(markup, /QR applied: Bs 5\.00/);
+  assert.match(markup, /Bs 25,00/);
+  assert.match(markup, /Producto no disponible.*SKU no disponible/s);
+  assert.match(markup, /Efectivo aplicado.*Bs 20,00/s);
+  assert.match(markup, /Efectivo recibido.*Bs 30,00/s);
+  assert.match(markup, /Cambio.*Bs 5,00/s);
+  assert.match(markup, /Pago QR.*Bs 5,00/s);
   assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Reducí el rango de fechas/);
 });
 
@@ -540,9 +540,9 @@ test("renders immutable lifecycle facts and persisted correction presentation", 
     }),
   );
 
-  assert.match(markup, /Lifecycle status: Cancelled/);
-  assert.match(markup, /Original sale items/);
-  assert.match(markup, /Original payment facts/);
+  assert.match(markup, /Cancelada/);
+  assert.match(markup, /Artículos originales/);
+  assert.match(markup, /Pagos originales/);
   assert.match(markup, /Inventory correction history/);
   assert.match(markup, /Returned quantity: 1/);
   assert.match(markup, /Cancellation reason: Duplicate sale/);

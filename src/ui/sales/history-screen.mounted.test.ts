@@ -86,9 +86,9 @@ test("late correction success cannot replace a newer selected sale", async () =>
   await user.click(screen.getByRole("checkbox", { name: "Include this original sale line" }));
   await user.type(screen.getByRole("spinbutton", { name: "Return quantity" }), "1");
   await user.click(screen.getByRole("button", { name: "Record inventory return" }));
-  await user.click(screen.getByRole("button", { name: "Back to history" }));
+  await user.click(screen.getByRole("button", { name: "Volver al historial" }));
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[1]);
-  assert.ok(await screen.findByText(/Sale 72 ·/));
+  assert.ok(await screen.findByText("Venta #72"));
 
   correction.resolve({
     kind: "success",
@@ -101,7 +101,7 @@ test("late correction success cannot replace a newer selected sale", async () =>
       lines: [{ sale_line_id: 71, product_id: 4, quantity: 1 }],
     },
   });
-  await waitFor(() => assert.ok(screen.getByText(/Sale 72 ·/)));
+  await waitFor(() => assert.ok(screen.getByText("Venta #72")));
   assert.deepEqual(detailCalls, [71, 72]);
 });
 
@@ -151,7 +151,42 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
   assert.match(css, /max-width: 960px[\s\S]*data-ui-aligned-data[^}]*tbody[^}]*display: block/);
 
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[0]);
-  assert.ok(await screen.findByText(/Sale 71 ·/));
+  assert.ok(await screen.findByText("Venta #71"));
+});
+
+test("renders persisted original detail as Spanish read-only semantic facts", async () => {
+  const persisted = {
+    ...detail(184), confirmed_at: "2026-08-14 10:42:00", total_centavos: 35_000,
+    lines: [{ ...detail(184).lines[0], sku: null, product_name: null, quantity: 2, unit_price_centavos: 8_550, line_total_centavos: 17_100 }],
+    payments: [
+      { method: "cash", amount_applied_centavos: 20_000, amount_tendered_centavos: 25_000, change_given_centavos: 5_000 },
+      { method: "qr", amount_applied_centavos: 15_000 },
+    ],
+  };
+  mockIPC((command) => {
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") return { kind: "success", detail: persisted };
+    throw new Error(command);
+  });
+  render(createElement(SalesHistoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+
+  assert.equal(screen.getByRole("heading", { level: 1 }).textContent, "Detalle de venta");
+  assert.ok(screen.getByRole("button", { name: "Volver al historial" }));
+  assert.match(screen.getByRole("region", { name: "Datos originales de la venta" }).textContent ?? "", /Venta #184.*14\/08\/2026, 10:42.*Confirmada/s);
+  assert.match(screen.getByRole("table", { name: "Artículos originales" }).textContent ?? "", /Producto no disponible.*SKU no disponible.*2.*Bs 85,50.*Bs 171,00/s);
+  assert.match(screen.getByRole("table", { name: "Pagos originales" }).textContent ?? "", /Efectivo aplicado.*Bs 200,00.*Efectivo recibido.*Bs 250,00.*Cambio.*Bs 50,00.*Pago QR.*Bs 150,00/s);
+  assert.ok(screen.getByText("Bs 350,00"));
+  assert.equal(screen.queryByRole("textbox"), null);
+  persisted.lines[0].product_name = "Nombre actual del catálogo";
+  persisted.lines[0].unit_price_centavos = 99_999;
+  assert.equal(screen.queryByText("Nombre actual del catálogo"), null);
+  assert.equal(screen.queryByText("Bs 999,99"), null);
+
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-history-detail[^}]*display: grid/);
+  assert.match(css, /max-width: 960px[\s\S]*data-ui-history-original[^}]*overflow-x: visible/);
 });
 
 test("preserves inclusive date commands and shows bounded empty and error recovery copy", async () => {
