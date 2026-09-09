@@ -489,7 +489,7 @@ test("renders centavo money, unavailable snapshots, payment facts, and the narro
   assert.match(markup, /Tendered: Bs 30\.00/);
   assert.match(markup, /Change: Bs 5\.00/);
   assert.match(markup, /QR applied: Bs 5\.00/);
-  assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Narrow the date range/);
+  assert.match(renderToStaticMarkup(createElement(HistoryScreen, { state, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined })), /Reducí el rango de fechas/);
 });
 
 test("renders immutable lifecycle facts and persisted correction presentation", () => {

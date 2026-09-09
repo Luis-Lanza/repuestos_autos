@@ -26,6 +26,9 @@ import {
   type HistoryState,
   type ReturnIntent,
 } from "./history-flow.ts";
+import { historyListError, historySummaryCells } from "./history-presentation.ts";
+import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
+import { AlignedData } from "../visual-system/structure.ts";
 
 const formatBs = (centavos: number) => `Bs ${(centavos / 100).toFixed(2)}`;
 const localToday = () => {
@@ -177,7 +180,7 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
               sales: response.sales,
               has_more: response.has_more,
             }
-          : { type: "list_failed", message: response.message },
+          : { type: "list_failed", message: historyListError(response.code) },
       );
     },
     select: async (sale: SalesHistorySummary, dispatch: Dispatch) => {
@@ -575,21 +578,42 @@ export function HistoryScreen({
         : null,
     );
   }
-  return createElement("main", { "aria-labelledby": "sales-history-heading", "aria-busy": state.status === "loading" },
-    createElement("h1", { id: "sales-history-heading" }, "Sales history"),
-    createElement("form", { onSubmit: submit },
-      createElement("label", { htmlFor: "history-from" }, "From", createElement("input", { id: "history-from", type: "date", value: from, onChange: (event) => setFrom(event.target.value) })),
-      createElement("label", { htmlFor: "history-to" }, "To", createElement("input", { id: "history-to", type: "date", value: to, onChange: (event) => setTo(event.target.value) })),
-      createElement("button", { type: "submit", disabled: state.status === "loading" }, "Load history"),
+  return createElement("main", { "aria-labelledby": "sales-history-heading", "aria-busy": state.status === "loading", "data-ui-history-list": true },
+    createElement("h1", { id: "sales-history-heading" }, "Historial de ventas"),
+    createElement("form", { onSubmit: submit, "data-ui-history-filters": true },
+      createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { id: "history-from", value: from, onChange: (event) => setFrom(event.target.value) }) } as never),
+      createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { id: "history-to", value: to, onChange: (event) => setTo(event.target.value) }) } as never),
+      createElement(Action, { variant: "primary", type: "submit", pending: state.status === "loading", pendingLabel: "Cargando…" }, "Cargar historial"),
     ),
-    state.status === "loading" ? createElement("p", { role: "status" }, "Loading sales history…") : null,
-    state.status === "empty" ? createElement("p", { role: "status" }, "No confirmed sales match this date range.") : null,
-    state.status === "error" ? createElement("div", null, createElement("p", { role: "alert" }, state.message), createElement("button", { type: "button", onClick: () => onReload(from, to) }, "Retry history")) : null,
-    state.status === "ready" ? createElement("ul", { "aria-label": "Sales history results" }, state.sales.map((sale) => createElement("li", { key: sale.sale_id }, createElement("button", { type: "button", onClick: () => onSelect(sale) }, `Sale ${sale.sale_id} · ${sale.confirmed_at} · ${formatBs(sale.total_centavos)}`), ` (${sale.line_count} lines, ${sale.payment_count} payments)`))) : null,
-    state.has_more ? createElement("p", { role: "status" }, "More matching sales exist. Narrow the date range.") : null,
+    state.status === "idle" ? createElement(Feedback, { kind: "initial" } as never, "Elegí un rango de fechas para consultar las ventas.") : null,
+    state.status === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando historial de ventas…") : null,
+    state.status === "empty" ? createElement(Feedback, { kind: "empty" } as never, "No hay ventas en este rango.") : null,
+    state.status === "error" ? createElement(Feedback, { kind: "error" } as never,
+      createElement("p", null, state.message ?? "No se pudo cargar el historial de ventas."),
+      createElement(Action, { variant: "secondary", onClick: () => onReload(from, to) }, "Reintentar historial"),
+    ) : null,
+    state.status === "ready" ? createElement(AlignedData, {
+      caption: "Ventas del período",
+      columns: [
+        { label: "Venta", align: "start", kind: "text" },
+        { label: "Fecha y hora", align: "start", kind: "text" },
+        { label: "Estado", align: "start", kind: "text" },
+        { label: "Artículos", align: "end", kind: "numeric" },
+        { label: "Pagos", align: "start", kind: "text" },
+        { label: "Total", align: "end", kind: "money" },
+        { label: "Acción", align: "start", kind: "text" },
+      ],
+      rows: state.sales.map((sale) => {
+        const cells = historySummaryCells(sale);
+        return [cells.identity, cells.date,
+          createElement(Badge, { kind: sale.status === "confirmed" ? "confirmed" : "cancelled", text: cells.status }),
+          cells.items, cells.payments, cells.total,
+          createElement(Action, { variant: "secondary", onClick: () => onSelect(sale) }, "Ver detalle")];
+      }),
+    }) : null,
+    state.has_more ? createElement(Feedback, { kind: "advisory" } as never, "Hay más ventas. Reducí el rango de fechas.") : null,
   );
 }
-
 export function SalesHistoryScreen() {
   const [state, dispatch] = useReducer(createHistoryFlow, initialHistoryState);
   const interaction = useMemo(
