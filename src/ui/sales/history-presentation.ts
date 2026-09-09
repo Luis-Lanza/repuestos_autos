@@ -1,24 +1,34 @@
-import type { SalesHistorySummary } from "../../commands/sales-history.ts";
+import type { SalesHistoryDetail, SalesHistorySummary } from "../../commands/sales-history.ts";
 import { formatBs } from "./sale-flow.ts";
 
 const UNAVAILABLE_DATE = "Fecha no disponible";
 
 export function formatHistoryDate(value: string): string {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/);
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})([ T])(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(Z|[+-](\d{2}):(\d{2}))?$/);
   if (!match) return UNAVAILABLE_DATE;
-  const [, yearText, monthText, dayText, hourText, minuteText] = match;
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const calendar = new Date(Date.UTC(year, month - 1, day));
-  if (
-    year < 1 || month < 1 || month > 12 || day < 1 ||
-    calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 ||
-    calendar.getUTCDate() !== day || hour > 23 || minute > 59
-  ) return UNAVAILABLE_DATE;
+  const [, yearText, monthText, dayText, separator, hourText, minuteText, secondText, fraction, zone, offsetHourText, offsetMinuteText] = match;
+  if (separator === " " && (secondText === undefined || fraction !== undefined || zone !== undefined)) return UNAVAILABLE_DATE;
+  const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText ?? "0"].map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]
+    || hour > 23 || minute > 59 || second > 59
+    || (offsetHourText !== undefined && (Number(offsetHourText) > 14 || Number(offsetMinuteText) > 59
+      || (Number(offsetHourText) === 14 && Number(offsetMinuteText) !== 0)))) return UNAVAILABLE_DATE;
   return `${dayText}/${monthText}/${yearText}, ${hourText}:${minuteText}`;
+}
+
+export function projectHistoryDetail(detail: SalesHistoryDetail) {
+  return {
+    identity: `Venta #${detail.sale_id}`,
+    date: formatHistoryDate(detail.confirmed_at),
+    status: detail.status === "confirmed" ? "Confirmada" : "Cancelada",
+    lines: detail.lines.map((line) => [line.product_name ?? "Producto no disponible", line.sku ?? "SKU no disponible", String(line.quantity), formatBs(line.unit_price_centavos), formatBs(line.line_total_centavos)]),
+    payments: detail.payments.flatMap((payment) => payment.method === "cash"
+      ? [["Efectivo aplicado", formatBs(payment.amount_applied_centavos)], ["Efectivo recibido", formatBs(payment.amount_tendered_centavos)], ["Cambio", formatBs(payment.change_given_centavos)]]
+      : [["Pago QR", formatBs(payment.amount_applied_centavos)]]),
+    total: formatBs(detail.total_centavos),
+  };
 }
 
 export function historySummaryCells(sale: SalesHistorySummary) {
