@@ -268,7 +268,7 @@ test("keeps return values for typed conflicts and malformed command results", as
   assert.deepEqual(state.return_intent?.lines, { 41: "1" });
   assert.equal(
     state.return_intent?.error,
-    "The inventory correction could not be completed.",
+    "La corrección entró en conflicto con el detalle guardado. Recargá e intentá nuevamente.",
   );
   await interaction.submitReturn(state, dispatch);
   assert.equal(state.return_intent?.status, "error");
@@ -282,7 +282,7 @@ test("keeps return values for typed conflicts and malformed command results", as
     }),
   );
   assert.match(markup, /role="alert"/);
-  assert.match(markup, /Reload sale detail/);
+  assert.match(markup, /Recargar detalle de venta/);
   state = createHistoryFlow(state, { type: "return_submit_started" });
   assert.match(
     renderToStaticMarkup(
@@ -336,11 +336,12 @@ test("keeps exact repeated-product lines and requires an explicit retry before r
   const pending = flow(ready, { type: "return_submit_started" });
   const conflicted = flow(pending, {
     type: "return_submit_failed",
+    request_id: "return-uuid-1",
     message: "Return conflicts with current history.",
   });
-  const staleSuccess = flow(conflicted, { type: "return_submit_succeeded" });
+  const staleSuccess = flow(conflicted, { type: "return_submit_succeeded", request_id: "return-uuid-1" });
   const retried = flow(conflicted, { type: "return_submit_started" });
-  const succeeded = flow(retried, { type: "return_submit_succeeded" });
+  const succeeded = flow(retried, { type: "return_submit_succeeded", request_id: "return-uuid-1" });
 
   assert.deepEqual(pending.return_intent?.lines, { 41: "1", 42: "2" });
   assert.equal(conflicted.return_intent?.request_id, "return-uuid-1");
@@ -368,16 +369,16 @@ test("prevents pending duplicates and validates local return quantities", () => 
   assert.equal(flow(pending, { type: "return_submit_started" }), pending);
   assert.equal(
     flow(opened, { type: "return_submit_started" }).return_intent?.error,
-    "Select at least one return line.",
+    "Seleccioná al menos una línea para devolver.",
   );
   for (const value of ["", "0", "-1", "1.5", "9007199254740992"])
     assert.equal(
       invalid(value).return_intent?.error,
-      "Return quantities must be positive whole numbers.",
+      "Ingresá una cantidad entera positiva.",
     );
   assert.equal(
     invalid("2").return_intent?.error,
-    "Return quantity exceeds the persisted remaining availability.",
+    "La cantidad supera las unidades disponibles guardadas.",
   );
   assert.equal(
     openedReturn({
@@ -389,6 +390,43 @@ test("prevents pending duplicates and validates local return quantities", () => 
   assert.equal(
     openedReturn({ ...detail, status: "cancelled" }).return_intent,
     null,
+  );
+});
+
+test("keeps correction work areas exclusive and ignores stale correction completion", () => {
+  const returnOpen = openedReturn(detail, "return-new");
+  const blockedCancellation = flow(returnOpen, {
+    type: "cancellation_intent_opened",
+    request_id: "cancel-blocked",
+  });
+  const cancellationOpen = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail },
+    { type: "cancellation_intent_opened", request_id: "cancel-new" },
+  );
+  const blockedReturn = flow(cancellationOpen, {
+    type: "return_intent_opened",
+    request_id: "return-blocked",
+  });
+  const pending = flow(
+    selectedReturn(detail, "return-new"),
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+    { type: "return_submit_started" },
+  );
+
+  assert.equal(blockedCancellation.cancellation_intent, null);
+  assert.equal(blockedReturn.return_intent, null);
+  assert.equal(
+    flow(pending, { type: "return_submit_succeeded", request_id: "return-old" }),
+    pending,
+  );
+  assert.equal(
+    flow(pending, {
+      type: "return_submit_failed",
+      request_id: "return-old",
+      message: "error obsoleto",
+    }),
+    pending,
   );
 });
 
@@ -425,11 +463,12 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
   );
   const failed = flow(pending, {
     type: "cancellation_submit_failed",
+    request_id: "cancellation-uuid",
     message: "Cancellation conflicts with current history.",
   });
-  const staleSuccess = flow(failed, { type: "cancellation_submit_succeeded" });
+  const staleSuccess = flow(failed, { type: "cancellation_submit_succeeded", request_id: "cancellation-uuid" });
   const retried = flow(failed, { type: "cancellation_submit_started" });
-  const succeeded = flow(retried, { type: "cancellation_submit_succeeded" });
+  const succeeded = flow(retried, { type: "cancellation_submit_succeeded", request_id: "cancellation-uuid" });
   const persistedCancellation = flow(
     { ...failed, detail: { ...fullyReturned, status: "cancelled" } },
     { type: "cancellation_submit_started" },
@@ -439,16 +478,16 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
   assert.equal(opened.cancellation_intent?.reason, "");
   assert.equal(
     blank.cancellation_intent?.error,
-    "A cancellation reason is required.",
+    "Ingresá un motivo de cancelación.",
   );
   assert.equal(
     whitespace.cancellation_intent?.error,
-    "A cancellation reason is required.",
+    "Ingresá un motivo de cancelación.",
   );
   assert.equal(unconfirmed.cancellation_intent?.reason, "Duplicate sale");
   assert.equal(
     unconfirmed.cancellation_intent?.error,
-    "Confirm the cancellation before submitting.",
+    "Confirmá la corrección de inventario antes de continuar.",
   );
   assert.equal(flow(pending, { type: "cancellation_submit_started" }), pending);
   assert.equal(pending.detail, fullyReturned);
@@ -465,7 +504,7 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
   assert.equal(persistedCancellation.cancellation_intent?.status, "error");
   assert.equal(
     persistedCancellation.cancellation_intent?.error,
-    "This sale is no longer eligible for cancellation. Reload history.",
+    "Esta venta ya no admite cancelación. Recargá el detalle.",
   );
   assert.equal(
     flow(
@@ -543,10 +582,11 @@ test("renders immutable lifecycle facts and persisted correction presentation", 
   assert.match(markup, /Cancelada/);
   assert.match(markup, /Artículos originales/);
   assert.match(markup, /Pagos originales/);
-  assert.match(markup, /Inventory correction history/);
-  assert.match(markup, /Returned quantity: 1/);
-  assert.match(markup, /Cancellation reason: Duplicate sale/);
-  assert.match(markup, /Restored quantity: 0/);
+  assert.match(markup, /Historial de correcciones de inventario/);
+  assert.match(markup, /Devolución #81/);
+  assert.match(markup, /Cantidad devuelta[^]*>1</);
+  assert.match(markup, /Motivo[^]*Duplicate sale/);
+  assert.match(markup, /Cantidad restaurada[^]*>0</);
 });
 
 test("renders sale-line keyed correction forms from persisted status and quantities", () => {
@@ -610,21 +650,17 @@ test("renders sale-line keyed correction forms from persisted status and quantit
 });
 
 test("renders keyboard-operable correction forms with inventory-only language", () => {
+  const base = flow(initialHistoryState, { type: "detail_loaded", detail });
   const state = flow(
-    initialHistoryState,
-    { type: "detail_loaded", detail },
+    base,
     { type: "return_intent_opened", request_id: "return-keyboard" },
     { type: "return_line_selected", sale_line_id: 41, selected: true },
-    { type: "cancellation_intent_opened", request_id: "cancellation-keyboard" },
   );
-  const markup = renderToStaticMarkup(
-    createElement(HistoryScreen, {
-      state,
-      onReload: () => undefined,
-      onSelect: () => undefined,
-      onBack: () => undefined,
-    }),
+  const render = (current: typeof state) => renderToStaticMarkup(
+    createElement(HistoryScreen, { state: current, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined }),
   );
+  const markup = render(state);
+  const cancellationMarkup = render(flow(base, { type: "cancellation_intent_opened", request_id: "cancellation-keyboard" }));
 
   assert.match(markup, /<form(?=[^>]*aria-label="Return items to inventory")/);
   assert.match(
@@ -635,10 +671,10 @@ test("renders keyboard-operable correction forms with inventory-only language", 
     markup,
     /<input(?=[^>]*id="return-quantity-41")(?=[^>]*type="number")/,
   );
-  assert.match(markup, /<form(?=[^>]*aria-label="Cancel sale")/);
-  assert.match(markup, /<input(?=[^>]*id="cancellation-reason")/);
+  assert.match(cancellationMarkup, /<form(?=[^>]*aria-label="Cancel sale")/);
+  assert.match(cancellationMarkup, /<input(?=[^>]*id="cancellation-reason")/);
   assert.match(
-    markup,
+    cancellationMarkup,
     /<input(?=[^>]*id="cancellation-confirmation")(?=[^>]*type="checkbox")/,
   );
   assert.match(
@@ -646,7 +682,7 @@ test("renders keyboard-operable correction forms with inventory-only language", 
     /<button(?=[^>]*type="submit")[^>]*>Record inventory return<\/button>/,
   );
   assert.match(
-    markup,
+    cancellationMarkup,
     /<button(?=[^>]*type="submit")[^>]*>Record sale cancellation<\/button>/,
   );
   assert.doesNotMatch(
@@ -682,7 +718,7 @@ test("derives deterministic correction focus in the reducer and applies it throu
     { type: "return_submit_started" },
   );
   assert.deepEqual(invalidReturn.return_intent?.validation, {
-    message: "Return quantities must be positive whole numbers.",
+    message: "Ingresá una cantidad entera positiva.",
     focus_target: "return-quantity-41",
   });
   assert.equal(correctionFocusTarget(invalidReturn), "return-quantity-41");
@@ -833,21 +869,15 @@ test("invalidates completion after disposal and obsolete correction success", as
 });
 
 test("renders correction controls with 44px minimum targets", () => {
-  const state = flow(
-    initialHistoryState,
-    { type: "detail_loaded", detail },
+  const base = flow(initialHistoryState, { type: "detail_loaded", detail });
+  const state = flow(base,
     { type: "return_intent_opened", request_id: "return-target" },
-    { type: "return_line_selected", sale_line_id: 41, selected: true },
-    { type: "cancellation_intent_opened", request_id: "cancellation-target" },
-  );
-  const markup = renderToStaticMarkup(
-    createElement(HistoryScreen, {
-      state,
-      onReload: () => undefined,
-      onSelect: () => undefined,
-      onBack: () => undefined,
-    }),
-  );
+    { type: "return_line_selected", sale_line_id: 41, selected: true });
+  const render = (current: typeof state) => renderToStaticMarkup(createElement(HistoryScreen, {
+    state: current, onReload: () => undefined, onSelect: () => undefined, onBack: () => undefined,
+  }));
+  const markup = render(state);
+  const cancellationMarkup = render(flow(base, { type: "cancellation_intent_opened", request_id: "cancellation-target" }));
 
   assert.match(
     markup,
@@ -858,11 +888,11 @@ test("renders correction controls with 44px minimum targets", () => {
     /id="return-quantity-41"(?=[^>]*style="min-width:44px;min-height:44px")/,
   );
   assert.match(
-    markup,
+    cancellationMarkup,
     /id="cancellation-reason"(?=[^>]*style="min-width:44px;min-height:44px")/,
   );
   assert.match(
-    markup,
+    cancellationMarkup,
     /id="cancellation-confirmation"(?=[^>]*style="min-width:44px;min-height:44px")/,
   );
   assert.match(
@@ -870,7 +900,7 @@ test("renders correction controls with 44px minimum targets", () => {
     /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Record inventory return<\/button>/,
   );
   assert.match(
-    markup,
+    cancellationMarkup,
     /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Record sale cancellation<\/button>/,
   );
 });

@@ -156,12 +156,14 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
 
 test("renders persisted original detail as Spanish read-only semantic facts", async () => {
   const persisted = {
-    ...detail(184), confirmed_at: "2026-08-14 10:42:00", total_centavos: 35_000,
+    ...detail(184), confirmed_at: "2026-08-14 10:42:00", total_centavos: 35_000, status: "cancelled",
     lines: [{ ...detail(184).lines[0], sku: null, product_name: null, quantity: 2, unit_price_centavos: 8_550, line_total_centavos: 17_100 }],
     payments: [
       { method: "cash", amount_applied_centavos: 20_000, amount_tendered_centavos: 25_000, change_given_centavos: 5_000 },
       { method: "qr", amount_applied_centavos: 15_000 },
     ],
+    returns: [{ return_id: 81, request_id: "return-exact", occurred_at: "2026-08-15 09:03:02", lines: [{ sale_line_id: 184, product_id: 4, quantity: 1 }] }],
+    cancellation: { cancellation_id: 91, request_id: "cancel-exact", occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada", lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 0 }] },
   };
   mockIPC((command) => {
     if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
@@ -174,10 +176,11 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
 
   assert.equal(screen.getByRole("heading", { level: 1 }).textContent, "Detalle de venta");
   assert.ok(screen.getByRole("button", { name: "Volver al historial" }));
-  assert.match(screen.getByRole("region", { name: "Datos originales de la venta" }).textContent ?? "", /Venta #184.*14\/08\/2026, 10:42.*Confirmada/s);
+  assert.match(screen.getByRole("region", { name: "Datos originales de la venta" }).textContent ?? "", /Venta #184.*14\/08\/2026, 10:42.*Cancelada/s);
   assert.match(screen.getByRole("table", { name: "Artículos originales" }).textContent ?? "", /Producto no disponible.*SKU no disponible.*2.*Bs 85,50.*Bs 171,00/s);
   assert.match(screen.getByRole("table", { name: "Pagos originales" }).textContent ?? "", /Efectivo aplicado.*Bs 200,00.*Efectivo recibido.*Bs 250,00.*Cambio.*Bs 50,00.*Pago QR.*Bs 150,00/s);
   assert.ok(screen.getByText("Bs 350,00"));
+  assert.match(screen.getByRole("region", { name: "Historial de correcciones de inventario" }).textContent ?? "", /Devolución #81.*2026-08-15 09:03:02.*Confirmada.*return-exact.*1.*Cancelación #91.*2026-08-16 11:04:03.*Cancelada.*cancel-exact.*Venta duplicada.*0/s);
   assert.equal(screen.queryByRole("textbox"), null);
   persisted.lines[0].product_name = "Nombre actual del catálogo";
   persisted.lines[0].unit_price_centavos = 99_999;

@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 
-import { postSaleCommands } from "../../commands/post-sale.ts";
+import { postSaleCommands, type PostSaleErrorCode } from "../../commands/post-sale.ts";
 import {
   salesHistoryCommands,
   type SalesHistorySummary,
@@ -26,7 +26,7 @@ import {
   type HistoryState,
   type ReturnIntent,
 } from "./history-flow.ts";
-import { historyListError, historySummaryCells, projectHistoryDetail } from "./history-presentation.ts";
+import { historyListError, historySummaryCells, projectCorrectionHistory, projectHistoryDetail } from "./history-presentation.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData } from "../visual-system/structure.ts";
 
@@ -41,6 +41,39 @@ const originalPaymentColumns = [
   { label: "Dato de pago", align: "start", kind: "text" },
   { label: "Importe", align: "end", kind: "money" },
 ] as const;
+const returnedLineColumns = [
+  { label: "Línea de venta", align: "end", kind: "numeric" },
+  { label: "Producto", align: "end", kind: "numeric" },
+  { label: "Cantidad devuelta", align: "end", kind: "numeric" },
+] as const;
+const restoredLineColumns = [
+  { label: "Línea de venta", align: "end", kind: "numeric" },
+  { label: "Producto", align: "end", kind: "numeric" },
+  { label: "Cantidad restaurada", align: "end", kind: "numeric" },
+] as const;
+
+function CorrectionHistory({ detail }: { detail: HistoryState["detail"] }) {
+  if (!detail) return null;
+  const corrections = projectCorrectionHistory(detail);
+  const facts = (record: { requestId: string; occurredAt: string; status: string }, reason?: string) =>
+    createElement("dl", { "data-ui-history-correction-facts": true },
+      createElement("dt", null, "Fecha y hora registrada"), createElement("dd", { "data-ui-type": "numeric" }, record.occurredAt),
+      createElement("dt", null, "Estado"), createElement("dd", null, record.status),
+      createElement("dt", null, "ID de solicitud"), createElement("dd", { "data-ui-type": "mono" }, record.requestId),
+      reason === undefined ? null : createElement("dt", null, "Motivo"),
+      reason === undefined ? null : createElement("dd", null, reason));
+  return createElement("section", { "aria-labelledby": "inventory-correction-history-heading", "data-ui-history-corrections": true },
+    createElement("h2", { id: "inventory-correction-history-heading" }, "Historial de correcciones de inventario"),
+    corrections.returns.length === 0 && corrections.cancellation === null
+      ? createElement("p", null, "No hay correcciones de inventario registradas.")
+      : null,
+    corrections.returns.map((record) => createElement("section", { key: record.identity, "aria-label": record.identity, "data-ui-history-correction-record": true },
+      createElement("h3", null, record.identity), facts(record),
+      createElement(AlignedData, { caption: "Artículos devueltos", columns: returnedLineColumns, rows: record.lines }))),
+    corrections.cancellation ? createElement("section", { "aria-label": corrections.cancellation.identity, "data-ui-history-correction-record": true },
+      createElement("h3", null, corrections.cancellation.identity), facts(corrections.cancellation, corrections.cancellation.reason),
+      createElement(AlignedData, { caption: "Unidades restauradas por cancelación", columns: restoredLineColumns, rows: corrections.cancellation.lines })) : null);
+}
 const localToday = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -80,7 +113,13 @@ type InteractionCommands = HistoryCommands & Partial<typeof postSaleCommands>;
 type Dispatch = (action: HistoryAction) => void;
 type CorrectionIntent = ReturnIntent | CancellationIntent;
 type CorrectionResponse =
-  { kind: "success" } | { kind: "error"; message: string };
+  | { kind: "success"; result: { request_id: string; sale_id: number } }
+  | { kind: "error"; code?: PostSaleErrorCode };
+
+const correctionError = (code?: PostSaleErrorCode) =>
+  code === "request_conflict" || code === "quantity_exceeds_remaining"
+    ? "La corrección entró en conflicto con el detalle guardado. Recargá e intentá nuevamente."
+    : "No se pudo guardar la corrección de inventario. Recargá e intentá nuevamente.";
 
 export function createSalesHistoryInteraction(commands: InteractionCommands) {
   const submitting = new Set<string>();
@@ -134,15 +173,18 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
     try {
       const response = await command(intent);
       if (!isCurrent(identity)) return;
-      if (!response || response.kind === "error") {
+      if (
+        !response ||
+        response.kind === "error" ||
+        response.result.request_id !== intent.request_id ||
+        response.result.sale_id !== intent.sale_id
+      ) {
         dispatch({
           type: isReturn
             ? "return_submit_failed"
             : "cancellation_submit_failed",
-          message:
-            response?.kind === "error"
-              ? response.message
-              : "The inventory correction could not be completed.",
+          request_id: intent.request_id,
+          message: correctionError(response?.kind === "error" ? response.code : undefined),
         });
         return;
       }
@@ -150,8 +192,19 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
         type: isReturn
           ? "return_submit_succeeded"
           : "cancellation_submit_succeeded",
+        request_id: intent.request_id,
       });
-      await reloadDetailFor(intent.sale_id, dispatch, identity);
+      const reloaded = await commands.detail(intent.sale_id);
+      if (!isCurrent(identity)) return;
+      if (reloaded.kind === "success") {
+        dispatch({ type: "detail_loaded", detail: reloaded.detail });
+      } else {
+        dispatch({
+          type: isReturn ? "return_submit_failed" : "cancellation_submit_failed",
+          request_id: intent.request_id,
+          message: correctionError(),
+        });
+      }
     } finally {
       submitting.delete(intent.request_id);
     }
@@ -248,83 +301,7 @@ export function HistoryScreen({
               createElement(AlignedData, { caption: "Pagos originales", columns: originalPaymentColumns, rows: original.payments }),
               createElement("p", { "data-ui-history-total": true }, createElement("span", null, "Total original"), createElement("strong", null, original.total)),
             ),
-            createElement(
-              "section",
-              { "aria-labelledby": "inventory-correction-history-heading" },
-              createElement(
-                "h2",
-                { id: "inventory-correction-history-heading" },
-                "Inventory correction history",
-              ),
-              state.detail.returns.length === 0 &&
-                state.detail.cancellation === null
-                ? createElement("p", null, "No inventory corrections recorded.")
-                : null,
-              state.detail.returns.map((returned) =>
-                createElement(
-                  "section",
-                  {
-                    key: returned.return_id,
-                    "aria-label": `Return ${returned.return_id}`,
-                  },
-                  createElement(
-                    "h3",
-                    null,
-                    `Return ${returned.return_id} · ${returned.occurred_at}`,
-                  ),
-                  createElement(
-                    "p",
-                    null,
-                    `Request ID: ${returned.request_id}`,
-                  ),
-                  createElement(
-                    "ul",
-                    null,
-                    returned.lines.map((line) =>
-                      createElement(
-                        "li",
-                        { key: line.sale_line_id },
-                        `Sale line ${line.sale_line_id} · Product ${line.product_id} · Returned quantity: ${line.quantity}`,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              state.detail.cancellation
-                ? createElement(
-                    "section",
-                    {
-                      "aria-label": `Cancellation ${state.detail.cancellation.cancellation_id}`,
-                    },
-                    createElement(
-                      "h3",
-                      null,
-                      `Cancellation ${state.detail.cancellation.cancellation_id} · ${state.detail.cancellation.occurred_at}`,
-                    ),
-                    createElement(
-                      "p",
-                      null,
-                      `Cancellation reason: ${state.detail.cancellation.reason}`,
-                    ),
-                    createElement(
-                      "p",
-                      null,
-                      `Request ID: ${state.detail.cancellation.request_id}`,
-                    ),
-                    createElement(
-                      "ul",
-                      null,
-                      state.detail.cancellation.lines.map((line) =>
-                        createElement(
-                          "li",
-                          { key: line.sale_line_id },
-                          `Sale line ${line.sale_line_id} · Product ${line.product_id} · Restored quantity: ${line.restored_quantity}`,
-                        ),
-                      ),
-                    ),
-                  )
-                : null,
-            ),
+            createElement(CorrectionHistory, { detail: state.detail }),
             canOpenReturn(state)
               ? createElement(
                   "button",
@@ -434,7 +411,7 @@ export function HistoryScreen({
                             onReloadDetail(state.return_intent!.sale_id),
                           style: correctionControlStyle,
                         },
-                        "Reload sale detail",
+                        "Recargar detalle de venta",
                       )
                     : null,
                   createElement(
@@ -527,7 +504,7 @@ export function HistoryScreen({
                             onReloadDetail(state.cancellation_intent!.sale_id),
                           style: correctionControlStyle,
                         },
-                        "Reload sale detail",
+                        "Recargar detalle de venta",
                       )
                     : null,
                   createElement(

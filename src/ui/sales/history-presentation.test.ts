@@ -4,6 +4,7 @@ import test from "node:test";
 import type { SalesHistoryDetail } from "../../commands/sales-history.ts";
 import {
   formatHistoryDate,
+  projectCorrectionHistory,
   projectHistoryDetail,
 } from "./history-presentation.ts";
 
@@ -75,4 +76,14 @@ test("validates persisted wall-clock dates and contains malformed values", () =>
     "x".repeat(10_000),
   ])
     assert.equal(formatHistoryDate(value), "Fecha no disponible");
+});
+
+test("projects persisted correction records without dropping identifiers or zero quantities", () => {
+  const corrected: SalesHistoryDetail = { ...detail,
+    returns: [{ return_id: 81, request_id: "return-request-exact", occurred_at: "2026-08-15 09:03:02", lines: [{ sale_line_id: 41, product_id: 4, quantity: 0 }] }],
+    cancellation: { cancellation_id: 91, request_id: "cancel-request-exact", occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada", lines: [{ sale_line_id: 41, product_id: 4, restored_quantity: 0 }] } };
+  assert.deepEqual(projectCorrectionHistory(corrected), {
+    returns: [{ identity: "Devolución #81", requestId: "return-request-exact", occurredAt: "2026-08-15 09:03:02", status: "Confirmada", lines: [["41", "4", "0"]] }],
+    cancellation: { identity: "Cancelación #91", requestId: "cancel-request-exact", occurredAt: "2026-08-16 11:04:03", status: "Cancelada", reason: "Venta duplicada", lines: [["41", "4", "0"]] },
+  });
 });
