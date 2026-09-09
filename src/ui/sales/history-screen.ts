@@ -71,15 +71,28 @@ type CorrectionResponse =
 
 export function createSalesHistoryInteraction(commands: InteractionCommands) {
   const submitting = new Set<string>();
-  const reloadDetail = async (saleId: number, dispatch: Dispatch) => {
+  let requestIdentity = 0;
+  let active = true;
+  const beginIntent = () => ++requestIdentity;
+  const isCurrent = (identity: number) => active && identity === requestIdentity;
+  const invalidate = () => { requestIdentity += 1; };
+  const reloadDetailFor = async (
+    saleId: number,
+    dispatch: Dispatch,
+    identity: number,
+  ) => {
+    if (!isCurrent(identity)) return;
     dispatch({ type: "detail_started", sale_id: saleId });
     const response = await commands.detail(saleId);
+    if (!isCurrent(identity)) return;
     dispatch(
       response.kind === "success"
         ? { type: "detail_loaded", detail: response.detail }
         : { type: "detail_failed", message: response.message },
     );
   };
+  const reloadDetail = (saleId: number, dispatch: Dispatch) =>
+    reloadDetailFor(saleId, dispatch, beginIntent());
   const submit = async (
     state: HistoryState,
     dispatch: Dispatch,
@@ -104,8 +117,10 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
     )
       return;
     submitting.add(intent.request_id);
+    const identity = beginIntent();
     try {
       const response = await command(intent);
+      if (!isCurrent(identity)) return;
       if (!response || response.kind === "error") {
         dispatch({
           type: isReturn
@@ -123,7 +138,7 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
           ? "return_submit_succeeded"
           : "cancellation_submit_succeeded",
       });
-      await reloadDetail(intent.sale_id, dispatch);
+      await reloadDetailFor(intent.sale_id, dispatch, identity);
     } finally {
       submitting.delete(intent.request_id);
     }
@@ -151,8 +166,10 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
     );
   return {
     reload: async (from: string, to: string, dispatch: Dispatch) => {
+      const identity = beginIntent();
       dispatch({ type: "list_started" });
       const response = await commands.list(from, to);
+      if (!isCurrent(identity)) return;
       dispatch(
         response.kind === "success"
           ? {
@@ -169,6 +186,9 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
     reloadDetail,
     submitReturn,
     submitCancellation,
+    invalidate,
+    activate: () => { active = true; },
+    dispose: () => { active = false; invalidate(); },
   };
 }
 
@@ -585,14 +605,19 @@ export function SalesHistoryScreen() {
   const select = (sale: SalesHistorySummary) =>
     interaction.select(sale, dispatch);
   useEffect(() => {
+    interaction.activate();
     const today = localToday();
     void reload(today, today);
-  }, []);
+    return interaction.dispose;
+  }, [interaction]);
   return createElement(HistoryScreen, {
     state,
     onReload: (from, to) => void reload(from, to),
     onSelect: (sale) => void select(sale),
-    onBack: () => dispatch({ type: "back_to_list" }),
+    onBack: () => {
+      interaction.invalidate();
+      dispatch({ type: "back_to_list" });
+    },
     onAction: dispatch,
     onReturnSubmit: () => void interaction.submitReturn(state, dispatch),
     onCancellationSubmit: () =>

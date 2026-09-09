@@ -734,6 +734,104 @@ test("derives deterministic correction focus in the reducer and applies it throu
   );
 });
 
+test("guards list and detail retrieval against obsolete completion order", async () => {
+  type Deferred<Value> = {
+    promise: Promise<Value>;
+    resolve: (value: Value) => void;
+  };
+  const deferred = <Value,>(): Deferred<Value> => {
+    let resolve!: (value: Value) => void;
+    const promise = new Promise<Value>((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const otherSummary = { ...summary, sale_id: 72 };
+  const otherDetail = { ...detail, sale_id: 72 };
+  const lists = new Map<string, Deferred<Awaited<ReturnType<typeof emptyHistoryList>>>>();
+  const details = new Map<number, Deferred<{ kind: "success"; detail: SalesHistoryDetail }>>();
+  const interaction = createSalesHistoryInteraction({
+    list: (from) => {
+      const request = deferred<Awaited<ReturnType<typeof emptyHistoryList>>>();
+      lists.set(from, request);
+      return request.promise;
+    },
+    detail: (saleId) => {
+      const request = deferred<{ kind: "success"; detail: SalesHistoryDetail }>();
+      details.set(saleId, request);
+      return request.promise;
+    },
+  });
+  let state = initialHistoryState;
+  const dispatch = (action: Parameters<typeof createHistoryFlow>[1]) => {
+    state = createHistoryFlow(state, action);
+  };
+
+  const olderList = interaction.reload("older", "older", dispatch);
+  const newerList = interaction.reload("newer", "newer", dispatch);
+  lists.get("newer")!.resolve({ kind: "success", sales: [otherSummary], has_more: false });
+  await newerList;
+  lists.get("older")!.resolve({ kind: "success", sales: [summary], has_more: false });
+  await olderList;
+  assert.equal(state.sales[0].sale_id, 72);
+
+  const detailA = interaction.select(summary, dispatch);
+  const detailB = interaction.select(otherSummary, dispatch);
+  details.get(72)!.resolve({ kind: "success", detail: otherDetail });
+  await detailB;
+  details.get(71)!.resolve({ kind: "success", detail });
+  await detailA;
+  assert.equal(state.detail?.sale_id, 72);
+
+  const lateList = interaction.reload("late", "late", dispatch);
+  const selected = interaction.select(otherSummary, dispatch);
+  details.get(72)!.resolve({ kind: "success", detail: otherDetail });
+  await selected;
+  lists.get("late")!.resolve({ kind: "success", sales: [summary], has_more: false });
+  await lateList;
+  assert.equal(state.view, "detail");
+  assert.equal(state.detail?.sale_id, 72);
+});
+
+test("invalidates completion after disposal and obsolete correction success", async () => {
+  let resolveList!: (value: Awaited<ReturnType<typeof emptyHistoryList>>) => void;
+  let resolveReturn!: (value: { kind: "success" }) => void;
+  const detailCalls: number[] = [];
+  const interaction = createSalesHistoryInteraction({
+    list: () => new Promise((resolve) => { resolveList = resolve; }),
+    detail: async (saleId) => {
+      detailCalls.push(saleId);
+      return { kind: "success", detail: { ...detail, sale_id: saleId } };
+    },
+    createReturn: () => new Promise((resolve) => { resolveReturn = resolve; }),
+  });
+  let state = flow(
+    initialHistoryState,
+    { type: "detail_loaded", detail },
+    { type: "return_intent_opened", request_id: "preserved-uuid" },
+    { type: "return_line_selected", sale_line_id: 41, selected: true },
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+  );
+  const actions: HistoryAction[] = [];
+  const dispatch = (action: HistoryAction) => {
+    actions.push(action);
+    state = createHistoryFlow(state, action);
+  };
+
+  const correction = interaction.submitReturn(state, dispatch);
+  await interaction.select({ ...summary, sale_id: 72 }, dispatch);
+  resolveReturn({ kind: "success" });
+  await correction;
+  assert.equal(state.detail?.sale_id, 72);
+  assert.deepEqual(detailCalls, [72]);
+  assert.equal(actions.some(({ type }) => type === "return_submit_succeeded"), false);
+
+  const completion = interaction.reload("from", "to", dispatch);
+  const actionCount = actions.length;
+  interaction.dispose();
+  resolveList({ kind: "success", sales: [summary], has_more: false });
+  await completion;
+  assert.equal(actions.length, actionCount);
+});
+
 test("renders correction controls with 44px minimum targets", () => {
   const state = flow(
     initialHistoryState,
