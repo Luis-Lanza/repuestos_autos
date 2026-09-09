@@ -100,19 +100,15 @@ function returnFocusTarget(
   state: HistoryState,
   intent: ReturnIntent,
 ): string | null {
-  const selectedLineId = Object.keys(intent.lines)
-    .map(Number)
-    .filter(Number.isSafeInteger)
-    .sort((left, right) => left - right)[0];
+  const selectedLineId = state.detail?.lines.find(
+    (line) => String(line.sale_line_id) in intent.lines,
+  )?.sale_line_id;
   if (selectedLineId !== undefined) return `return-quantity-${selectedLineId}`;
-  const firstReturnableLineId = state.detail?.lines
-    .filter(
-      (line) =>
-        Number.isSafeInteger(line.remaining_returnable_quantity) &&
-        line.remaining_returnable_quantity > 0,
-    )
-    .map((line) => line.sale_line_id)
-    .sort((left, right) => left - right)[0];
+  const firstReturnableLineId = state.detail?.lines.find(
+    (line) =>
+      Number.isSafeInteger(line.remaining_returnable_quantity) &&
+      line.remaining_returnable_quantity > 0,
+  )?.sale_line_id;
   return firstReturnableLineId === undefined
     ? null
     : `return-line-${firstReturnableLineId}`;
@@ -130,9 +126,14 @@ function returnIntentValidation(
       message: "Esta venta ya no admite devoluciones. Recargá el detalle.",
       focus_target: returnFocusTarget(state, intent),
     };
-  const entries = Object.entries(intent.lines).sort(
-    ([left], [right]) => Number(left) - Number(right),
-  );
+  const entries = [
+    ...(state.detail?.lines
+      .filter((line) => String(line.sale_line_id) in intent.lines)
+      .map((line) => [String(line.sale_line_id), intent.lines[line.sale_line_id]] as const) ?? []),
+    ...Object.entries(intent.lines).filter(
+      ([saleLineId]) => !state.detail?.lines.some((line) => line.sale_line_id === Number(saleLineId)),
+    ),
+  ];
   if (!entries.length)
     return {
       message: "Seleccioná al menos una línea para devolver.",
@@ -256,10 +257,22 @@ export function createHistoryFlow(
         selected_id: action.sale_id,
         detail: null,
         message: null,
-        return_intent: null,
+        return_intent:
+          state.return_intent?.sale_id === action.sale_id
+            ? state.return_intent
+            : null,
         cancellation_intent: null,
       };
-    case "detail_loaded":
+    case "detail_loaded": {
+      const intent =
+        state.return_intent?.sale_id === action.detail.sale_id
+          ? state.return_intent
+          : null;
+      const hasPersistedReturn = intent
+        ? action.detail.returns.some(
+            (record) => record.request_id === intent.request_id,
+          )
+        : false;
       return {
         ...state,
         view: "detail",
@@ -267,9 +280,19 @@ export function createHistoryFlow(
         selected_id: action.detail.sale_id,
         detail: action.detail,
         message: null,
-        return_intent: null,
+        return_intent:
+          !intent || hasPersistedReturn
+            ? null
+            : {
+                ...intent,
+                status: "error",
+                error:
+                  "La devolución todavía no aparece en el detalle guardado. Recargá nuevamente.",
+                validation: null,
+              },
         cancellation_intent: null,
       };
+    }
     case "detail_failed":
       return {
         ...state,

@@ -95,6 +95,52 @@ const focusCorrectionTarget = (target: string | null, find: FocusFinder) => {
   if (target) find(target)?.focus();
 };
 
+function ReturnForm({ state, onAction, onSubmit, onReloadDetail }: {
+  state: HistoryState;
+  onAction?: (action: HistoryAction) => void;
+  onSubmit?: () => void;
+  onReloadDetail?: (saleId: number) => void;
+}) {
+  const intent = state.return_intent!;
+  const locked = intent.status === "pending" || intent.status === "reload_requested";
+  const errorTarget = intent.validation?.focus_target;
+  const errorId = errorTarget ? `${errorTarget}-error` : undefined;
+  return createElement("form", { "aria-label": "Devolución de artículos", "aria-busy": locked,
+    "data-ui-history-return": true, onSubmit: (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (onSubmit) onSubmit();
+      else onAction?.({ type: "return_submit_started" });
+    } },
+  createElement("h2", null, "Devolución de artículos"),
+  createElement("p", null, "Seleccioná los artículos originales y las cantidades que volverán al inventario."),
+  state.detail!.lines.map((line) => {
+    const selected = String(line.sale_line_id) in intent.lines;
+    const eligible = line.remaining_returnable_quantity > 0;
+    const quantityId = `return-quantity-${line.sale_line_id}`;
+    const selectionId = `return-line-${line.sale_line_id}`;
+    const fieldError = errorTarget === quantityId || errorTarget === selectionId;
+    return createElement("fieldset", { key: line.sale_line_id, disabled: locked || !eligible },
+      createElement("legend", null, `Línea de venta ${line.sale_line_id} · Máximo disponible: ${line.remaining_returnable_quantity} ${line.remaining_returnable_quantity === 1 ? "unidad" : "unidades"}`),
+      eligible ? createElement("label", { htmlFor: selectionId }, "Incluir este artículo",
+        createElement("input", { id: selectionId, name: selectionId, type: "checkbox", checked: selected,
+          disabled: locked, style: correctionControlStyle, "aria-invalid": fieldError || undefined,
+          "aria-describedby": fieldError ? errorId : undefined,
+          onChange: (event: ChangeEvent<HTMLInputElement>) => onAction?.({ type: "return_line_selected", sale_line_id: line.sale_line_id, selected: event.target.checked }) }))
+        : createElement("p", null, "Sin unidades disponibles para devolver"),
+      selected ? createElement("label", { htmlFor: quantityId }, "Cantidad a devolver",
+        createElement("input", { id: quantityId, name: quantityId, type: "text", inputMode: "numeric", pattern: "[0-9]*",
+          value: intent.lines[line.sale_line_id], disabled: locked, style: correctionControlStyle,
+          "aria-invalid": fieldError || undefined, "aria-describedby": fieldError ? errorId : undefined,
+          onChange: (event: ChangeEvent<HTMLInputElement>) => onAction?.({ type: "return_quantity_changed", sale_line_id: line.sale_line_id, value: event.target.value }) })) : null,
+      fieldError ? createElement("p", { id: errorId, role: "alert" }, intent.validation!.message) : null);
+  }),
+  intent.error && !intent.validation ? createElement("p", { role: "alert" }, intent.error) : null,
+  intent.error && !intent.validation && onReloadDetail
+    ? createElement("button", { type: "button", disabled: locked, onClick: () => onReloadDetail(intent.sale_id), style: correctionControlStyle }, "Recargar detalle de venta") : null,
+  createElement("button", { type: "submit", disabled: locked, style: correctionControlStyle },
+    locked ? "Registrando devolución…" : "Registrar devolución"));
+}
+
 export type HistoryScreenProps = {
   state: HistoryState;
   onReload: (from: string, to: string) => void;
@@ -303,127 +349,10 @@ export function HistoryScreen({
             ),
             createElement(CorrectionHistory, { detail: state.detail }),
             canOpenReturn(state)
-              ? createElement(
-                  "button",
-                  {
-                    type: "button",
-                    onClick: () =>
-                      onAction?.({
-                        type: "return_intent_opened",
-                        request_id: crypto.randomUUID(),
-                      }),
-                    style: correctionControlStyle,
-                  },
-                  "Begin item return",
-                )
+              ? createElement("button", { type: "button", onClick: () => onAction?.({ type: "return_intent_opened", request_id: crypto.randomUUID() }), style: correctionControlStyle }, "Iniciar devolución de artículos")
               : null,
             state.return_intent
-              ? createElement(
-                  "form",
-                  {
-                    "aria-label": "Return items to inventory",
-                    "aria-busy": state.return_intent.status === "pending",
-                    onSubmit: (event: FormEvent<HTMLFormElement>) => {
-                      event.preventDefault();
-                      if (onReturnSubmit) onReturnSubmit();
-                      else onAction?.({ type: "return_submit_started" });
-                    },
-                  },
-                  createElement("h2", null, "Return items to inventory"),
-                  createElement(
-                    "p",
-                    null,
-                    "Select original sale lines and quantities from persisted remaining availability.",
-                  ),
-                  state.detail.lines.map((line) => {
-                    const selected =
-                      String(line.sale_line_id) in state.return_intent!.lines;
-                    const disabled =
-                      state.return_intent!.status === "pending" ||
-                      line.remaining_returnable_quantity <= 0;
-                    return createElement(
-                      "fieldset",
-                      { key: line.sale_line_id, disabled },
-                      createElement(
-                        "legend",
-                        null,
-                        `Sale line ${line.sale_line_id} · Remaining returnable quantity: ${line.remaining_returnable_quantity}`,
-                      ),
-                      createElement(
-                        "label",
-                        { htmlFor: `return-line-${line.sale_line_id}` },
-                        "Include this original sale line",
-                        createElement("input", {
-                          id: `return-line-${line.sale_line_id}`,
-                          name: `return-line-${line.sale_line_id}`,
-                          type: "checkbox",
-                          checked: selected,
-                          style: correctionControlStyle,
-                          onChange: (event: ChangeEvent<HTMLInputElement>) =>
-                            onAction?.({
-                              type: "return_line_selected",
-                              sale_line_id: line.sale_line_id,
-                              selected: event.target.checked,
-                            }),
-                        }),
-                      ),
-                      selected
-                        ? createElement(
-                            "label",
-                            { htmlFor: `return-quantity-${line.sale_line_id}` },
-                            "Return quantity",
-                            createElement("input", {
-                              id: `return-quantity-${line.sale_line_id}`,
-                              name: `return-quantity-${line.sale_line_id}`,
-                              type: "number",
-                              min: 1,
-                              max: line.remaining_returnable_quantity,
-                              step: 1,
-                              style: correctionControlStyle,
-                              value:
-                                state.return_intent!.lines[line.sale_line_id],
-                              onChange: (
-                                event: ChangeEvent<HTMLInputElement>,
-                              ) =>
-                                onAction?.({
-                                  type: "return_quantity_changed",
-                                  sale_line_id: line.sale_line_id,
-                                  value: event.target.value,
-                                }),
-                            }),
-                          )
-                        : null,
-                    );
-                  }),
-                  state.return_intent.error
-                    ? createElement(
-                        "p",
-                        { role: "alert" },
-                        state.return_intent.error,
-                      )
-                    : null,
-                  state.return_intent.error && onReloadDetail
-                    ? createElement(
-                        "button",
-                        {
-                          type: "button",
-                          onClick: () =>
-                            onReloadDetail(state.return_intent!.sale_id),
-                          style: correctionControlStyle,
-                        },
-                        "Recargar detalle de venta",
-                      )
-                    : null,
-                  createElement(
-                    "button",
-                    {
-                      type: "submit",
-                      disabled: state.return_intent.status === "pending",
-                      style: correctionControlStyle,
-                    },
-                    "Record inventory return",
-                  ),
-                )
+              ? createElement(ReturnForm, { state, onAction, onSubmit: onReturnSubmit, onReloadDetail })
               : null,
             canOpenCancellation(state)
               ? createElement(

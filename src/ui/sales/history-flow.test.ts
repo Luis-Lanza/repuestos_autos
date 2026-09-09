@@ -636,10 +636,11 @@ test("renders sale-line keyed correction forms from persisted status and quantit
       }),
     );
 
-  assert.match(render(returnState), /aria-label="Return items to inventory"/);
+  assert.match(render(returnState), /aria-label="Devolución de artículos"/);
   assert.match(render(returnState), /name="return-line-41"/);
   assert.match(render(returnState), /name="return-line-42"/);
-  assert.match(render(returnState), /max="2"/);
+  assert.match(render(returnState), /Máximo disponible: 1 unidad/);
+  assert.match(render(returnState), /Máximo disponible: 2 unidades/);
   assert.match(render(cancellationState), /Cancellation reason/);
   assert.match(
     render(cancellationState),
@@ -662,14 +663,14 @@ test("renders keyboard-operable correction forms with inventory-only language", 
   const markup = render(state);
   const cancellationMarkup = render(flow(base, { type: "cancellation_intent_opened", request_id: "cancellation-keyboard" }));
 
-  assert.match(markup, /<form(?=[^>]*aria-label="Return items to inventory")/);
+  assert.match(markup, /<form(?=[^>]*aria-label="Devolución de artículos")/);
   assert.match(
     markup,
     /<input(?=[^>]*id="return-line-41")(?=[^>]*type="checkbox")/,
   );
   assert.match(
     markup,
-    /<input(?=[^>]*id="return-quantity-41")(?=[^>]*type="number")/,
+    /<input(?=[^>]*id="return-quantity-41")(?=[^>]*type="text")(?=[^>]*inputMode="numeric")/,
   );
   assert.match(cancellationMarkup, /<form(?=[^>]*aria-label="Cancel sale")/);
   assert.match(cancellationMarkup, /<input(?=[^>]*id="cancellation-reason")/);
@@ -679,7 +680,7 @@ test("renders keyboard-operable correction forms with inventory-only language", 
   );
   assert.match(
     markup,
-    /<button(?=[^>]*type="submit")[^>]*>Record inventory return<\/button>/,
+    /<button(?=[^>]*type="submit")[^>]*>Registrar devolución<\/button>/,
   );
   assert.match(
     cancellationMarkup,
@@ -750,7 +751,7 @@ test("derives deterministic correction focus in the reducer and applies it throu
     { type: "return_intent_opened", request_id: "return-focus-empty" },
     { type: "return_submit_started" },
   );
-  assert.equal(correctionFocusTarget(missingSelection), "return-line-41");
+  assert.equal(correctionFocusTarget(missingSelection), "return-line-42");
 
   const missingReason = flow(
     initialHistoryState,
@@ -897,7 +898,7 @@ test("renders correction controls with 44px minimum targets", () => {
   );
   assert.match(
     markup,
-    /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Record inventory return<\/button>/,
+    /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Registrar devolución<\/button>/,
   );
   assert.match(
     cancellationMarkup,
