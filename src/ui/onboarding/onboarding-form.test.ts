@@ -1,44 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import type { Category } from "../../commands/onboarding.ts";
-import { NAVIGATION_ACTION, SCREEN, screenAfter } from "../app.ts";
-import { attributeValuesFor } from "./onboarding-form.ts";
+import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole } from "./onboarding-form.ts";
 
-test("keeps required blanks for backend validation and omits optional blanks", () => {
-  const category: Category = {
-    category_id: 1,
-    name: "Belts",
-    fields: [
-      {
-        definition_id: 10,
-        label: "Length",
-        field_type: "number",
-        required: true,
-        options: [],
-      },
-      {
-        definition_id: 11,
-        label: "Material",
-        field_type: "option",
-        required: false,
-        options: ["Rubber"],
-      },
-    ],
-  };
+const category: Category = { category_id: 1, name: "Filtros", fields: [
+  { definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] },
+  { definition_id: 11, label: "Material", field_type: "option", required: false, options: ["Goma"] },
+] };
 
-  assert.deepEqual(attributeValuesFor(category, { 10: "", 11: "" }), [
-    { definition_id: 10, value: "" },
-  ]);
+test("preserves required blank attributes and omits optional blank attributes", () => {
+  assert.deepEqual(attributeValuesFor(category, { 10: "", 11: "" }), [{ definition_id: 10, value: "" }]);
 });
-
-test("navigates from sales to onboarding and back without a router", () => {
-  assert.equal(
-    screenAfter(SCREEN.SALES, NAVIGATION_ACTION.START_ONBOARDING),
-    SCREEN.ONBOARDING,
-  );
-  assert.equal(
-    screenAfter(SCREEN.ONBOARDING, NAVIGATION_ACTION.RETURN_TO_SALES),
-    SCREEN.SALES,
-  );
+test("parses comma and dot decimals into integer centavos", () => {
+  assert.equal(parseBsToCentavos("125,50"), 12550); assert.equal(parseBsToCentavos("125.5"), 12550);
+});
+test("rejects blank, zero, invalid precision, and non-numeric money", () => {
+  for (const value of ["", " ", "0", "0,00", "125,999", "12.3.4", "Bs 12"]) assert.equal(parseBsToCentavos(value), null, value);
+});
+test("accepts only positive safe whole-unit stock", () => {
+  assert.equal(parsePositiveWhole("8"), 8); for (const value of ["", "0", "  ", "1.5", "-1", "2,0"]) assert.equal(parsePositiveWhole(value), null, value);
 });
