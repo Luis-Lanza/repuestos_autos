@@ -21,3 +21,32 @@ test("projects an explicit physical zero but not a blank count", () => {
   assert.equal(projectedBalance(physical), null);
   assert.equal(projectedBalance(createInventoryFlow(physical, { type: "physical_count_changed", value: "0" })), 0);
 });
+
+test("replaces request identity for every changed inventory payload", () => {
+  const product = { product_id: 1, name: "Filter", available_quantity: 8 };
+  const otherProduct = { product_id: 2, name: "Oil filter", available_quantity: 3 };
+  let state = createInventoryFlow(initialInventoryState, { type: "product_selected", product });
+  const fail = (current: typeof initialInventoryState, request_id: string) => createInventoryFlow(
+    createInventoryFlow(current, { type: "confirmation_started", request_id }),
+    { type: "confirmation_failed", message: "Retry." },
+  );
+
+  state = fail(state, "inventory-request-1");
+  state = createInventoryFlow(state, { type: "product_selected", product: otherProduct });
+  assert.equal(state.request_id, null);
+  state = fail(state, "inventory-request-2");
+  state = createInventoryFlow(state, { type: "operation_changed", operation: "physical_count" });
+  assert.equal(state.request_id, null);
+  state = fail(state, "inventory-request-3");
+  state = createInventoryFlow(state, { type: "entry_quantity_changed", value: "4" });
+  assert.equal(state.request_id, null);
+  state = fail(state, "inventory-request-4");
+  state = createInventoryFlow(state, { type: "physical_count_changed", value: "2" });
+  assert.equal(state.request_id, null);
+  state = fail(state, "inventory-request-5");
+  state = createInventoryFlow(state, { type: "note_changed", value: "Conteo de depósito" });
+  assert.equal(state.request_id, null);
+  state = fail(state, "inventory-request-6");
+  state = createInventoryFlow(state, { type: "reason_changed", value: "Ajuste de inventario" });
+  assert.equal(state.request_id, null);
+});

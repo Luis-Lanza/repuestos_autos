@@ -13,6 +13,7 @@ style.textContent = await readFile(new URL("../styles.css", import.meta.url), "u
 document.head.append(style);
 
 const UUID = "550e8400-e29b-41d4-a716-446655440060";
+const RETRY_UUID = "550e8400-e29b-41d4-a716-446655440061";
 const products = [
   { product_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, catalog_unit_price_centavos: 8550, revision: 2 },
   { product_id: 2, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, catalog_unit_price_centavos: 12550, revision: 3 },
@@ -23,7 +24,7 @@ const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (rea
 const user = () => userEvent.setup({ document });
 async function searchFor(value = "filtro") { const u = user(); await u.type(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }), `${value}{Enter}`); return u; }
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); return u; }
-function installUuid() { Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => UUID }); }
+function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
 
 test("shows every discovery state and ignores reverse-order search completion", async () => {
   const first = deferred<typeof products>(), second = deferred<typeof products>(), third = deferred<typeof products>(); let call = 0;
@@ -99,14 +100,14 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
 });
 
-test("blocks a stale price until exact acknowledgement and retries with the same UUID", async () => {
-  installUuid(); const ids: string[] = []; let attempt = 0;
+test("blocks a stale price until exact acknowledgement and retries with a fresh UUID", async () => {
+  installUuid(UUID, RETRY_UUID); const ids: string[] = []; let attempt = 0;
   mockIPC((command, payload) => { if (command === "search_products_command") return [products[0]]; ids.push(String((payload?.request as { request_id: string }).request_id)); return ++attempt === 1 ? { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 9000, current_revision: 4 } : success; });
   render(createElement(SaleScreen)); const u = await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   screen.getByText("El precio de Filtro aceite cambió de Bs 85,50 a Bs 90,00."); const accept = screen.getByRole("button", { name: "Aceptar precio actual" });
   assert.equal(document.activeElement, accept); assert.equal((screen.getByRole("button", { name: "Confirmar venta" }) as HTMLButtonElement).disabled, true);
   await u.click(accept); screen.getByText("Precio actual aceptado. Confirmá nuevamente para continuar.");
-  await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" }); assert.deepEqual(ids, [UUID, UUID]);
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" }); assert.deepEqual(ids, [UUID, RETRY_UUID]);
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {

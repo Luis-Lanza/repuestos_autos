@@ -273,3 +273,53 @@ test("retains request and draft intent through failed retries", () => {
   assert.equal(afterSuccess.persisted_summary, null);
   assert.equal(newIntent.request_id, thirdRequestId);
 });
+
+test("replaces request identity for every changed sale payload", () => {
+  const firstRequestId = "550e8400-e29b-41d4-a716-446655440070";
+  const secondRequestId = "550e8400-e29b-41d4-a716-446655440071";
+  const thirdRequestId = "550e8400-e29b-41d4-a716-446655440072";
+  const otherProduct = { ...brakePad, product_id: 2, sku: "OF-200", name: "Oil Filter" };
+  const withLine = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
+  const failed = createSaleFlow(
+    createSaleFlow(withLine, { type: "confirmation_started", request_id: firstRequestId }),
+    { type: "confirmation_failed", message: "Retry the sale." },
+  );
+
+  const changedQuantity = createSaleFlow(failed, { type: "line_quantity_changed", product_id: 1, value: "2" });
+  assert.equal(changedQuantity.request_id, null);
+  const failedQuantity = createSaleFlow(
+    createSaleFlow(changedQuantity, { type: "confirmation_started", request_id: secondRequestId }),
+    { type: "confirmation_failed", message: "Retry the sale." },
+  );
+  const changedPayment = createSaleFlow(failedQuantity, { type: "payment_changed", field: "amount_tendered_centavos", value: "2500" });
+  assert.equal(changedPayment.request_id, null);
+  const failedPayment = createSaleFlow(
+    createSaleFlow(changedPayment, { type: "confirmation_started", request_id: thirdRequestId }),
+    { type: "confirmation_failed", message: "Retry the sale." },
+  );
+  const addedLine = createSaleFlow(failedPayment, { type: "add_product", product: otherProduct });
+  assert.equal(addedLine.request_id, null);
+  const failedAdd = createSaleFlow(
+    createSaleFlow(addedLine, { type: "confirmation_started", request_id: firstRequestId }),
+    { type: "confirmation_failed", message: "Retry the sale." },
+  );
+  const removedLine = createSaleFlow(failedAdd, { type: "remove_product", product_id: 2 });
+  assert.equal(removedLine.request_id, null);
+
+  const stale = createSaleFlow(
+    createSaleFlow(withLine, { type: "confirmation_started", request_id: firstRequestId }),
+    { type: "stale_price_detected", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 },
+  );
+  const acknowledged = createSaleFlow(stale, {
+    type: "acknowledge_stale_price",
+    product_id: 1,
+    current_unit_price_centavos: 2700,
+    current_revision: 2,
+  });
+  assert.equal(stale.request_id, null);
+  assert.equal(acknowledged.request_id, null);
+  assert.equal(
+    createSaleFlow(acknowledged, { type: "confirmation_started", request_id: secondRequestId }).request_id,
+    secondRequestId,
+  );
+});
