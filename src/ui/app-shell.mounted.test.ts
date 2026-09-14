@@ -96,7 +96,7 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   const backup = within(navigation).getByRole("button", { name: "Copia y restauración" });
   await user.click(backup);
   assert.equal(screen.getByRole("navigation", { name: "Navegación principal" }), navigation);
-  assert.ok(screen.getByRole("heading", { level: 1, name: "Backup and restore" }));
+  assert.ok(screen.getByRole("heading", { level: 1, name: "Copia y restauración" }));
   assert.equal(backup.getAttribute("aria-current"), "page");
   assert.equal(document.activeElement, backup);
 
