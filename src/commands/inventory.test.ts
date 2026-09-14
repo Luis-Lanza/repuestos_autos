@@ -3,6 +3,21 @@ import test from "node:test";
 
 import { createInventoryCommands } from "./inventory.ts";
 
+test("projects all valid alerts with the public success kind", async () => {
+  const calls: unknown[] = [];
+  const commands = createInventoryCommands(async (command, payload) => { calls.push({ command, payload }); return { kind: "alerts", alerts: [{ product_id: 1, product_name: "Filter", quantity: 0, classification: "out_of_stock", hidden: true }, { product_id: 2, product_name: "Belt", quantity: 2, classification: "low_stock", hidden: true }], hidden: true }; });
+  assert.deepEqual(await commands.listAlerts(), { kind: "success", alerts: [{ product_id: 1, product_name: "Filter", quantity: 0, classification: "out_of_stock" }, { product_id: 2, product_name: "Belt", quantity: 2, classification: "low_stock" }] });
+  assert.deepEqual(calls, [{ command: "list_inventory_alerts_command", payload: {} }]);
+});
+
+test("rejects malformed alerts atomically and checks safe integers", async () => {
+  const valid = { product_id: 1, product_name: "Filter", quantity: 0, classification: "out_of_stock" };
+  for (const alert of [{ ...valid, quantity: 1.5 }, { ...valid, quantity: Number.MAX_SAFE_INTEGER + 1 }, { ...valid, classification: "unknown" }, { ...valid, product_name: 1 }, { ...valid, product_id: undefined }]) {
+    const commands = createInventoryCommands(async () => ({ kind: "alerts", alerts: [valid, alert] }));
+    assert.deepEqual(await commands.listAlerts(), { kind: "error", code: "persistence_failure", message: "The inventory operation could not be completed." });
+  }
+});
+
 test("allowlists inventory payloads and maps malformed responses to opaque errors", async () => {
   const calls: unknown[] = [];
   const commands = createInventoryCommands(async (command, payload) => {
@@ -17,6 +32,15 @@ test("allowlists inventory payloads and maps malformed responses to opaque error
 test("maps invoke failures and backend errors to stable inventory errors", async () => {
   const commands = createInventoryCommands(async () => { throw new Error("sqlite details"); });
   assert.deepEqual(await commands.listAlerts(), { kind: "error", code: "persistence_failure", message: "The inventory operation could not be completed." });
+});
+
+test("bounds alert error variants and rejects unknown top-level kinds", async () => {
+  const known = createInventoryCommands(async () => ({ kind: "error", code: "missing_product", message: "SQL /panic native text" }));
+  assert.deepEqual(await known.listAlerts(), { kind: "error", code: "missing_product", message: "The inventory operation could not be completed." });
+  for (const response of [{ kind: "error", code: "unknown", message: "native" }, { kind: "alerts", alerts: "wrong" }, { kind: "unexpected" }]) {
+    const commands = createInventoryCommands(async () => response);
+    assert.deepEqual(await commands.listAlerts(), { kind: "error", code: "persistence_failure", message: "The inventory operation could not be completed." });
+  }
 });
 
 test("rejects fractional inventory quantities before invoking IPC", async () => {

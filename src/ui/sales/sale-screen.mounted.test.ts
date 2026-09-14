@@ -96,7 +96,7 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.change(controls[5], { target: { value: "1" } }); fireEvent.change(controls[6], { target: { value: "2" } }); fireEvent.click(controls[7]);
   assert.equal(confirms, 1); assert.equal(searches, 1); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
   assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
-  await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock" }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
+  await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
 });
 
 test("blocks a stale price until exact acknowledgement and retries with the same UUID", async () => {

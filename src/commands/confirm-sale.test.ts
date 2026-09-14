@@ -115,6 +115,12 @@ test("preserves nullable payment inputs for cash, QR, and mixed confirmation", a
   ]);
 });
 
+test("projects complete sale summaries and both payment variants", async () => {
+  const confirmSale = createConfirmSaleCommand(async () => ({ kind: "success", sale_id: 7, request_id: "550e8400-e29b-41d4-a716-446655440054", status: "confirmed", confirmed_at: "2026-03-08T12:00:00Z", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU-1", product_name: "Filter", quantity: 2, unit_price_centavos: 2750, line_total_centavos: 5500, internal: "hidden" }], payments: [{ method: "cash", amount_applied_centavos: 3000, amount_tendered_centavos: 3500, change_given_centavos: 500, internal: "hidden" }, { method: "qr", amount_applied_centavos: 2500, internal: "hidden" }], total_centavos: 5500, internal: "hidden" }));
+  const result = await confirmSale({ request_id: "550e8400-e29b-41d4-a716-446655440054", lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2500, captured_revision: 0 }], payment: { amount_tendered_centavos: 3500, qr_applied_centavos: 2500 } });
+  assert.deepEqual(result, { kind: "success", sale_id: 7, request_id: "550e8400-e29b-41d4-a716-446655440054", status: "confirmed", confirmed_at: "2026-03-08T12:00:00Z", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU-1", product_name: "Filter", quantity: 2, unit_price_centavos: 2750, line_total_centavos: 5500 }], payments: [{ method: "cash", amount_applied_centavos: 3000, amount_tendered_centavos: 3500, change_given_centavos: 500 }, { method: "qr", amount_applied_centavos: 2500 }], total_centavos: 5500 });
+});
+
 test("returns persisted authoritative summaries and backend errors unchanged", async () => {
   const confirmSale = createConfirmSaleCommand(async () => ({
     kind: "success",
@@ -146,6 +152,24 @@ test("returns persisted authoritative summaries and backend errors unchanged", a
   assert.equal(result.kind, "success");
   assert.equal(result.lines[0].unit_price_centavos, 2_750);
   assert.equal(result.payments[0].method, "qr");
+});
+
+test("rejects malformed sale responses atomically and bounds native errors", async () => {
+  const request = { request_id: "550e8400-e29b-41d4-a716-446655440055", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 } };
+  const valid = { kind: "success", sale_id: 7, request_id: request.request_id, status: "confirmed", confirmed_at: "now", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU", product_name: "Filter", quantity: 1, unit_price_centavos: 2500, line_total_centavos: 2500 }], payments: [{ method: "qr", amount_applied_centavos: 2500 }], total_centavos: 2500 };
+  for (const response of [{ ...valid, lines: [{ ...valid.lines[0], quantity: 1.5 }] }, { ...valid, payments: [{ method: "bitcoin", amount_applied_centavos: 2500 }] }, { ...valid, payments: [{ ...valid.payments[0], amount_applied_centavos: Number.MAX_SAFE_INTEGER + 1 }] }, { kind: "unknown" }, { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2.5, current_revision: 1 }]) {
+    const confirmSale = createConfirmSaleCommand(async () => response);
+    assert.deepEqual(await confirmSale(request), { kind: "error", code: "persistence_failure", message: "The sale could not be persisted." });
+  }
+  for (const response of [{ kind: "error", code: "invalid_payment", message: "SQL /panic native text" }, { kind: "error", code: "unknown", message: "native" }, { kind: "error", code: "invalid_payment" }]) {
+    const confirmSale = createConfirmSaleCommand(async () => response);
+    const result = await confirmSale(request);
+    assert.equal(result.kind, "error");
+    assert.equal(result.code, response.code === "invalid_payment" && typeof response.message === "string" ? "invalid_payment" : "persistence_failure");
+    assert.ok(!result.message.includes("SQL") && !result.message.includes("native"));
+  }
+  const rejected = createConfirmSaleCommand(async () => { throw new Error("SQL /panic native text"); });
+  assert.deepEqual(await rejected(request), { kind: "error", code: "persistence_failure", message: "The sale could not be persisted." });
 });
 
 test("rejects invalid request identities before invocation", async () => {
