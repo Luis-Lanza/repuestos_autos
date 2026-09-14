@@ -29,6 +29,7 @@ import {
 import { historyListError, historySummaryCells, projectCorrectionHistory, projectHistoryDetail } from "./history-presentation.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData } from "../visual-system/structure.ts";
+import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 
 const originalItemColumns = [
   { label: "Producto", align: "start", kind: "text" },
@@ -139,6 +140,56 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail }: {
     ? createElement("button", { type: "button", disabled: locked, onClick: () => onReloadDetail(intent.sale_id), style: correctionControlStyle }, "Recargar detalle de venta") : null,
   createElement("button", { type: "submit", disabled: locked, style: correctionControlStyle },
     locked ? "Registrando devolución…" : "Registrar devolución"));
+}
+
+function CancellationForm({ state, onAction, onSubmit, onReloadDetail }: {
+  state: HistoryState;
+  onAction?: (action: HistoryAction) => void;
+  onSubmit?: () => void;
+  onReloadDetail?: (saleId: number) => void;
+}) {
+  const intent = state.cancellation_intent!;
+  const locked = intent.status === "pending" || intent.status === "reload_requested";
+  const fieldError = intent.validation?.focus_target;
+  const errorId = fieldError ? `${fieldError}-error` : undefined;
+  return createElement("form", { "aria-label": "Preparar cancelación de venta", "aria-busy": locked,
+    "data-ui-history-cancellation": true, onSubmit: (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      onAction?.({ type: "cancellation_confirmation_requested" });
+    } },
+  createElement("h2", null, "Cancelar venta"),
+  createElement("label", { htmlFor: "cancellation-reason" }, "Motivo de cancelación",
+    createElement("input", { id: "cancellation-reason", name: "cancellation-reason", value: intent.reason,
+      disabled: locked, style: correctionControlStyle, "aria-invalid": fieldError === "cancellation-reason" || undefined,
+      "aria-describedby": fieldError === "cancellation-reason" ? errorId : undefined,
+      onChange: (event: ChangeEvent<HTMLInputElement>) => onAction?.({ type: "cancellation_reason_changed", value: event.target.value }) })),
+  createElement("label", { htmlFor: "cancellation-confirmation" },
+    "Confirmo esta corrección de inventario. Los pagos originales no cambian.",
+    createElement("input", { id: "cancellation-confirmation", name: "cancellation-confirmation", type: "checkbox",
+      checked: intent.confirmed, disabled: locked, style: correctionControlStyle,
+      "aria-invalid": fieldError === "cancellation-confirmation" || undefined,
+      "aria-describedby": fieldError === "cancellation-confirmation" ? errorId : undefined,
+      onChange: (event: ChangeEvent<HTMLInputElement>) => onAction?.({ type: "cancellation_confirmation_changed", confirmed: event.target.checked }) })),
+  intent.validation ? createElement("p", { id: errorId, role: "alert" }, intent.validation.message) : null,
+  createElement("div", { "data-ui-history-cancellation-actions": true },
+    createElement("button", { type: "button", disabled: locked, style: correctionControlStyle,
+      onClick: () => onAction?.({ type: "cancellation_intent_closed" }) }, "Volver"),
+    createElement("button", { type: "submit", disabled: locked, style: correctionControlStyle }, "Continuar con la cancelación")),
+  createElement(ConfirmationDialog, {
+    open: intent.modal_open,
+    purpose: "cancellation",
+    title: `Cancelar venta #${intent.sale_id}`,
+    description: "Se cancelará la venta y se restaurarán únicamente las unidades todavía no devueltas. La venta y los pagos originales seguirán visibles en el historial.",
+    confirmLabel: "Cancelar venta",
+    pending: locked,
+    pendingLabel: "Cancelando venta…",
+    onCancel: () => onAction?.({ type: "cancellation_modal_closed" }),
+    onConfirm: () => onSubmit ? onSubmit() : onAction?.({ type: "cancellation_submit_started" }),
+  },
+  createElement("p", null, `Motivo: ${intent.reason}`),
+  intent.error ? createElement("p", { role: "alert" }, intent.error) : null,
+  intent.error && onReloadDetail ? createElement("button", { type: "button", disabled: locked,
+    onClick: () => onReloadDetail(intent.sale_id) }, "Recargar detalle de venta") : null));
 }
 
 export type HistoryScreenProps = {
@@ -273,7 +324,7 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
       commands.cancelSale?.({
         request_id: intent.request_id,
         sale_id: intent.sale_id,
-        reason: (intent as CancellationIntent).reason,
+        reason: (intent as CancellationIntent).reason.trim(),
       }),
     );
   return {
@@ -366,86 +417,11 @@ export function HistoryScreen({
                       }),
                     style: correctionControlStyle,
                   },
-                  "Begin sale cancellation",
+                  "Iniciar cancelación de venta",
                 )
               : null,
             state.cancellation_intent
-              ? createElement(
-                  "form",
-                  {
-                    "aria-label": "Cancel sale",
-                    "aria-busy": state.cancellation_intent.status === "pending",
-                    onSubmit: (event: FormEvent<HTMLFormElement>) => {
-                      event.preventDefault();
-                      if (onCancellationSubmit) onCancellationSubmit();
-                      else onAction?.({ type: "cancellation_submit_started" });
-                    },
-                  },
-                  createElement("h2", null, "Cancel sale"),
-                  createElement(
-                    "label",
-                    { htmlFor: "cancellation-reason" },
-                    "Cancellation reason",
-                    createElement("input", {
-                      id: "cancellation-reason",
-                      name: "cancellation-reason",
-                      value: state.cancellation_intent.reason,
-                      disabled: state.cancellation_intent.status === "pending",
-                      style: correctionControlStyle,
-                      onChange: (event: ChangeEvent<HTMLInputElement>) =>
-                        onAction?.({
-                          type: "cancellation_reason_changed",
-                          value: event.target.value,
-                        }),
-                    }),
-                  ),
-                  createElement(
-                    "label",
-                    { htmlFor: "cancellation-confirmation" },
-                    "I confirm this inventory correction. Original payment facts remain unchanged.",
-                    createElement("input", {
-                      id: "cancellation-confirmation",
-                      name: "cancellation-confirmation",
-                      type: "checkbox",
-                      checked: state.cancellation_intent.confirmed,
-                      disabled: state.cancellation_intent.status === "pending",
-                      style: correctionControlStyle,
-                      onChange: (event: ChangeEvent<HTMLInputElement>) =>
-                        onAction?.({
-                          type: "cancellation_confirmation_changed",
-                          confirmed: event.target.checked,
-                        }),
-                    }),
-                  ),
-                  state.cancellation_intent.error
-                    ? createElement(
-                        "p",
-                        { role: "alert" },
-                        state.cancellation_intent.error,
-                      )
-                    : null,
-                  state.cancellation_intent.error && onReloadDetail
-                    ? createElement(
-                        "button",
-                        {
-                          type: "button",
-                          onClick: () =>
-                            onReloadDetail(state.cancellation_intent!.sale_id),
-                          style: correctionControlStyle,
-                        },
-                        "Recargar detalle de venta",
-                      )
-                    : null,
-                  createElement(
-                    "button",
-                    {
-                      type: "submit",
-                      disabled: state.cancellation_intent.status === "pending",
-                      style: correctionControlStyle,
-                    },
-                    "Record sale cancellation",
-                  ),
-                )
+              ? createElement(CancellationForm, { state, onAction, onSubmit: onCancellationSubmit, onReloadDetail })
               : null,
           )
         : null,

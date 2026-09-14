@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { SalesHistoryScreen } from "./history-screen.ts";
@@ -263,6 +263,67 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-history-detail[^}]*display: grid/);
   assert.match(css, /max-width: 960px[\s\S]*data-ui-history-original[^}]*overflow-x: visible/);
+});
+
+test("stages cancellation in the shared destructive dialog and closes only on matching persisted evidence", async () => {
+  const sale = {
+    ...detail(184),
+    lines: detail(184).lines.map((line) => ({ ...line, remaining_returnable_quantity: 0 })),
+  };
+  const cancellation = deferred<unknown>();
+  const refreshed = [deferred<unknown>(), deferred<unknown>()];
+  const requests: Array<{ request_id: string; sale_id: number; reason: string }> = [];
+  let detailCalls = 0;
+  mockIPC((command, payload) => {
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") return ++detailCalls === 1 ? { kind: "success", detail: sale } : refreshed[detailCalls - 2].promise;
+    if (command === "cancel_sale_command") {
+      requests.push(payload?.request as typeof requests[number]);
+      return cancellation.promise;
+    }
+    throw new Error(command);
+  });
+  render(createElement(SalesHistoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+  await user.click(await screen.findByRole("button", { name: "Iniciar cancelación de venta" }));
+  await user.type(screen.getByRole("textbox", { name: "Motivo de cancelación" }), "Venta duplicada");
+  await user.click(screen.getByRole("checkbox", { name: /Los pagos originales no cambian/ }));
+  const continueButton = screen.getByRole("button", { name: "Continuar con la cancelación" });
+  await user.click(continueButton);
+
+  let dialog = screen.getByRole("dialog", { name: "Cancelar venta #184" });
+  assert.match(dialog.textContent ?? "", /restaurarán únicamente las unidades todavía no devueltas.*pagos originales seguirán visibles/s);
+  assert.equal(requests.length, 0);
+  assert.equal(document.activeElement, within(dialog).getByRole("button", { name: "Volver" }));
+  await user.click(within(dialog).getByRole("button", { name: "Volver" }));
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(document.activeElement, continueButton);
+  await user.click(continueButton);
+
+  const confirm = screen.getByRole("button", { name: "Cancelar venta" });
+  await user.click(confirm);
+  await user.click(screen.getByRole("button", { name: "Cancelando venta…" }));
+  await user.keyboard("{Escape}");
+  assert.equal(requests.length, 1);
+  assert.deepEqual({ sale_id: requests[0].sale_id, reason: requests[0].reason }, { sale_id: 184, reason: "Venta duplicada" });
+  dialog = screen.getByRole("dialog", { name: "Cancelar venta #184" });
+  assert.equal(dialog.getAttribute("aria-busy"), "true");
+
+  cancellation.resolve({ kind: "success", result: { request_id: requests[0].request_id, cancellation_id: 91, sale_id: 184,
+    status: "cancelled", occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada",
+    lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 0 }] } });
+  refreshed[0].resolve({ kind: "success", detail: sale });
+  assert.ok(await screen.findByRole("button", { name: "Recargar detalle de venta" }));
+  assert.ok(screen.getByRole("dialog", { name: "Cancelar venta #184" }));
+  await user.click(screen.getByRole("button", { name: "Recargar detalle de venta" }));
+  refreshed[1].resolve({ kind: "success", detail: { ...sale, status: "cancelled", cancellation: {
+    cancellation_id: 91, request_id: requests[0].request_id, occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada",
+    lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 0 }],
+  } } });
+  assert.equal((await screen.findAllByText("Cancelada")).length, 2);
+  assert.ok(screen.getByText(requests[0].request_id));
+  assert.equal(screen.queryByRole("dialog"), null);
 });
 
 test("preserves inclusive date commands and shows bounded empty and error recovery copy", async () => {

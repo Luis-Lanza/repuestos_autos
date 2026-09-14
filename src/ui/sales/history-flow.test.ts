@@ -217,6 +217,7 @@ test("submits exact return and cancellation requests once, then reloads history"
     { type: "cancellation_intent_opened", request_id: "cancellation-uuid" },
     { type: "cancellation_reason_changed", value: " Duplicate sale " },
     { type: "cancellation_confirmation_changed", confirmed: true },
+    { type: "cancellation_confirmation_requested" },
   );
   await interaction.submitCancellation(state, dispatch);
   assert.deepEqual(requests[1], {
@@ -440,27 +441,25 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
     { type: "detail_loaded", detail: fullyReturned },
     { type: "cancellation_intent_opened", request_id: "cancellation-uuid" },
   );
-  const blank = flow(opened, { type: "cancellation_submit_started" });
+  const blank = flow(opened, { type: "cancellation_confirmation_requested" });
   const whitespace = flow(
     opened,
     { type: "cancellation_reason_changed", value: "   " },
     { type: "cancellation_confirmation_changed", confirmed: true },
-    { type: "cancellation_submit_started" },
+    { type: "cancellation_confirmation_requested" },
   );
   const unconfirmed = flow(
     opened,
     { type: "cancellation_reason_changed", value: "  Duplicate sale  " },
     { type: "cancellation_confirmation_changed", confirmed: false },
-    { type: "cancellation_submit_started" },
+    { type: "cancellation_confirmation_requested" },
   );
-  const pending = flow(
+  const prepared = flow(
     unconfirmed,
-    {
-      type: "cancellation_confirmation_changed",
-      confirmed: true,
-    },
-    { type: "cancellation_submit_started" },
+    { type: "cancellation_confirmation_changed", confirmed: true },
+    { type: "cancellation_confirmation_requested" },
   );
+  const pending = flow(prepared, { type: "cancellation_submit_started" });
   const failed = flow(pending, {
     type: "cancellation_submit_failed",
     request_id: "cancellation-uuid",
@@ -469,10 +468,24 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
   const staleSuccess = flow(failed, { type: "cancellation_submit_succeeded", request_id: "cancellation-uuid" });
   const retried = flow(failed, { type: "cancellation_submit_started" });
   const succeeded = flow(retried, { type: "cancellation_submit_succeeded", request_id: "cancellation-uuid" });
-  const persistedCancellation = flow(
-    { ...failed, detail: { ...fullyReturned, status: "cancelled" } },
-    { type: "cancellation_submit_started" },
-  );
+  const staleReload = flow(succeeded, {
+    type: "detail_loaded",
+    detail: fullyReturned,
+  });
+  const matchingReload = flow(succeeded, {
+    type: "detail_loaded",
+    detail: {
+      ...fullyReturned,
+      status: "cancelled",
+      cancellation: {
+        cancellation_id: 14,
+        request_id: "cancellation-uuid",
+        occurred_at: "2024-03-11 05:00:00",
+        reason: "Duplicate sale",
+        lines: [{ sale_line_id: 41, product_id: 4, restored_quantity: 0 }],
+      },
+    },
+  });
 
   assert.equal(opened.cancellation_intent?.request_id, "cancellation-uuid");
   assert.equal(opened.cancellation_intent?.reason, "");
@@ -484,15 +497,20 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
     whitespace.cancellation_intent?.error,
     "Ingresá un motivo de cancelación.",
   );
-  assert.equal(unconfirmed.cancellation_intent?.reason, "Duplicate sale");
+  assert.equal(unconfirmed.cancellation_intent?.reason, "  Duplicate sale  ");
   assert.equal(
     unconfirmed.cancellation_intent?.error,
     "Confirmá la corrección de inventario antes de continuar.",
   );
+  assert.equal(prepared.cancellation_intent?.modal_open, true);
+  assert.equal(
+    flow(prepared, { type: "cancellation_modal_closed" }).cancellation_intent?.request_id,
+    "cancellation-uuid",
+  );
   assert.equal(flow(pending, { type: "cancellation_submit_started" }), pending);
   assert.equal(pending.detail, fullyReturned);
   assert.equal(failed.cancellation_intent?.request_id, "cancellation-uuid");
-  assert.equal(failed.cancellation_intent?.reason, "Duplicate sale");
+  assert.equal(failed.cancellation_intent?.reason, "  Duplicate sale  ");
   assert.equal(failed.cancellation_intent?.confirmed, true);
   assert.equal(failed.detail, fullyReturned);
   assert.equal(staleSuccess, failed);
@@ -501,11 +519,10 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
   assert.equal(succeeded.cancellation_intent?.status, "reload_requested");
   assert.equal(succeeded.cancellation_intent?.request_id, "cancellation-uuid");
   assert.deepEqual(succeeded.detail, fullyReturned);
-  assert.equal(persistedCancellation.cancellation_intent?.status, "error");
-  assert.equal(
-    persistedCancellation.cancellation_intent?.error,
-    "Esta venta ya no admite cancelación. Recargá el detalle.",
-  );
+  assert.equal(staleReload.cancellation_intent?.status, "error");
+  assert.equal(staleReload.cancellation_intent?.modal_open, true);
+  assert.match(staleReload.cancellation_intent?.error ?? "", /todavía no aparece/);
+  assert.equal(matchingReload.cancellation_intent, null);
   assert.equal(
     flow(
       initialHistoryState,
@@ -641,13 +658,10 @@ test("renders sale-line keyed correction forms from persisted status and quantit
   assert.match(render(returnState), /name="return-line-42"/);
   assert.match(render(returnState), /Máximo disponible: 1 unidad/);
   assert.match(render(returnState), /Máximo disponible: 2 unidades/);
-  assert.match(render(cancellationState), /Cancellation reason/);
-  assert.match(
-    render(cancellationState),
-    /I confirm this inventory correction/,
-  );
-  assert.doesNotMatch(render(fullyReturned), /Begin item return/);
-  assert.match(render(fullyReturned), /Begin sale cancellation/);
+  assert.match(render(cancellationState), /Motivo de cancelación/);
+  assert.match(render(cancellationState), /Los pagos originales no cambian/);
+  assert.doesNotMatch(render(fullyReturned), /Iniciar devolución de artículos/);
+  assert.match(render(fullyReturned), /Iniciar cancelación de venta/);
 });
 
 test("renders keyboard-operable correction forms with inventory-only language", () => {
@@ -672,7 +686,7 @@ test("renders keyboard-operable correction forms with inventory-only language", 
     markup,
     /<input(?=[^>]*id="return-quantity-41")(?=[^>]*type="text")(?=[^>]*inputMode="numeric")/,
   );
-  assert.match(cancellationMarkup, /<form(?=[^>]*aria-label="Cancel sale")/);
+  assert.match(cancellationMarkup, /<form(?=[^>]*aria-label="Preparar cancelación de venta")/);
   assert.match(cancellationMarkup, /<input(?=[^>]*id="cancellation-reason")/);
   assert.match(
     cancellationMarkup,
@@ -684,7 +698,7 @@ test("renders keyboard-operable correction forms with inventory-only language", 
   );
   assert.match(
     cancellationMarkup,
-    /<button(?=[^>]*type="submit")[^>]*>Record sale cancellation<\/button>/,
+    /<button(?=[^>]*type="submit")[^>]*>Continuar con la cancelación<\/button>/,
   );
   assert.doesNotMatch(
     markup,
@@ -757,12 +771,12 @@ test("derives deterministic correction focus in the reducer and applies it throu
     initialHistoryState,
     { type: "detail_loaded", detail: repeatedLines },
     { type: "cancellation_intent_opened", request_id: "cancellation-focus" },
-    { type: "cancellation_submit_started" },
+    { type: "cancellation_confirmation_requested" },
   );
   const missingConfirmation = flow(
     missingReason,
     { type: "cancellation_reason_changed", value: "Duplicate sale" },
-    { type: "cancellation_submit_started" },
+    { type: "cancellation_confirmation_requested" },
   );
   assert.equal(correctionFocusTarget(missingReason), "cancellation-reason");
   assert.equal(
@@ -902,6 +916,6 @@ test("renders correction controls with 44px minimum targets", () => {
   );
   assert.match(
     cancellationMarkup,
-    /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Record sale cancellation<\/button>/,
+    /<button(?=[^>]*style="min-width:44px;min-height:44px")[^>]*>Continuar con la cancelación<\/button>/,
   );
 });
