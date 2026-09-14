@@ -1,22 +1,48 @@
-import { createElement, useReducer } from "react";
+import { createElement as h, useEffect, useReducer, useRef, useState } from "react";
 
-import { backupCommands, type BackupResponse } from "../../commands/backup.ts";
-import { canConfirmRestore, createBackupFlow, initialBackupState } from "./backup-flow.ts";
+import { backupCommands } from "../../commands/backup.ts";
+import { Action, Feedback, Field } from "../visual-system/controls.ts";
+import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
+import { Panel } from "../visual-system/structure.ts";
+import { canConfirmRestore, createBackupFlow, createBackupInteraction, initialBackupState, type BackupAction } from "./backup-flow.ts";
 
-const describeError = (response: BackupResponse) => response.kind === "error" ? `${response.code}: ${response.message}` : "storage_unavailable: Backup storage is unavailable.";
+const date = (seconds: number) => { const value = new Date(seconds * 1000); return Number.isNaN(value.getTime()) ? "Fecha no disponible" : `${String(value.getUTCDate()).padStart(2, "0")}/${String(value.getUTCMonth() + 1).padStart(2, "0")}/${value.getUTCFullYear()}, ${String(value.getUTCHours()).padStart(2, "0")}:${String(value.getUTCMinutes()).padStart(2, "0")}`; };
+const backupState = (status: string) => status === "failure" || status === "unavailable" || status === "success";
+const restoreState = (status: string) => ["invalid", "expired", "unavailable", "failure", "recovery", "success"].includes(status);
+
 export function BackupScreen() {
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
-  const backup = async () => { dispatch({ type: "backup_started" }); const selection = await backupCommands.chooseBackupDestination(); if (selection.kind === "error") return dispatch({ type: "failed", message: describeError(selection) }); if (selection.kind === "cancelled") return dispatch({ type: "backup_cancelled" }); const response = await backupCommands.createBackup(selection.path); dispatch(response.kind === "created" ? { type: "backup_succeeded", summary: response.summary } : { type: "failed", message: describeError(response) }); };
-  const prepare = async () => { dispatch({ type: "restore_started" }); const selection = await backupCommands.chooseRestoreSource(); if (selection.kind === "error") return dispatch({ type: "failed", message: describeError(selection) }); if (selection.kind === "cancelled") return dispatch({ type: "failed", message: "Restore selection was cancelled." }); const response = await backupCommands.prepareRestore(selection.path); dispatch(response.kind === "prepared" ? { type: "restore_prepared", summary: response.summary } : { type: "failed", message: describeError(response) }); };
-  const restore = async () => { if (!state.summary) return; dispatch({ type: "restore_started" }); const response = await backupCommands.confirmRestore(state.summary.token); dispatch(response.kind === "restored" ? { type: "restore_succeeded" } : { type: "failed", message: describeError(response) }); };
-  return createElement("main", { "aria-labelledby": "backup-heading" },
-    createElement("h1", { id: "backup-heading" }, "Backup and restore"),
-    createElement("p", null, "Create a local backup or restore a validated backup file."),
-    createElement("button", { type: "button", disabled: state.backup_status === "pending", onClick: backup }, state.backup_status === "pending" ? "Creating backup…" : "Choose backup destination"),
-    state.backup ? createElement("p", { role: "status" }, `Backup created at ${state.backup.path} on ${new Date(state.backup.created_at_unix_seconds * 1000).toISOString()}. ${state.backup.size_bytes} bytes, schema version ${state.backup.schema_version}.`) : null,
-    createElement("h2", null, "Restore"),
-    createElement("button", { type: "button", disabled: state.restore_status === "pending", onClick: prepare }, state.restore_status === "pending" ? "Preparing restore…" : "Choose backup file"),
-    state.summary ? createElement("section", { "aria-labelledby": "restore-summary-heading" }, createElement("h3", { id: "restore-summary-heading" }, "Restore candidate"), createElement("p", null, `${state.summary.size_bytes} bytes, schema version ${state.summary.schema_version}.`), createElement("p", null, "This will replace the current local data."), createElement("label", null, createElement("input", { type: "checkbox", checked: state.confirmed, onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }), " I understand that restore replaces local data."), createElement("button", { type: "button", disabled: !canConfirmRestore(state), onClick: restore }, state.restore_status === "pending" ? "Restoring…" : "Confirm restore")) : null,
-    state.feedback ? createElement("p", { role: state.feedback.includes(":") ? "alert" : "status" }, state.feedback) : null,
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const dispatchRef = useRef<(action: BackupAction) => void>(dispatch); dispatchRef.current = dispatch;
+  const interactionRef = useRef<ReturnType<typeof createBackupInteraction> | null>(null);
+  if (!interactionRef.current) interactionRef.current = createBackupInteraction(backupCommands, (action) => dispatchRef.current(action));
+  useEffect(() => () => interactionRef.current?.dispose(), []);
+  useEffect(() => { if (state.restore_status === "success" || state.restore_status === "failure" || state.restore_status === "recovery") setDialogOpen(false); }, [state.restore_status]);
+  const interaction = interactionRef.current;
+  const pending = state.backup_status === "pending" || state.restore_status === "pending";
+  const backupMessage = backupState(state.backup_status) ? state.feedback : null;
+  const restoreMessage = restoreState(state.restore_status) ? state.feedback : null;
+  const cancelDialog = () => { if (!pending) { setDialogOpen(false); dispatch({ type: "restore_cancelled" }); } };
+  return h("main", { "aria-labelledby": "backup-heading", "data-ui-backup": true },
+    h("h1", { id: "backup-heading" }, "Copia y restauración"),
+    h("p", null, "Creá una copia local o restaurá un respaldo validado."),
+    h("div", { "data-ui-backup-layout": true },
+      h(Panel, { label: "Copia de seguridad" } as never,
+        h(Action, { variant: "primary", pending: state.backup_status === "pending", pendingLabel: "Creando copia…", disabled: pending, onClick: () => void interaction.backup() }, "Elegir destino de la copia"),
+        backupMessage ? h(Feedback, { kind: state.backup_status === "success" ? "success" : state.backup_status === "unavailable" ? "unavailable" : "error" } as never, backupMessage) : null,
+        state.backup ? h("section", { "aria-labelledby": "backup-summary-heading", "data-ui-backup-summary": true },
+          h("h3", { id: "backup-summary-heading" }, "Última copia creada"),
+          h("dl", null, h("dt", null, "Ruta"), h("dd", null, state.backup.path), h("dt", null, "Fecha"), h("dd", null, date(state.backup.created_at_unix_seconds)), h("dt", null, "Tamaño"), h("dd", null, `${state.backup.size_bytes} bytes`), h("dt", null, "Esquema"), h("dd", null, state.backup.schema_version))) : null),
+      h(Panel, { label: "Restauración" } as never,
+        h(Action, { variant: "secondary", pending: state.restore_status === "pending" && !state.summary, pendingLabel: "Preparando restauración…", disabled: pending, onClick: () => void interaction.prepareRestore() }, "Elegir archivo de respaldo"),
+        restoreMessage ? h(Feedback, { kind: state.restore_status === "success" ? "success" : state.restore_status === "unavailable" ? "unavailable" : "error" } as never, restoreMessage) : null,
+        state.summary ? h("section", { "aria-labelledby": "restore-summary-heading", "data-ui-restore-candidate": true },
+          h("h3", { id: "restore-summary-heading" }, "Candidato de restauración"),
+          h("p", null, `Tamaño: ${state.summary.size_bytes} bytes · Esquema: ${state.summary.schema_version}`),
+          h("p", null, "Esta acción reemplazará los datos locales actuales."),
+          h(Action, { variant: "secondary", disabled: state.restore_status !== "prepared", onClick: () => setDialogOpen(true) }, "Revisar restauración")) : null),
+    ),
+    h(ConfirmationDialog, { open: dialogOpen && state.summary !== null, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (canConfirmRestore(state)) void interaction.restore(state.summary!.token); } },
+      h(Field, { kind: "checkbox", label: "Entiendo que la restauración reemplaza los datos locales.", control: h("input", { id: "restore-acknowledgement", type: "checkbox", checked: state.confirmed, disabled: state.restore_status === "pending", onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }) } as never)),
   );
 }
