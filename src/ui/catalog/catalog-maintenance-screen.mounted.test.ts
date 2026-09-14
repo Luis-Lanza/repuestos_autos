@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
@@ -143,4 +143,37 @@ test("keeps selected identity during unavailable and stale reload recovery", asy
   await user.click(screen.getByRole("button", { name: "Recargar registros del catálogo" }));
   assert.ok(await screen.findByRole("region", { name: "Detalle y edición" }));
   assert.equal(details, 2);
+});
+
+test("does not replace a newer selected detail when an older response resolves later", async () => {
+  const newer = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
+  const newerDetail = { target: "category", entity_id: 2, name: "Encendido", activity: "archived", revision: 3, attribute_definitions: [] };
+  const detailResolvers = new Map<number, (value: unknown) => void>();
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_maintenance_command") return { kind: "success", records: [active, newer] };
+    if (command === "catalog_metadata_detail_command") {
+      const entityId = (payload?.request as { entity_id: number }).entity_id;
+      return new Promise((resolve) => detailResolvers.set(entityId, resolve));
+    }
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const user = userEvent.setup({ document });
+  const master = await screen.findByRole("region", { name: "Registros del catálogo" });
+  await user.click(within(master).getByRole("button", { name: /Ver detalles de Filtro Premium/ }));
+  await user.click(within(master).getByRole("button", { name: /Ver detalles de Encendido/ }));
+  assert.ok(screen.getByText("Cargando el registro seleccionado…"));
+  assert.ok(screen.getByText(/Selección: Encendido/));
+
+  await act(async () => {
+    detailResolvers.get(2)!(newerDetail);
+  });
+  const editor = await screen.findByRole("region", { name: "Detalle y edición" });
+  assert.match(editor.textContent ?? "", /Encendido/);
+
+  await act(async () => {
+    detailResolvers.get(1)!(detail);
+  });
+  assert.match(editor.textContent ?? "", /Encendido/);
+  assert.doesNotMatch(editor.textContent ?? "", /Filtro Premium/);
 });
