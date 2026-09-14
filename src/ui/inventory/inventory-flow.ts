@@ -24,8 +24,8 @@ export function createInventoryFlow(state: InventoryState, action: InventoryActi
     case "operation_changed": return { ...resetIntent(state), operation: action.operation };
     case "entry_quantity_changed": return { ...resetIntent(state), entry_quantity: action.value };
     case "physical_count_changed": return { ...resetIntent(state), physical_count: action.value };
-    case "note_changed": return { ...state, note: action.value };
-    case "reason_changed": return { ...state, reason: action.value };
+    case "note_changed": return { ...resetIntent(state), note: action.value };
+    case "reason_changed": return { ...resetIntent(state), reason: action.value };
     case "confirmation_started": return { ...state, request_id: state.request_id ?? action.request_id, confirmation: CONFIRMATION.PENDING, feedback: null };
     case "confirmation_failed": return { ...state, confirmation: CONFIRMATION.ERROR, feedback: action.message };
     case "confirmation_succeeded": return { ...state, request_id: null, confirmation: CONFIRMATION.CONFIRMED, result: action.result, feedback: null, advisory_notice: state.product?.available_quantity === action.result.previous_quantity ? null : "Stock changed after the preview." };

@@ -136,6 +136,15 @@ function positiveWhole(value: string): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function resetIntent(state: SaleState): SaleState {
+  return {
+    ...state,
+    request_id: null,
+    confirmation: "idle",
+    feedback: null,
+  };
+}
+
 export function createSaleFlow(
   state: SaleState,
   action: SaleAction,
@@ -201,7 +210,7 @@ export function createSaleFlow(
       )
         return state;
       return {
-        ...state,
+        ...resetIntent(state),
         lines: [
           ...state.lines,
           {
@@ -216,15 +225,14 @@ export function createSaleFlow(
         feedback: null,
       };
     case "remove_product": {
+      if (!state.lines.some((line) => line.product_id === action.product_id)) return state;
       const removesStaleLine = state.stale_price?.product_id === action.product_id;
       return {
-        ...state,
+        ...resetIntent(state),
         lines: state.lines.filter(
           (line) => line.product_id !== action.product_id,
         ),
-        confirmation: removesStaleLine ? "idle" : state.confirmation,
         stale_price: removesStaleLine ? null : state.stale_price,
-        feedback: null,
       };
     }
     case "line_quantity_changed": {
@@ -234,19 +242,20 @@ export function createSaleFlow(
           ...state,
           feedback: "Ingresá una cantidad entera mayor que cero.",
         };
+      const line = state.lines.find((candidate) => candidate.product_id === action.product_id);
+      if (!line || line.quantity === quantity) return { ...state, feedback: null };
       return {
-        ...state,
+        ...resetIntent(state),
         lines: state.lines.map((line) =>
           line.product_id === action.product_id ? { ...line, quantity } : line,
         ),
-        feedback: null,
       };
     }
     case "payment_changed":
+      if (state.payment[action.field] === action.value) return { ...state, feedback: null };
       return {
-        ...state,
+        ...resetIntent(state),
         payment: { ...state.payment, [action.field]: action.value },
-        feedback: null,
       };
     case "confirmation_started":
       return {
@@ -266,10 +275,10 @@ export function createSaleFlow(
     case "confirmation_failed":
       return { ...state, confirmation: "error", feedback: action.message };
     case "stale_price_detected":
-      return { ...state, confirmation: "error", stale_price: action, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, acknowledged_price_centavos: undefined, acknowledged_revision: undefined } : line), feedback: null };
+      return { ...resetIntent(state), confirmation: "error", stale_price: action, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, acknowledged_price_centavos: undefined, acknowledged_revision: undefined } : line) };
     case "acknowledge_stale_price":
       if (state.stale_price?.product_id !== action.product_id || state.stale_price.current_unit_price_centavos !== action.current_unit_price_centavos || state.stale_price.current_revision !== action.current_revision) return state;
-      return { ...state, confirmation: "idle", stale_price: null, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, acknowledged_price_centavos: action.current_unit_price_centavos, acknowledged_revision: action.current_revision } : line), feedback: "Precio actual aceptado. Confirmá nuevamente para continuar." };
+      return { ...resetIntent(state), stale_price: null, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, acknowledged_price_centavos: action.current_unit_price_centavos, acknowledged_revision: action.current_revision } : line), feedback: "Precio actual aceptado. Confirmá nuevamente para continuar." };
     case "discard":
       return initialSaleState;
   }
