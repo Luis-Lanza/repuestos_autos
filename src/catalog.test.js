@@ -16,6 +16,7 @@ test("returns catalog prices through the catalog command seam", async () => {
           category_name: "Filters",
           available_quantity: 4,
           catalog_unit_price_centavos: 2_500,
+          revision: 1,
         },
       ];
     },

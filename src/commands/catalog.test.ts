@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createCatalogMaintenanceCommands } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createCatalogMaintenanceCommands, createSearchProductsCommand } from "./catalog.ts";
+
+const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, catalog_unit_price_centavos: 2500, revision: 2 };
+
+test("projects search products and strips native fields", async () => {
+  const calls: unknown[] = [];
+  const search = createSearchProductsCommand(async (command, payload) => { calls.push({ command, payload }); return [{ ...searchProduct, internal: "hidden" }]; });
+  assert.deepEqual(await search("filter"), [searchProduct]);
+  assert.deepEqual(calls, [{ command: "search_products_command", payload: { request: { query: "filter" } } }]);
+});
+
+test("rejects malformed search arrays, unsafe numbers, and native rejection text", async () => {
+  for (const response of [null, {}, [{ ...searchProduct, name: 4 }], [{ ...searchProduct, available_quantity: Number.MAX_SAFE_INTEGER + 1 }], [{ ...searchProduct, revision: 1.5 }], [{ ...searchProduct }, { ...searchProduct, sku: undefined }]]) {
+    const search = createSearchProductsCommand(async () => response);
+    await assert.rejects(search("filter"), /product search/);
+  }
+  const rejected = createSearchProductsCommand(async () => { throw new Error("SQL path /panic details"); });
+  await assert.rejects(rejected("filter"), (error: unknown) => error instanceof Error && error.message === "The product search could not be completed." && !error.message.includes("SQL"));
+});
 
 test("allowlists maintenance payloads and preserves only stable opaque outcomes", async () => {
   const calls: unknown[] = [];
