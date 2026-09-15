@@ -145,6 +145,45 @@ test("keeps selected identity during unavailable and stale reload recovery", asy
   assert.equal(details, 2);
 });
 
+test("does not resume the post-edit detail load after a newer selection", async () => {
+  let lists = 0;
+  let resolveEdit!: (value: unknown) => void;
+  let resolveReload!: (value: unknown) => void;
+  const details: number[] = [];
+  const newer = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
+  const newerDetail = { target: "category", entity_id: 2, name: "Encendido", activity: "archived", revision: 3, attribute_definitions: [] };
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_maintenance_command") return ++lists === 1
+      ? { kind: "success", records: [active, newer] }
+      : new Promise((resolve) => { resolveReload = resolve; });
+    if (command === "catalog_metadata_detail_command") {
+      const entityId = (payload?.request as { entity_id: number }).entity_id;
+      details.push(entityId);
+      return entityId === 1 ? detail : newerDetail;
+    }
+    if (command === "edit_catalog_command") return new Promise((resolve) => { resolveEdit = resolve; });
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const user = userEvent.setup({ document });
+  const master = await screen.findByRole("region", { name: "Registros del catálogo" });
+  await user.click(within(master).getByRole("button", { name: /Ver detalles de Filtro Premium/ }));
+  const name = await screen.findByRole("textbox", { name: "Nombre del producto" });
+  await user.clear(name);
+  await user.type(name, "Filtro actualizado");
+  await user.click(screen.getByRole("button", { name: "Guardar metadatos" }));
+  resolveEdit({ kind: "success", ...active, revision: 8 });
+  await waitFor(() => assert.ok(resolveReload));
+
+  await user.click(within(master).getByRole("button", { name: /Ver detalles de Encendido/ }));
+  assert.ok(await screen.findByRole("textbox", { name: "Nombre de la categoría" }));
+  resolveReload({ kind: "success", records: [active, newer] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(details, [1, 2]);
+  assert.ok(screen.getByRole("textbox", { name: "Nombre de la categoría" }));
+});
+
 test("does not replace a newer selected detail when an older response resolves later", async () => {
   const newer = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
   const newerDetail = { target: "category", entity_id: 2, name: "Encendido", activity: "archived", revision: 3, attribute_definitions: [] };

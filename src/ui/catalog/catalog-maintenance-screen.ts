@@ -116,8 +116,11 @@ export function CatalogMaintenanceScreen() {
     mutationLocked.current = false;
     if (response.kind === "error") { dispatch({ type: "edit_failed", code: response.code }); return; }
     dispatch({ type: "edit_succeeded" });
+    const selectionAttempt = attempt.current;
     await load();
-    await loadDetail({ target: response.target, entity_id: response.entity_id, label: response.label, activity: response.activity, revision: response.revision });
+    if (mounted.current && attempt.current === selectionAttempt + 1) {
+      await loadDetail({ target: response.target, entity_id: response.entity_id, label: response.label, activity: response.activity, revision: response.revision });
+    }
   };
   const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : { ...current, [field]: value });
   const pending = state.status === "pending";
