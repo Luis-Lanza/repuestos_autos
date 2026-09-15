@@ -860,10 +860,8 @@ mod command_surface_tests {
         ] {
             let response = get_ipc_response(&window, request(command)).unwrap();
             assert_eq!(
-                response
-                    .deserialize::<commands::backup::PathSelection>()
-                    .unwrap(),
-                commands::backup::PathSelection::Cancelled,
+                response.deserialize::<serde_json::Value>().unwrap(),
+                serde_json::json!({ "kind": "cancelled" }),
                 "{command} must return the test cancellation response",
             );
         }
