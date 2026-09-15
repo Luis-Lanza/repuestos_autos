@@ -1,5 +1,5 @@
 #[cfg(feature = "desktop")]
-use tauri::Manager;
+use tauri::{Manager, Runtime};
 #[cfg(feature = "desktop")]
 use tauri_plugin_dialog::DialogExt;
 
@@ -298,30 +298,8 @@ mod database_state_tests {
 #[cfg(feature = "desktop")]
 type AppState = DatabaseState;
 
-#[cfg(all(feature = "desktop", test))]
-fn command_builder<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![
-        search_products_command,
-        confirm_sale_command,
-        create_sale_return_command,
-        cancel_sale_command,
-        confirm_stock_entry_command,
-        confirm_physical_count_command,
-        list_inventory_alerts_command,
-        list_catalog_maintenance_command,
-        maintain_catalog_command,
-        edit_catalog_command,
-        catalog_metadata_detail_command,
-        list_categories_command,
-        create_category_command,
-        create_product_command,
-        list_sales_history_command,
-        sale_history_detail_command
-    ])
-}
-
 #[cfg(feature = "desktop")]
-fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+fn desktop_command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -369,35 +347,51 @@ pub fn run() -> Result<(), tauri::Error> {
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-async fn choose_backup_destination_command(
-    window: tauri::WebviewWindow,
+async fn choose_backup_destination_command<R: Runtime>(
+    window: tauri::WebviewWindow<R>,
 ) -> commands::backup::PathSelection {
     commands::backup::select_callback_path(|complete| {
-        window
-            .app_handle()
-            .dialog()
-            .file()
-            .pick_folder(move |path| {
-                complete(path.and_then(|path| path.into_path().ok()));
-            });
+        #[cfg(test)]
+        {
+            let _ = window;
+            complete(None);
+        }
+        #[cfg(not(test))]
+        {
+            window
+                .app_handle()
+                .dialog()
+                .file()
+                .pick_folder(move |path| {
+                    complete(path.and_then(|path| path.into_path().ok()));
+                });
+        }
     })
     .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-async fn choose_restore_source_command(
-    window: tauri::WebviewWindow,
+async fn choose_restore_source_command<R: Runtime>(
+    window: tauri::WebviewWindow<R>,
 ) -> commands::backup::PathSelection {
     commands::backup::select_callback_path(|complete| {
-        window
-            .app_handle()
-            .dialog()
-            .file()
-            .add_filter("SQLite backup", &["sqlite3"])
-            .pick_file(move |path| {
-                complete(path.and_then(|path| path.into_path().ok()));
-            });
+        #[cfg(test)]
+        {
+            let _ = window;
+            complete(None);
+        }
+        #[cfg(not(test))]
+        {
+            window
+                .app_handle()
+                .dialog()
+                .file()
+                .add_filter("SQLite backup", &["sqlite3"])
+                .pick_file(move |path| {
+                    complete(path.and_then(|path| path.into_path().ok()));
+                });
+        }
     })
     .await
 }
@@ -696,11 +690,14 @@ mod command_surface_tests {
         tauri::App<tauri::test::MockRuntime>,
         tauri::WebviewWindow<tauri::test::MockRuntime>,
     ) {
-        let app = command_builder(mock_builder())
+        let app = desktop_command_builder(mock_builder())
             .manage(AppState::from_connection(
                 infrastructure::sqlite::production_database_config(std::env::temp_dir()),
                 infrastructure::sqlite::open_seeded_catalog().unwrap(),
             ))
+            .manage(Mutex::new(commands::backup::BackupCommandState::new(
+                std::env::temp_dir(),
+            )))
             .build(mock_context(noop_assets()))
             .unwrap();
         let window = WebviewWindowBuilder::new(&app, "main", Default::default())
@@ -842,6 +839,37 @@ mod command_surface_tests {
                 "catalog_metadata_detail_command",
                 serde_json::json!({ "target": "product", "entity_id": 1 })
             )
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn registers_backup_commands_at_the_tauri_command_seam() {
+        let (_app, window) = test_window();
+        assert!(get_ipc_response(&window, request("choose_backup_destination_command"),).is_ok());
+        assert!(get_ipc_response(&window, request("choose_restore_source_command")).is_ok());
+        assert!(get_ipc_response(
+            &window,
+            request_with(
+                "create_backup_command",
+                serde_json::json!({ "destination": "/definitely/missing" }),
+            ),
+        )
+        .is_ok());
+        assert!(get_ipc_response(
+            &window,
+            request_with(
+                "prepare_restore_command",
+                serde_json::json!({ "source": "/definitely/missing.sqlite3" }),
+            ),
+        )
+        .is_ok());
+        assert!(get_ipc_response(
+            &window,
+            request_with(
+                "confirm_restore_command",
+                serde_json::json!({ "token": "unknown", "confirmed": true }),
+            ),
         )
         .is_ok());
     }
