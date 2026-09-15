@@ -77,7 +77,7 @@ const record = (value: unknown): value is RecordValue => typeof value === "objec
 const safeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
 const saleErrorMessages: Record<string, string> = {
   invalid_request: "The request shape is invalid.", invalid_quantity: "Quantity must be a positive whole number.", invalid_payment: "Payment values are invalid.",
-  inactive_product: "The product is inactive.", missing_product: "The product was not found.", insufficient_stock: "Insufficient stock is available.", persistence_failure: "The sale could not be persisted.",
+  inactive_product: "The product is inactive.", missing_product: "The product was not found.", insufficient_stock: "Insufficient stock is available.", request_conflict: "The request ID was already used with different sale data.", persistence_failure: "The sale could not be persisted.",
 };
 const genericSaleError = (): ConfirmSaleResponse => ({ kind: "error", code: "persistence_failure", message: saleErrorMessages.persistence_failure });
 const decodedArray = <T>(value: unknown, decode: (item: unknown) => T | null): T[] | null => Array.isArray(value) && value.every((item) => decode(item) !== null) ? value.map((item) => decode(item) as T) : null;

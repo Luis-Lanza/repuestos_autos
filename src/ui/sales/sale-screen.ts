@@ -16,6 +16,7 @@ const failureByCode: Record<string, string> = {
   inactive_product: "Uno de los productos ya no está activo.",
   missing_product: "Uno de los productos ya no está disponible.",
   insufficient_stock: "No hay stock suficiente para completar la venta.",
+  request_conflict: "El ID de solicitud ya fue usado con datos de venta diferentes. Revisá la venta antes de intentar nuevamente.",
   persistence_failure: "No se pudo confirmar la venta. Intentá nuevamente.",
 };
 const requestId = () => crypto.randomUUID();

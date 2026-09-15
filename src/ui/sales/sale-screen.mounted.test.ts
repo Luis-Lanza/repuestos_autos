@@ -87,6 +87,25 @@ test("rejects malformed payment before invoke, associates correction and focuses
   assert.equal(confirms, 0); assert.equal(document.activeElement, cash); assert.equal(cash.getAttribute("aria-invalid"), "true"); screen.getAllByText("Ingresá un monto válido en Bs, con hasta dos decimales.");
 });
 
+test("shows a neutral specific message for a request conflict", async () => {
+  mockIPC((command) => command === "search_products_command" ? [products[0]] : ({
+    kind: "error",
+    code: "request_conflict",
+    message: "SQLite digest details",
+  }));
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+
+  const message = await screen.findByRole("alert");
+  assert.equal(
+    message.textContent,
+    "El ID de solicitud ya fue usado con datos de venta diferentes. Revisá la venta antes de intentar nuevamente.",
+  );
+  assert.doesNotMatch(message.textContent ?? "", /sqlite|digest/i);
+  assert.equal(screen.queryByRole("heading", { name: "Venta confirmada" }), null);
+});
+
 test("locks every draft mutation and submitted intent during deferred confirmation", async () => {
   installUuid(); const pending = deferred<unknown>(); let confirms = 0, searches = 0, submitted: unknown;
   mockIPC((command, payload) => command === "search_products_command" ? (searches++, products) : (confirms++, submitted = payload, pending.promise));

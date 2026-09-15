@@ -154,6 +154,27 @@ test("returns persisted authoritative summaries and backend errors unchanged", a
   assert.equal(result.payments[0].method, "qr");
 });
 
+test("decodes request conflicts without coercing them to persistence failures", async () => {
+  const confirmSale = createConfirmSaleCommand(async () => ({
+    kind: "error",
+    code: "request_conflict",
+    message: "SQLite digest details",
+  }));
+
+  assert.deepEqual(
+    await confirmSale({
+      request_id: "550e8400-e29b-41d4-a716-446655440055",
+      lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0 }],
+      payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 },
+    }),
+    {
+      kind: "error",
+      code: "request_conflict",
+      message: "The request ID was already used with different sale data.",
+    },
+  );
+});
+
 test("rejects malformed sale responses atomically and bounds native errors", async () => {
   const request = { request_id: "550e8400-e29b-41d4-a716-446655440055", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 } };
   const valid = { kind: "success", sale_id: 7, request_id: request.request_id, status: "confirmed", confirmed_at: "now", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU", product_name: "Filter", quantity: 1, unit_price_centavos: 2500, line_total_centavos: 2500 }], payments: [{ method: "qr", amount_applied_centavos: 2500 }], total_centavos: 2500 };
