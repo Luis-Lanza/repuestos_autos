@@ -1,6 +1,6 @@
 #[cfg(feature = "desktop")]
 use tauri::{Manager, Runtime};
-#[cfg(feature = "desktop")]
+#[cfg(all(feature = "desktop", not(test)))]
 use tauri_plugin_dialog::DialogExt;
 
 pub mod application;
@@ -299,32 +299,35 @@ mod database_state_tests {
 type AppState = DatabaseState;
 
 #[cfg(feature = "desktop")]
-fn desktop_command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder
-        .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![
-            search_products_command,
-            confirm_sale_command,
-            create_sale_return_command,
-            cancel_sale_command,
-            confirm_stock_entry_command,
-            confirm_physical_count_command,
-            list_inventory_alerts_command,
-            list_catalog_maintenance_command,
-            maintain_catalog_command,
-            edit_catalog_command,
-            catalog_metadata_detail_command,
-            list_categories_command,
-            create_category_command,
-            create_product_command,
-            list_sales_history_command,
-            sale_history_detail_command,
-            choose_backup_destination_command,
-            choose_restore_source_command,
-            create_backup_command,
-            prepare_restore_command,
-            confirm_restore_command
-        ])
+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.invoke_handler(tauri::generate_handler![
+        search_products_command,
+        confirm_sale_command,
+        create_sale_return_command,
+        cancel_sale_command,
+        confirm_stock_entry_command,
+        confirm_physical_count_command,
+        list_inventory_alerts_command,
+        list_catalog_maintenance_command,
+        maintain_catalog_command,
+        edit_catalog_command,
+        catalog_metadata_detail_command,
+        list_categories_command,
+        create_category_command,
+        create_product_command,
+        list_sales_history_command,
+        sale_history_detail_command,
+        choose_backup_destination_command,
+        choose_restore_source_command,
+        create_backup_command,
+        prepare_restore_command,
+        confirm_restore_command
+    ])
+}
+
+#[cfg(feature = "desktop")]
+fn desktop_command_builder(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    command_builder(builder.plugin(tauri_plugin_dialog::init()))
 }
 
 #[cfg(feature = "desktop")]
@@ -690,7 +693,7 @@ mod command_surface_tests {
         tauri::App<tauri::test::MockRuntime>,
         tauri::WebviewWindow<tauri::test::MockRuntime>,
     ) {
-        let app = desktop_command_builder(mock_builder())
+        let app = command_builder(mock_builder())
             .manage(AppState::from_connection(
                 infrastructure::sqlite::production_database_config(std::env::temp_dir()),
                 infrastructure::sqlite::open_seeded_catalog().unwrap(),
