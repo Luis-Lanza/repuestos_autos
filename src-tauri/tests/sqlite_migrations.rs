@@ -481,6 +481,36 @@ fn creates_schema_v11_with_sale_idempotency_identity_columns() {
 }
 
 #[test]
+fn creates_schema_v12_with_inventory_idempotency_identity_columns() {
+    let directory = temporary_directory("migration-v11-inventory-foundation");
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        CURRENT_SCHEMA_VERSION
+    );
+    for column in [
+        "operation_kind",
+        "payload_version",
+        "canonical_payload",
+        "payload_sha256",
+    ] {
+        assert!(connection
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_table_info('inventory_movements') WHERE name = ?1)",
+                [column],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+    }
+
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn schema_v10_rejects_mismatched_or_mutable_correction_facts() {
     let directory = temporary_directory("migration-v10-constraints");
     create_version_eight_database(&directory);

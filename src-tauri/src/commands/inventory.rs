@@ -156,6 +156,7 @@ fn map_error(error: InventoryError) -> CommandError {
         "missing_product" => "The product was not found.",
         "inactive_product" => "The product is inactive.",
         "unchanged_count" => "The count matches the current stock.",
+        "request_conflict" => "This request ID was already used with different inventory data.",
         _ => "The inventory operation could not be completed.",
     };
     CommandError {

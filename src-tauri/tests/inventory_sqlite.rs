@@ -6,6 +6,8 @@ use repuestos_autos::domain::RequestId;
 use repuestos_autos::infrastructure::sqlite::{
     open_database, open_seeded_catalog, production_database_config, SqliteInventoryRepository,
 };
+use rusqlite::params;
+use sha2::{Digest, Sha256};
 
 fn request(value: &str) -> RequestId {
     RequestId::parse(value).unwrap()
@@ -31,14 +33,32 @@ fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
         .unwrap();
     assert_eq!(result.resulting_quantity, 10);
     assert_eq!(result.note.as_deref(), Some("delivery"));
+    let identity = connection
+        .query_row(
+            "SELECT operation_kind, payload_version, canonical_payload, payload_sha256 FROM inventory_movements WHERE request_id = ?1",
+            ["550e8400-e29b-41d4-a716-446655440103"],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(identity.0, "stock_entry");
+    assert_eq!(identity.1, 1);
+    assert!(!identity.2.is_empty());
+    assert_eq!(identity.3.len(), 64);
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection)
             .confirm(
                 InventoryOperation::stock_entry(
                     1,
                     request("550e8400-e29b-41d4-a716-446655440103"),
-                    99,
-                    None,
+                    2,
+                    Some("delivery".into()),
                 )
                 .unwrap(),
             )
@@ -63,6 +83,222 @@ fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
             []
         )
         .is_err());
+}
+
+#[test]
+fn conflicting_stock_reuse_rejects_changed_quantity_note_product_and_operation() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = request("550e8400-e29b-41d4-a716-446655440111");
+    let first =
+        InventoryOperation::stock_entry(1, request_id.clone(), 2, Some("delivery".into())).unwrap();
+    SqliteInventoryRepository::new(&mut connection)
+        .confirm(first)
+        .unwrap();
+
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry(1, request_id.clone(), 3, Some("delivery".into()))
+                .unwrap(),
+        ),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry(1, request_id.clone(), 2, Some("other".into()))
+                .unwrap(),
+        ),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry(2, request_id.clone(), 2, Some("delivery".into()))
+                .unwrap(),
+        ),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection)
+            .confirm(InventoryOperation::physical_count(1, request_id, 10, "delivery").unwrap(),),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT quantity FROM stock_balances WHERE product_id = 1"
+        ),
+        10
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL"
+        ),
+        1
+    );
+}
+
+#[test]
+fn conflicting_physical_count_reuse_rejects_changed_count_and_reason() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = request("550e8400-e29b-41d4-a716-446655440112");
+    SqliteInventoryRepository::new(&mut connection)
+        .confirm(InventoryOperation::physical_count(1, request_id.clone(), 6, " counted ").unwrap())
+        .unwrap();
+
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::physical_count(1, request_id.clone(), 7, "counted").unwrap(),
+        ),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection)
+            .confirm(InventoryOperation::physical_count(1, request_id, 6, "different").unwrap(),),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT quantity FROM stock_balances WHERE product_id = 1"
+        ),
+        6
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL"
+        ),
+        1
+    );
+}
+
+#[test]
+fn legacy_inventory_request_ids_fail_closed_without_changing_stock() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440113";
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at, request_id, resulting_quantity) VALUES (?1, 'stock_entry', ?2, ?3, ?4, ?5)",
+            params![1, 2, "2025-01-01T00:00:00Z", request_id, 10],
+        )
+        .unwrap();
+
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection)
+            .confirm(InventoryOperation::stock_entry(1, request(request_id), 2, None).unwrap(),),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT quantity FROM stock_balances WHERE product_id = 1"
+        ),
+        8
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL"
+        ),
+        1
+    );
+}
+
+#[test]
+fn partial_or_malformed_inventory_identity_fails_without_new_effects() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440114";
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at, request_id, resulting_quantity, operation_kind) VALUES (?1, 'stock_entry', ?2, ?3, ?4, ?5, 'stock_entry')",
+            params![1, 2, "2025-01-01T00:00:00Z", request_id, 10],
+        )
+        .unwrap();
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection)
+            .confirm(InventoryOperation::stock_entry(1, request(request_id), 2, None).unwrap(),),
+        Err(InventoryError::PERSISTENCE_FAILURE)
+    );
+
+    let malformed_request_id = "550e8400-e29b-41d4-a716-446655440115";
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at, request_id, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256) VALUES (?1, 'stock_entry', ?2, ?3, ?4, ?5, 'stock_entry', 1, x'01', ?6)",
+            params![
+                1,
+                2,
+                "2025-01-01T00:00:00Z",
+                malformed_request_id,
+                10,
+                format!("{:x}", Sha256::digest([1_u8])),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry(1, request(malformed_request_id), 2, None).unwrap(),
+        ),
+        Err(InventoryError::PERSISTENCE_FAILURE)
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT quantity FROM stock_balances WHERE product_id = 1"
+        ),
+        8
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL"
+        ),
+        2
+    );
+}
+
+#[test]
+fn noncanonical_persisted_identity_fails_without_new_effects() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440116";
+    let operation = InventoryOperation::stock_entry(1, request(request_id), 2, None).unwrap();
+    let identity = operation.identity();
+    let canonical_payload = identity.canonical_payload();
+    assert!(canonical_payload.starts_with(b"12:"));
+    let mut noncanonical_payload = b"012:".to_vec();
+    noncanonical_payload.extend_from_slice(&canonical_payload[3..]);
+    connection
+        .execute(
+            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at, request_id, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256) VALUES (?1, 'stock_entry', ?2, ?3, ?4, ?5, 'stock_entry', 1, ?6, ?7)",
+            params![
+                1,
+                2,
+                "2025-01-01T00:00:00Z",
+                request_id,
+                10,
+                noncanonical_payload,
+                format!("{:x}", Sha256::digest(&noncanonical_payload)),
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(operation),
+        Err(InventoryError::PERSISTENCE_FAILURE)
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT quantity FROM stock_balances WHERE product_id = 1"
+        ),
+        8
+    );
+    assert_eq!(
+        scalar(
+            &connection,
+            "SELECT COUNT(*) FROM inventory_movements WHERE request_id IS NOT NULL"
+        ),
+        1
+    );
 }
 
 #[test]
@@ -161,7 +397,7 @@ fn retry_returns_original_result_and_alerts_are_active_ordered_and_indexed() {
             InventoryOperation::stock_entry(
                 1,
                 request("550e8400-e29b-41d4-a716-446655440107"),
-                99,
+                1,
                 None,
             )
             .unwrap(),

@@ -2,7 +2,8 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::application::inventory::InventoryRepository;
 use crate::domain::inventory::{
-    InventoryAlert, InventoryError, InventoryOperation, OperationKind, PersistedInventoryOperation,
+    InventoryAlert, InventoryError, InventoryIdentity, InventoryOperation, OperationKind,
+    PersistedInventoryOperation,
 };
 use crate::domain::RequestId;
 
@@ -27,15 +28,17 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                 request_id.as_uuid().to_string()
             }
         };
+        let identity = operation.identity();
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
         if let Some(existing) = load_persisted(&transaction, &request_id)? {
+            let result = validate_existing(&identity, existing)?;
             transaction
                 .commit()
                 .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
-            return Ok(existing);
+            return Ok(result);
         }
 
         let (product_id, kind, delta, counted_quantity, reason, note) = match operation {
@@ -100,13 +103,35 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
             OperationKind::StockEntry => "stock_entry",
             OperationKind::PhysicalCount => "adjustment",
         };
-        if transaction.execute(
-            "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, source_reference, request_id, counted_quantity, resulting_quantity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![product_id, movement_type, quantity_delta, reason, note, request_id, counted_quantity, resulting_quantity],
-        ).is_err() {
+        if transaction
+            .execute(
+                "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, source_reference, request_id, counted_quantity, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    product_id,
+                    movement_type,
+                    quantity_delta,
+                    reason,
+                    note,
+                    request_id,
+                    counted_quantity,
+                    resulting_quantity,
+                    identity.operation_kind(),
+                    identity.payload_version(),
+                    identity.canonical_payload(),
+                    identity.payload_sha256(),
+                ],
+            )
+            .is_err()
+        {
             let winner = load_persisted(&transaction, &request_id)?;
-            transaction.commit().map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
-            return winner.ok_or(InventoryError::PERSISTENCE_FAILURE);
+            let result = winner
+                .map(|winner| validate_existing(&identity, winner))
+                .transpose()?
+                .ok_or(InventoryError::PERSISTENCE_FAILURE)?;
+            transaction
+                .commit()
+                .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+            return Ok(result);
         }
         if transaction
             .execute(
@@ -120,10 +145,11 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
         }
         let persisted = load_persisted(&transaction, &request_id)?
             .ok_or(InventoryError::PERSISTED_DATA_INVALID)?;
+        let result = validate_existing(&identity, persisted)?;
         transaction
             .commit()
             .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
-        Ok(persisted)
+        Ok(result)
     }
 
     fn list_alerts(&self) -> Result<Vec<InventoryAlert>, InventoryError> {
@@ -152,26 +178,93 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
     }
 }
 
+struct LoadedInventoryOperation {
+    result: PersistedInventoryOperation,
+    identity: Option<InventoryIdentity>,
+}
+
+fn validate_existing(
+    expected: &InventoryIdentity,
+    existing: LoadedInventoryOperation,
+) -> Result<PersistedInventoryOperation, InventoryError> {
+    let stored = existing.identity.ok_or(InventoryError::REQUEST_CONFLICT)?;
+    if stored != *expected {
+        return Err(InventoryError::REQUEST_CONFLICT);
+    }
+    Ok(existing.result)
+}
+
 fn load_persisted(
     connection: &Connection,
     request_id: &str,
-) -> Result<Option<PersistedInventoryOperation>, InventoryError> {
-    connection.query_row(
-        "SELECT movement_type, product_id, quantity_delta, resulting_quantity, occurred_at, source_reference FROM inventory_movements WHERE request_id = ?1",
-        [request_id],
-        |row| {
-            Ok::<(String, i64, i64, i64, String, Option<String>), rusqlite::Error>((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-            ))
-        },
-    ).optional().map_err(|_| InventoryError::PERSISTENCE_FAILURE)?.map(|(movement_type, product_id, delta, resulting, occurred_at, note)| {
-        let kind = match movement_type.as_str() { "stock_entry" => OperationKind::StockEntry, "adjustment" => OperationKind::PhysicalCount, _ => return Err(InventoryError::PERSISTED_DATA_INVALID) };
-        let previous = resulting.checked_sub(delta).ok_or(InventoryError::QUANTITY_OVERFLOW)?;
-        PersistedInventoryOperation::new(kind, RequestId::parse(request_id).map_err(|_| InventoryError::PERSISTED_DATA_INVALID)?, product_id, previous, delta, resulting, &occurred_at, note)
-    }).transpose()
+) -> Result<Option<LoadedInventoryOperation>, InventoryError> {
+    connection
+        .query_row(
+            "SELECT movement_type, product_id, quantity_delta, resulting_quantity, occurred_at, source_reference, operation_kind, payload_version, canonical_payload, payload_sha256 FROM inventory_movements WHERE request_id = ?1",
+            [request_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<Vec<u8>>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?
+        .map(
+            |(
+                movement_type,
+                product_id,
+                delta,
+                resulting,
+                occurred_at,
+                note,
+                operation_kind,
+                payload_version,
+                canonical_payload,
+                payload_sha256,
+            )| {
+                let kind = match movement_type.as_str() {
+                    "stock_entry" => OperationKind::StockEntry,
+                    "adjustment" => OperationKind::PhysicalCount,
+                    _ => return Err(InventoryError::PERSISTED_DATA_INVALID),
+                };
+                let previous = resulting
+                    .checked_sub(delta)
+                    .ok_or(InventoryError::QUANTITY_OVERFLOW)?;
+                let result = PersistedInventoryOperation::new(
+                    kind,
+                    RequestId::parse(request_id)
+                        .map_err(|_| InventoryError::PERSISTED_DATA_INVALID)?,
+                    product_id,
+                    previous,
+                    delta,
+                    resulting,
+                    &occurred_at,
+                    note,
+                )?;
+                let identity = InventoryIdentity::from_persisted(
+                    operation_kind.as_deref(),
+                    payload_version,
+                    canonical_payload.as_deref(),
+                    payload_sha256.as_deref(),
+                )?;
+                if identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.operation_kind() != kind.as_str())
+                {
+                    return Err(InventoryError::PERSISTENCE_FAILURE);
+                }
+                Ok(LoadedInventoryOperation { result, identity })
+            },
+        )
+        .transpose()
 }

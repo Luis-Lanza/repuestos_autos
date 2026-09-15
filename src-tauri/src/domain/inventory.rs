@@ -1,3 +1,5 @@
+use sha2::{Digest, Sha256};
+
 use crate::domain::RequestId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,6 +16,7 @@ impl InventoryError {
     pub const INACTIVE_PRODUCT: Self = Self("inactive_product");
     pub const PERSISTED_DATA_INVALID: Self = Self("persisted_data_invalid");
     pub const PERSISTENCE_FAILURE: Self = Self("persistence_failure");
+    pub const REQUEST_CONFLICT: Self = Self("request_conflict");
     pub fn code(&self) -> &'static str {
         self.0
     }
@@ -65,6 +68,226 @@ pub enum OperationKind {
     PhysicalCount,
 }
 
+impl OperationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::StockEntry => "stock_entry",
+            Self::PhysicalCount => "physical_count",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InventoryIdentity {
+    operation_kind: String,
+    payload_version: i64,
+    canonical_payload: Vec<u8>,
+    payload_sha256: String,
+}
+
+impl InventoryIdentity {
+    pub const PAYLOAD_VERSION: i64 = 1;
+
+    fn new(operation_kind: OperationKind, payload: Vec<u8>) -> Self {
+        Self {
+            operation_kind: operation_kind.as_str().into(),
+            payload_version: Self::PAYLOAD_VERSION,
+            payload_sha256: format!("{:x}", Sha256::digest(&payload)),
+            canonical_payload: payload,
+        }
+    }
+
+    pub fn operation_kind(&self) -> &str {
+        &self.operation_kind
+    }
+
+    pub fn payload_version(&self) -> i64 {
+        self.payload_version
+    }
+
+    pub fn canonical_payload(&self) -> &[u8] {
+        &self.canonical_payload
+    }
+
+    pub fn payload_sha256(&self) -> &str {
+        &self.payload_sha256
+    }
+
+    pub fn from_persisted(
+        operation_kind: Option<&str>,
+        payload_version: Option<i64>,
+        canonical_payload: Option<&[u8]>,
+        payload_sha256: Option<&str>,
+    ) -> Result<Option<Self>, InventoryError> {
+        if operation_kind.is_none()
+            && payload_version.is_none()
+            && canonical_payload.is_none()
+            && payload_sha256.is_none()
+        {
+            return Ok(None);
+        }
+        let (
+            Some(operation_kind),
+            Some(payload_version),
+            Some(canonical_payload),
+            Some(payload_sha256),
+        ) = (
+            operation_kind,
+            payload_version,
+            canonical_payload,
+            payload_sha256,
+        )
+        else {
+            return Err(InventoryError::PERSISTENCE_FAILURE);
+        };
+        let kind = match operation_kind {
+            "stock_entry" => OperationKind::StockEntry,
+            "physical_count" => OperationKind::PhysicalCount,
+            _ => return Err(InventoryError::PERSISTENCE_FAILURE),
+        };
+        let Some(reencoded_payload) = canonical_payload_from_persisted(canonical_payload, kind)
+        else {
+            return Err(InventoryError::PERSISTENCE_FAILURE);
+        };
+        if payload_version != Self::PAYLOAD_VERSION
+            || payload_sha256.len() != 64
+            || !payload_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || canonical_payload != reencoded_payload.as_slice()
+            || payload_sha256 != format!("{:x}", Sha256::digest(canonical_payload))
+        {
+            return Err(InventoryError::PERSISTENCE_FAILURE);
+        }
+        Ok(Some(Self {
+            operation_kind: operation_kind.into(),
+            payload_version,
+            canonical_payload: canonical_payload.to_vec(),
+            payload_sha256: payload_sha256.into(),
+        }))
+    }
+}
+
+fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Option<Vec<u8>> {
+    let mut cursor = 0;
+    let marker = read_field(payload, &mut cursor)?;
+    let stored_kind = read_field(payload, &mut cursor)?;
+    let product_id = read_field(payload, &mut cursor)?;
+    let requested_value = read_field(payload, &mut cursor)?;
+    let product_id = std::str::from_utf8(product_id).ok()?.parse::<i64>().ok()?;
+    let requested_value = std::str::from_utf8(requested_value)
+        .ok()?
+        .parse::<i64>()
+        .ok()?;
+    if marker != b"inventory/v1" || stored_kind != kind.as_str().as_bytes() {
+        return None;
+    }
+
+    let decoded = match kind {
+        OperationKind::StockEntry => {
+            if requested_value <= 0 {
+                return None;
+            }
+            let note_state = read_field(payload, &mut cursor)?;
+            let note = match note_state {
+                b"null" => None,
+                b"value" => Some(std::str::from_utf8(read_field(payload, &mut cursor)?).ok()?),
+                _ => return None,
+            };
+            if cursor != payload.len() {
+                return None;
+            }
+            InventoryPayload::StockEntry {
+                product_id,
+                quantity: requested_value,
+                note,
+            }
+        }
+        OperationKind::PhysicalCount => {
+            if requested_value < 0 {
+                return None;
+            }
+            let reason = std::str::from_utf8(read_field(payload, &mut cursor)?).ok()?;
+            if reason.is_empty() || reason != reason.trim() || cursor != payload.len() {
+                return None;
+            }
+            InventoryPayload::PhysicalCount {
+                product_id,
+                count: requested_value,
+                reason,
+            }
+        }
+    };
+    Some(encode_payload(decoded).1)
+}
+
+enum InventoryPayload<'a> {
+    StockEntry {
+        product_id: i64,
+        quantity: i64,
+        note: Option<&'a str>,
+    },
+    PhysicalCount {
+        product_id: i64,
+        count: i64,
+        reason: &'a str,
+    },
+}
+
+fn encode_payload(payload: InventoryPayload<'_>) -> (OperationKind, Vec<u8>) {
+    let mut encoded = Vec::new();
+    append_field(&mut encoded, b"inventory/v1");
+    match payload {
+        InventoryPayload::StockEntry {
+            product_id,
+            quantity,
+            note,
+        } => {
+            append_field(&mut encoded, OperationKind::StockEntry.as_str().as_bytes());
+            append_number(&mut encoded, product_id);
+            append_number(&mut encoded, quantity);
+            append_nullable_text(&mut encoded, note);
+            (OperationKind::StockEntry, encoded)
+        }
+        InventoryPayload::PhysicalCount {
+            product_id,
+            count,
+            reason,
+        } => {
+            append_field(
+                &mut encoded,
+                OperationKind::PhysicalCount.as_str().as_bytes(),
+            );
+            append_number(&mut encoded, product_id);
+            append_number(&mut encoded, count);
+            append_field(&mut encoded, reason.as_bytes());
+            (OperationKind::PhysicalCount, encoded)
+        }
+    }
+}
+
+fn read_field<'a>(payload: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    let start = *cursor;
+    while *cursor < payload.len() && payload[*cursor].is_ascii_digit() {
+        *cursor += 1;
+    }
+    if *cursor == start || *cursor >= payload.len() || payload[*cursor] != b':' {
+        return None;
+    }
+    let length = std::str::from_utf8(&payload[start..*cursor])
+        .ok()?
+        .parse::<usize>()
+        .ok()?;
+    *cursor += 1;
+    let end = (*cursor).checked_add(length)?;
+    if end > payload.len() {
+        return None;
+    }
+    let value = &payload[*cursor..end];
+    *cursor = end;
+    Some(value)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InventoryOperation {
     StockEntry {
@@ -82,6 +305,32 @@ pub enum InventoryOperation {
 }
 
 impl InventoryOperation {
+    pub fn identity(&self) -> InventoryIdentity {
+        let (kind, payload) = match self {
+            Self::StockEntry {
+                product_id,
+                quantity,
+                note,
+                ..
+            } => encode_payload(InventoryPayload::StockEntry {
+                product_id: *product_id,
+                quantity: quantity.value(),
+                note: note.as_deref(),
+            }),
+            Self::PhysicalCount {
+                product_id,
+                count,
+                reason,
+                ..
+            } => encode_payload(InventoryPayload::PhysicalCount {
+                product_id: *product_id,
+                count: count.value(),
+                reason: reason.as_str(),
+            }),
+        };
+        InventoryIdentity::new(kind, payload)
+    }
+
     pub fn stock_entry(
         product_id: i64,
         request_id: RequestId,
@@ -107,6 +356,26 @@ impl InventoryOperation {
             count: PhysicalCount::new(count)?,
             reason: AdjustmentReason::new(reason)?,
         })
+    }
+}
+
+fn append_field(payload: &mut Vec<u8>, value: &[u8]) {
+    payload.extend_from_slice(value.len().to_string().as_bytes());
+    payload.push(b':');
+    payload.extend_from_slice(value);
+}
+
+fn append_number(payload: &mut Vec<u8>, value: i64) {
+    append_field(payload, value.to_string().as_bytes());
+}
+
+fn append_nullable_text(payload: &mut Vec<u8>, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            append_field(payload, b"value");
+            append_field(payload, value.as_bytes());
+        }
+        None => append_field(payload, b"null"),
     }
 }
 

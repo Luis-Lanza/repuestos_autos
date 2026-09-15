@@ -19,7 +19,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 11;
+pub const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationCompatibility {
@@ -191,6 +191,17 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         ))?;
         validate_version_eleven_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 11)?;
+        transaction.commit()?;
+        version = 11;
+    }
+
+    if version == 11 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!(
+            "migrations/0012_inventory_idempotency_conflicts.sql"
+        ))?;
+        validate_version_twelve_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 12)?;
         transaction.commit()?;
     }
 
@@ -547,6 +558,20 @@ pub(super) fn validate_version_ten_schema(connection: &Connection) -> Result<()>
     {
         return Err(rusqlite::Error::InvalidQuery);
     }
+    if version >= 12
+        && !has_columns(
+            connection,
+            "inventory_movements",
+            &[
+                "operation_kind",
+                "payload_version",
+                "canonical_payload",
+                "payload_sha256",
+            ],
+        )?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     Ok(())
 }
 
@@ -555,6 +580,23 @@ fn validate_version_eleven_schema(connection: &Connection) -> Result<()> {
     if !has_columns(
         connection,
         "sales",
+        &[
+            "operation_kind",
+            "payload_version",
+            "canonical_payload",
+            "payload_sha256",
+        ],
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
+}
+
+fn validate_version_twelve_schema(connection: &Connection) -> Result<()> {
+    validate_version_eleven_schema(connection)?;
+    if !has_columns(
+        connection,
+        "inventory_movements",
         &[
             "operation_kind",
             "payload_version",

@@ -1,6 +1,6 @@
 use repuestos_autos::domain::inventory::{
-    AdjustmentReason, AlertClassification, InventoryAlert, InventoryError, OperationKind,
-    PersistedInventoryOperation, PhysicalCount, StockEntryQuantity,
+    AdjustmentReason, AlertClassification, InventoryAlert, InventoryError, InventoryOperation,
+    OperationKind, PersistedInventoryOperation, PhysicalCount, StockEntryQuantity,
 };
 use repuestos_autos::domain::RequestId;
 
@@ -39,6 +39,51 @@ fn domain_value_objects_enforce_inputs_and_persisted_results() {
         persisted(OperationKind::StockEntry, i64::MAX, 1, i64::MAX),
         Err(InventoryError::QUANTITY_OVERFLOW)
     );
+}
+
+#[test]
+fn inventory_identity_is_stable_and_excludes_request_id() {
+    let first = InventoryOperation::stock_entry(
+        1,
+        RequestId::parse("550e8400-e29b-41d4-a716-446655440101").unwrap(),
+        2,
+        Some("delivery".into()),
+    )
+    .unwrap()
+    .identity();
+    let retry = InventoryOperation::stock_entry(
+        1,
+        RequestId::parse("550e8400-e29b-41d4-a716-446655440102").unwrap(),
+        2,
+        Some("delivery".into()),
+    )
+    .unwrap()
+    .identity();
+
+    assert_eq!(first, retry);
+    assert_eq!(first.operation_kind(), "stock_entry");
+    assert_eq!(first.payload_version(), 1);
+    assert_eq!(first.payload_sha256().len(), 64);
+}
+
+#[test]
+fn inventory_identity_preserves_optional_note_state_and_normalizes_reason() {
+    let request_id = request_id();
+    let without_note = InventoryOperation::stock_entry(1, request_id.clone(), 2, None)
+        .unwrap()
+        .identity();
+    let empty_note = InventoryOperation::stock_entry(1, request_id.clone(), 2, Some(String::new()))
+        .unwrap()
+        .identity();
+    assert_ne!(without_note, empty_note);
+
+    let padded_reason = InventoryOperation::physical_count(1, request_id.clone(), 2, " counted ")
+        .unwrap()
+        .identity();
+    let normalized_reason = InventoryOperation::physical_count(1, request_id, 2, "counted")
+        .unwrap()
+        .identity();
+    assert_eq!(padded_reason, normalized_reason);
 }
 
 #[test]

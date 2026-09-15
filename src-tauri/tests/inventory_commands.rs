@@ -32,15 +32,23 @@ fn inventory_commands_preserve_persisted_results_and_only_expose_stable_errors()
         ("550e8400-e29b-41d4-a716-446655440201", 8, 10)
     );
     assert_eq!(first.note.as_deref(), Some("delivery"));
-    let retry = confirm_stock_entry_command(
+    let InventoryCommandResponse::Error(error) = confirm_stock_entry_command(
         &mut connection,
         StockEntryRequest {
             quantity: 99,
             ..entry("550e8400-e29b-41d4-a716-446655440201")
         },
     )
-    .unwrap();
-    assert_eq!(retry, InventoryCommandResponse::Success(first));
+    .unwrap() else {
+        panic!("expected a stable request conflict")
+    };
+    assert_eq!(
+        (error.code, error.message),
+        (
+            "request_conflict",
+            "This request ID was already used with different inventory data."
+        )
+    );
     let InventoryCommandResponse::Error(error) = confirm_physical_count_command(
         &mut connection,
         PhysicalCountRequest {
