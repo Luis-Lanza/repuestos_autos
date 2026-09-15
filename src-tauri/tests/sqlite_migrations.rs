@@ -1,5 +1,6 @@
 use repuestos_autos::infrastructure::sqlite::{
     migration_compatibility, open_database, production_database_config, MigrationCompatibility,
+    CURRENT_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -123,7 +124,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        CURRENT_SCHEMA_VERSION
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
@@ -152,7 +153,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
         reopened
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        CURRENT_SCHEMA_VERSION
     );
     drop(reopened);
     assert_eq!(legacy_facts(&path), before);
@@ -202,14 +203,14 @@ fn rejects_foreign_key_corruption_without_changing_legacy_rows_or_version() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
-fn migrates_a_new_version_zero_database_through_version_ten() {
+fn migrates_a_new_version_zero_database_through_version_eleven() {
     let directory = temporary_directory("migration-version-zero");
     let connection = open_database(&production_database_config(&directory)).unwrap();
     assert_eq!(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        CURRENT_SCHEMA_VERSION
     );
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
@@ -219,11 +220,13 @@ fn rejects_unknown_future_schema_versions_without_mutation() {
     let directory = temporary_directory("migration-future-version");
     let path = create_legacy_database(&directory);
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 11).unwrap();
+    connection
+        .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION + 1)
+        .unwrap();
     drop(connection);
     let before = legacy_facts(&path);
     assert!(open_database(&production_database_config(&directory)).is_err());
-    assert_eq!(user_version(&path), 11);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION + 1);
     assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -240,7 +243,7 @@ fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() 
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        CURRENT_SCHEMA_VERSION
     );
     assert_eq!(
         connection
@@ -262,7 +265,7 @@ fn upgrades_version_four_preserving_legacy_movement_identity_and_foreign_keys() 
     drop(foreign_key_check);
     assert_eq!(legacy_facts(&path), before);
     drop(connection);
-    assert_eq!(user_version(&path), 10);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -282,13 +285,13 @@ fn rejects_corrupt_version_four_before_the_forward_migration() {
 }
 
 #[test]
-fn migrates_valid_v5_history_verbatim_and_reopens_at_version_ten() {
+fn migrates_valid_v5_history_verbatim_and_reopens_at_version_eleven() {
     let directory = temporary_directory("migration-version-five");
     let path = create_version_five_database(&directory);
     let before = legacy_facts(&path);
     let config = production_database_config(&directory);
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 10);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         connection
             .query_row(
@@ -301,7 +304,7 @@ fn migrates_valid_v5_history_verbatim_and_reopens_at_version_ten() {
     );
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
-    assert_eq!(user_version(&path), 10);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     drop(open_database(&config).unwrap());
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -313,7 +316,7 @@ fn migrates_version_six_additively_with_immutable_sale_prices_and_audits() {
     let before = legacy_facts(&path);
     let connection = open_database(&production_database_config(&directory)).unwrap();
 
-    assert_eq!(user_version(&path), 10);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(legacy_facts(&path), before);
     assert_eq!(
         connection
@@ -377,7 +380,7 @@ fn version_six_enforces_each_movement_type_composite_links_and_immutability() {
         .execute("DELETE FROM inventory_movements WHERE id = 40", [])
         .is_err());
     drop(connection);
-    assert_eq!(user_version(&path), 10);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -405,7 +408,7 @@ fn migrates_v8_history_index_preserving_facts_and_reopens_with_normalized_unique
     let before = legacy_facts(&path);
     let config = production_database_config(&directory);
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 10);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(connection.query_row("SELECT sql FROM sqlite_master WHERE name = 'sales_confirmed_history_idx'", [], |row| row.get::<_, String>(0)).unwrap(), "CREATE INDEX sales_confirmed_history_idx ON sales (confirmed_at DESC, id DESC) WHERE status = 'confirmed'");
     assert_eq!(legacy_facts(&path), before);
     assert_eq!(
@@ -424,7 +427,7 @@ fn migrates_v8_history_index_preserving_facts_and_reopens_with_normalized_unique
     std::fs::remove_dir_all(directory).unwrap();
 }
 #[test]
-fn creates_schema_v10_post_sale_fact_tables_and_immutability_triggers() {
+fn creates_schema_v11_with_sale_idempotency_identity_columns() {
     let directory = temporary_directory("migration-v10-foundation");
     let connection = open_database(&production_database_config(&directory)).unwrap();
 
@@ -432,8 +435,22 @@ fn creates_schema_v10_post_sale_fact_tables_and_immutability_triggers() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        10
+        CURRENT_SCHEMA_VERSION
     );
+    for column in [
+        "operation_kind",
+        "payload_version",
+        "canonical_payload",
+        "payload_sha256",
+    ] {
+        assert!(connection
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sales') WHERE name = ?1)",
+                [column],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+    }
     for table in [
         "post_sale_requests",
         "sale_returns",

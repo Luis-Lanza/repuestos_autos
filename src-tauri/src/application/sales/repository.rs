@@ -23,6 +23,7 @@ pub enum ConfirmSaleError {
     InsufficientStock,
     PersistedDataInvalid,
     Persistence,
+    RequestConflict,
 }
 
 impl From<PaymentError> for ConfirmSaleError {
@@ -40,9 +41,25 @@ impl From<PaymentError> for ConfirmSaleError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reservation {
     Reserved,
-    ExistingConfirmed(PersistedSaleSummary),
-    ExistingIncomplete,
-    ExistingCorrupt,
+    ExistingConfirmed {
+        summary: Option<PersistedSaleSummary>,
+        operation_kind: Option<String>,
+        payload_version: Option<i64>,
+        canonical_payload: Option<Vec<u8>>,
+        payload_sha256: Option<String>,
+    },
+    ExistingIncomplete {
+        operation_kind: Option<String>,
+        payload_version: Option<i64>,
+        canonical_payload: Option<Vec<u8>>,
+        payload_sha256: Option<String>,
+    },
+    ExistingCorrupt {
+        operation_kind: Option<String>,
+        payload_version: Option<i64>,
+        canonical_payload: Option<Vec<u8>>,
+        payload_sha256: Option<String>,
+    },
 }
 
 pub trait ConfirmSaleRepository {
@@ -50,6 +67,10 @@ pub trait ConfirmSaleRepository {
         &self,
         transaction: &Transaction<'_>,
         request_id: &RequestId,
+        operation_kind: &str,
+        payload_version: i64,
+        canonical_payload: &[u8],
+        payload_sha256: &str,
     ) -> Result<Reservation, ConfirmSaleError>;
 
     fn resolve_lines(

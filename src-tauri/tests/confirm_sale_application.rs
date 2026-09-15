@@ -13,11 +13,108 @@ struct RepositoryDouble {
     resolution: Result<Vec<SaleLine>, ConfirmSaleError>,
     persistence: Result<PersistedSaleSummary, ConfirmSaleError>,
 }
+type IdentityFields = (Option<String>, Option<i64>, Option<Vec<u8>>, Option<String>);
+
+fn complete_reservation(
+    reservation: Reservation,
+    operation_kind: &str,
+    payload_version: i64,
+    canonical_payload: &[u8],
+    payload_sha256: &str,
+) -> Reservation {
+    let generated = (
+        Some(operation_kind.into()),
+        Some(payload_version),
+        Some(canonical_payload.to_vec()),
+        Some(payload_sha256.into()),
+    );
+    let use_generated = |identity: IdentityFields| {
+        if identity.0.is_none()
+            && identity.1.is_none()
+            && identity.2.is_none()
+            && identity.3.is_none()
+        {
+            generated.clone()
+        } else {
+            identity
+        }
+    };
+    match reservation {
+        Reservation::Reserved => Reservation::Reserved,
+        Reservation::ExistingConfirmed {
+            summary,
+            operation_kind,
+            payload_version,
+            canonical_payload,
+            payload_sha256,
+        } => {
+            let (operation_kind, payload_version, canonical_payload, payload_sha256) =
+                use_generated((
+                    operation_kind,
+                    payload_version,
+                    canonical_payload,
+                    payload_sha256,
+                ));
+            Reservation::ExistingConfirmed {
+                summary,
+                operation_kind,
+                payload_version,
+                canonical_payload,
+                payload_sha256,
+            }
+        }
+        Reservation::ExistingIncomplete {
+            operation_kind,
+            payload_version,
+            canonical_payload,
+            payload_sha256,
+        } => {
+            let (operation_kind, payload_version, canonical_payload, payload_sha256) =
+                use_generated((
+                    operation_kind,
+                    payload_version,
+                    canonical_payload,
+                    payload_sha256,
+                ));
+            Reservation::ExistingIncomplete {
+                operation_kind,
+                payload_version,
+                canonical_payload,
+                payload_sha256,
+            }
+        }
+        Reservation::ExistingCorrupt {
+            operation_kind,
+            payload_version,
+            canonical_payload,
+            payload_sha256,
+        } => {
+            let (operation_kind, payload_version, canonical_payload, payload_sha256) =
+                use_generated((
+                    operation_kind,
+                    payload_version,
+                    canonical_payload,
+                    payload_sha256,
+                ));
+            Reservation::ExistingCorrupt {
+                operation_kind,
+                payload_version,
+                canonical_payload,
+                payload_sha256,
+            }
+        }
+    }
+}
+
 impl ConfirmSaleRepository for RepositoryDouble {
     fn reserve_or_load(
         &self,
         transaction: &Transaction<'_>,
         _: &RequestId,
+        operation_kind: &str,
+        payload_version: i64,
+        canonical_payload: &[u8],
+        payload_sha256: &str,
     ) -> Result<Reservation, ConfirmSaleError> {
         self.calls.borrow_mut().push("reserve");
         if self.write_marker_on_reserve {
@@ -25,7 +122,15 @@ impl ConfirmSaleRepository for RepositoryDouble {
                 .execute("INSERT INTO rollback_markers DEFAULT VALUES", [])
                 .map_err(|_| ConfirmSaleError::Persistence)?;
         }
-        self.reservation.clone()
+        self.reservation.clone().map(|reservation| {
+            complete_reservation(
+                reservation,
+                operation_kind,
+                payload_version,
+                canonical_payload,
+                payload_sha256,
+            )
+        })
     }
     fn resolve_lines(
         &self,
@@ -87,6 +192,41 @@ fn summary() -> PersistedSaleSummary {
         total: money(2_500),
     }
 }
+fn empty_identity() -> IdentityFields {
+    (None, None, None, None)
+}
+
+fn existing_confirmed(summary: PersistedSaleSummary) -> Reservation {
+    let (operation_kind, payload_version, canonical_payload, payload_sha256) = empty_identity();
+    Reservation::ExistingConfirmed {
+        summary: Some(summary),
+        operation_kind,
+        payload_version,
+        canonical_payload,
+        payload_sha256,
+    }
+}
+
+fn existing_incomplete() -> Reservation {
+    let (operation_kind, payload_version, canonical_payload, payload_sha256) = empty_identity();
+    Reservation::ExistingIncomplete {
+        operation_kind,
+        payload_version,
+        canonical_payload,
+        payload_sha256,
+    }
+}
+
+fn existing_corrupt() -> Reservation {
+    let (operation_kind, payload_version, canonical_payload, payload_sha256) = empty_identity();
+    Reservation::ExistingCorrupt {
+        operation_kind,
+        payload_version,
+        canonical_payload,
+        payload_sha256,
+    }
+}
+
 fn resolved_line() -> SaleLine {
     SaleLine::priced(1, Quantity::new(1).unwrap(), money(2_500)).unwrap()
 }
@@ -127,7 +267,7 @@ fn assert_failure_rolls_back(
 fn existing_confirmation_short_circuits_before_line_resolution_or_payment_derivation() {
     let mut connection = Connection::open_in_memory().unwrap();
     let persisted = summary();
-    let repository = repository_double(Ok(Reservation::ExistingConfirmed(persisted.clone())));
+    let repository = repository_double(Ok(existing_confirmed(persisted.clone())));
     let result = ConfirmSaleUseCase::new(&mut connection, &repository)
         .confirm(request(vec![requested_line(999)]))
         .unwrap();
@@ -150,7 +290,7 @@ fn confirmation_reserves_then_resolves_then_persists_derived_payment_facts() {
 fn confirmed_retry_returns_stored_facts_before_validating_duplicate_products() {
     let mut connection = Connection::open_in_memory().unwrap();
     let persisted = summary();
-    let repository = repository_double(Ok(Reservation::ExistingConfirmed(persisted.clone())));
+    let repository = repository_double(Ok(existing_confirmed(persisted.clone())));
     let result = ConfirmSaleUseCase::new(&mut connection, &repository)
         .confirm(request(vec![requested_line(1), requested_line(1)]))
         .unwrap();
@@ -214,7 +354,7 @@ fn invalid_payment_stops_before_persistence() {
 #[test]
 fn incomplete_reservation_stops_before_resolution() {
     let mut connection = Connection::open_in_memory().unwrap();
-    let repository = repository_double(Ok(Reservation::ExistingIncomplete));
+    let repository = repository_double(Ok(existing_incomplete()));
     let result = ConfirmSaleUseCase::new(&mut connection, &repository)
         .confirm(request(vec![requested_line(1)]));
     assert_eq!(result, Err(ConfirmSaleError::Persistence));
@@ -224,7 +364,7 @@ fn incomplete_reservation_stops_before_resolution() {
 #[test]
 fn corrupt_reservation_stops_before_resolution() {
     let mut connection = Connection::open_in_memory().unwrap();
-    let repository = repository_double(Ok(Reservation::ExistingCorrupt));
+    let repository = repository_double(Ok(existing_corrupt()));
     let result = ConfirmSaleUseCase::new(&mut connection, &repository)
         .confirm(request(vec![requested_line(1)]));
     assert_eq!(result, Err(ConfirmSaleError::Persistence));
@@ -255,10 +395,7 @@ fn application_failures_stop_in_order_and_roll_back_the_reservation() {
         assert_failure_rolls_back(repository, valid_request(), error, &["reserve", "resolve"]);
     }
 
-    for reservation in [
-        Reservation::ExistingIncomplete,
-        Reservation::ExistingCorrupt,
-    ] {
+    for reservation in [existing_incomplete(), existing_corrupt()] {
         assert_failure_rolls_back(
             repository_double(Ok(reservation)),
             valid_request(),
@@ -275,6 +412,28 @@ fn application_failures_stop_in_order_and_roll_back_the_reservation() {
         ConfirmSaleError::Persistence,
         &["reserve", "resolve", "persist"],
     );
+}
+
+#[test]
+fn application_rejects_an_existing_identity_mismatch_before_replay() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    let repository = repository_double(Ok(Reservation::ExistingConfirmed {
+        summary: Some(summary()),
+        operation_kind: Some("confirm_sale".into()),
+        payload_version: Some(1),
+        canonical_payload: Some(
+            b"15:confirm_sale/v11:11:21:14:25001:04:null4:null5:value4:30004:null".to_vec(),
+        ),
+        payload_sha256: Some(
+            "da12ce94ede784b9510eb0cfde85a0b5d89c2280ddf2b05f34069c1b8c465868".into(),
+        ),
+    }));
+
+    let result = ConfirmSaleUseCase::new(&mut connection, &repository)
+        .confirm(request(vec![requested_line(1)]));
+
+    assert_eq!(result, Err(ConfirmSaleError::RequestConflict));
+    assert_eq!(*repository.calls.borrow(), ["reserve"]);
 }
 
 #[test]

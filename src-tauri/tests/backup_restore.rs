@@ -30,7 +30,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 9] = [
+const MIGRATIONS: [&str; 10] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -42,6 +42,7 @@ const MIGRATIONS: [&str; 9] = [
     ),
     include_str!("../src/infrastructure/sqlite/migrations/0009_sales_history_index.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0010_post_sale_lifecycle.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0011_sale_idempotency_conflicts.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
@@ -269,7 +270,7 @@ fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_c
     fs::create_dir_all(&directory).unwrap();
     let config = production_database_config(&directory);
     let source = config.path().to_path_buf();
-    let stage = directory.join("backup-restore/staging/staged-v10-lifecycle.sqlite3");
+    let stage = directory.join("backup-restore/staging/staged-v11-lifecycle.sqlite3");
     fs::create_dir_all(stage.parent().unwrap()).unwrap();
     lifecycle_database(&source);
     let source_bytes = fs::read(&source).unwrap();
@@ -277,7 +278,7 @@ fn stages_and_restores_lifecycle_facts_with_linked_movements_and_zero_residual_c
 
     let metadata = stage_and_validate(&source, &stage).unwrap();
 
-    assert_eq!(metadata.schema_version, 10);
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(fs::read(&source).unwrap(), source_bytes);
     assert_eq!(lifecycle_facts(&stage), expected);
     let staged = Connection::open(&stage).unwrap();

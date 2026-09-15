@@ -214,6 +214,10 @@ fn map_error(error: ConfirmSaleError) -> CommandError {
             ("persistence_failure", "The sale could not be persisted.")
         }
         ConfirmSaleError::DuplicateProduct => ("invalid_request", "The request shape is invalid."),
+        ConfirmSaleError::RequestConflict => (
+            "request_conflict",
+            "This request ID was already used with different sale data.",
+        ),
         ConfirmSaleError::MoneyOverflow
         | ConfirmSaleError::PersistedDataInvalid
         | ConfirmSaleError::Persistence => {

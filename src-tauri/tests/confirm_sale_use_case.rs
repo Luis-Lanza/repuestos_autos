@@ -466,7 +466,7 @@ fn rejects_corrupt_confirmed_reservations_without_new_effects() {
                 },
             ),
         ),
-        Err(ConfirmSaleError::Persistence),
+        Err(ConfirmSaleError::RequestConflict),
     );
     assert_eq!(snapshot(&connection), before);
 }
@@ -509,9 +509,9 @@ fn resolves_catalog_prices_in_request_order_and_writes_compatibility_snapshots()
 }
 
 #[test]
-fn reservation_short_circuits_repriced_or_missing_retries_to_stored_facts() {
+fn reservation_conflicts_when_retry_identity_changes() {
     let mut connection = open_seeded_catalog().unwrap();
-    let first = confirm_authoritative(
+    let _first = confirm_authoritative(
         &mut connection,
         authoritative_request(
             "550e8400-e29b-41d4-a716-446655440098",
@@ -540,16 +540,9 @@ fn reservation_short_circuits_repriced_or_missing_retries_to_stored_facts() {
                 qr_applied: None,
             },
         ),
-    )
-    .unwrap();
-
-    assert_eq!(retry, first);
-    assert_eq!(
-        retry.lines[0].negotiated_unit_price,
-        MoneyCentavos::new(2_500).unwrap()
     );
-    assert_eq!(retry.lines[0].sku, "FLT-001");
-    assert_eq!(retry.lines[0].product_name, "Filtro de aceite");
+
+    assert!(retry.is_err());
     assert_eq!(
         connection
             .query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0))
@@ -928,4 +921,164 @@ fn sqlite_enforces_foreign_keys_request_id_row_checks_and_immutable_movements() 
     assert!(connection
         .execute("DELETE FROM inventory_movements", [])
         .is_err());
+}
+
+#[test]
+fn authoritative_identity_replays_exactly_and_conflicts_without_effects() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000)", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 4)",
+            [],
+        )
+        .unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440140";
+    let first = confirm_authoritative(
+        &mut connection,
+        authoritative_request(
+            request_id,
+            &[(3, 1), (1, 1)],
+            PaymentInput {
+                amount_tendered: None,
+                qr_applied: Some(MoneyCentavos::new(5_500).unwrap()),
+            },
+        ),
+    )
+    .unwrap();
+    let before_retry = snapshot(&connection);
+    let persisted_identity = connection.query_row(
+        "SELECT operation_kind, payload_version, length(canonical_payload), payload_sha256 FROM sales WHERE id = ?1",
+        [first.sale_id],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?)),
+    ).unwrap();
+    assert_eq!(persisted_identity.0, "confirm_sale");
+    assert_eq!(persisted_identity.1, 1);
+    assert!(persisted_identity.2 > 0);
+    assert_eq!(persisted_identity.3.len(), 64);
+
+    let replay = confirm_authoritative(
+        &mut connection,
+        authoritative_request(
+            request_id,
+            &[(3, 1), (1, 1)],
+            PaymentInput {
+                amount_tendered: None,
+                qr_applied: Some(MoneyCentavos::new(5_500).unwrap()),
+            },
+        ),
+    )
+    .unwrap();
+    assert_eq!(replay, first);
+    assert_eq!(snapshot(&connection), before_retry);
+
+    for changed in [
+        authoritative_request(
+            request_id,
+            &[(3, 2), (1, 1)],
+            PaymentInput {
+                amount_tendered: None,
+                qr_applied: Some(MoneyCentavos::new(8_500).unwrap()),
+            },
+        ),
+        authoritative_request(
+            request_id,
+            &[(3, 1), (1, 1)],
+            PaymentInput {
+                amount_tendered: Some(MoneyCentavos::new(5_500).unwrap()),
+                qr_applied: None,
+            },
+        ),
+        authoritative_request(
+            request_id,
+            &[(1, 1), (3, 1)],
+            PaymentInput {
+                amount_tendered: None,
+                qr_applied: Some(MoneyCentavos::new(5_500).unwrap()),
+            },
+        ),
+    ] {
+        assert_eq!(
+            confirm_authoritative(&mut connection, changed),
+            Err(ConfirmSaleError::RequestConflict)
+        );
+        assert_eq!(snapshot(&connection), before_retry);
+    }
+}
+
+#[test]
+fn acknowledged_price_and_revision_nullability_is_part_of_identity() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection
+        .execute(
+            "UPDATE products SET minimum_unit_price_centavos = 2700, revision = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440141";
+    confirm_authoritative(
+        &mut connection,
+        captured_request(request_id, 2_500, 0, Some((2_700, 1))),
+    )
+    .unwrap();
+
+    assert_eq!(
+        confirm_authoritative(
+            &mut connection,
+            captured_request(request_id, 2_500, 0, None),
+        ),
+        Err(ConfirmSaleError::RequestConflict),
+    );
+}
+
+#[test]
+fn legacy_sale_reuse_returns_conflict_without_new_sale_effects() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440143";
+    let first = confirm_authoritative(
+        &mut connection,
+        captured_request(request_id, 2_500, 0, None),
+    )
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE sales SET operation_kind = NULL, payload_version = NULL, canonical_payload = NULL, payload_sha256 = NULL WHERE id = ?1",
+            [first.sale_id],
+        )
+        .unwrap();
+    let before_retry = snapshot(&connection);
+
+    assert_eq!(
+        confirm_authoritative(
+            &mut connection,
+            captured_request(request_id, 2_500, 0, None),
+        ),
+        Err(ConfirmSaleError::RequestConflict),
+    );
+    assert_eq!(snapshot(&connection), before_retry);
+}
+
+#[test]
+fn malformed_persisted_identity_fails_closed_as_invalid_data() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440142";
+    let first = confirm_authoritative(
+        &mut connection,
+        captured_request(request_id, 2_500, 0, None),
+    )
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE sales SET payload_sha256 = 'broken' WHERE id = ?1",
+            [first.sale_id],
+        )
+        .unwrap();
+
+    assert_eq!(
+        confirm_authoritative(
+            &mut connection,
+            captured_request(request_id, 2_500, 0, None),
+        ),
+        Err(ConfirmSaleError::PersistedDataInvalid),
+    );
 }

@@ -14,33 +14,71 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
         &self,
         transaction: &Transaction<'_>,
         request_id: &RequestId,
+        operation_kind: &str,
+        payload_version: i64,
+        canonical_payload: &[u8],
+        payload_sha256: &str,
     ) -> Result<Reservation, ConfirmSaleError> {
         let request_id = request_id.as_uuid().to_string();
         let reserved = transaction
             .execute(
-                "INSERT INTO sales (request_id, status, total_centavos) VALUES (?1, 'pending', 0) ON CONFLICT(request_id) DO NOTHING",
-                [&request_id],
+                "INSERT INTO sales (request_id, status, total_centavos, operation_kind, payload_version, canonical_payload, payload_sha256) VALUES (?1, 'pending', 0, ?2, ?3, ?4, ?5) ON CONFLICT(request_id) DO NOTHING",
+                params![
+                        request_id,
+                        operation_kind,
+                        payload_version,
+                        canonical_payload,
+                        payload_sha256,
+                    ],
             )
             .map_err(|_| ConfirmSaleError::Persistence)?;
         if reserved == 1 {
             return Ok(Reservation::Reserved);
         }
 
-        match transaction
+        let (status, stored_operation, stored_version, stored_payload, stored_sha256) = transaction
             .query_row(
-                "SELECT status FROM sales WHERE request_id = ?1",
+                "SELECT status, operation_kind, payload_version, canonical_payload, payload_sha256 FROM sales WHERE request_id = ?1",
                 [&request_id],
-                |row| row.get::<_, String>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<Vec<u8>>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
             )
-            .map_err(|_| ConfirmSaleError::Persistence)?
-            .as_str()
-        {
-            "confirmed" => self
-                .load_summary(transaction, &request_id)
-                .map(Reservation::ExistingConfirmed)
-                .map_err(|_| ConfirmSaleError::Persistence),
-            "pending" => Ok(Reservation::ExistingIncomplete),
-            _ => Ok(Reservation::ExistingCorrupt),
+            .map_err(|_| ConfirmSaleError::Persistence)?;
+
+        let persisted_identity = (
+            stored_operation.clone(),
+            stored_version,
+            stored_payload.clone(),
+            stored_sha256.clone(),
+        );
+
+        match status.as_str() {
+            "confirmed" => Ok(Reservation::ExistingConfirmed {
+                summary: self.load_summary(transaction, &request_id).ok(),
+                operation_kind: persisted_identity.0.clone(),
+                payload_version: persisted_identity.1,
+                canonical_payload: persisted_identity.2.clone(),
+                payload_sha256: persisted_identity.3.clone(),
+            }),
+            "pending" => Ok(Reservation::ExistingIncomplete {
+                operation_kind: persisted_identity.0.clone(),
+                payload_version: persisted_identity.1,
+                canonical_payload: persisted_identity.2.clone(),
+                payload_sha256: persisted_identity.3.clone(),
+            }),
+            _ => Ok(Reservation::ExistingCorrupt {
+                operation_kind: persisted_identity.0,
+                payload_version: persisted_identity.1,
+                canonical_payload: persisted_identity.2,
+                payload_sha256: persisted_identity.3,
+            }),
         }
     }
 

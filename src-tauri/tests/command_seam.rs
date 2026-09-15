@@ -93,7 +93,7 @@ fn returns_repriced_persisted_summary_for_idempotent_retries() {
         .unwrap();
     let retry = confirm_sale(
         &mut connection,
-        request("550e8400-e29b-41d4-a716-446655440043", Some(9_999), None),
+        request("550e8400-e29b-41d4-a716-446655440043", None, Some(2_500)),
     )
     .unwrap();
 
@@ -112,6 +112,27 @@ fn returns_repriced_persisted_summary_for_idempotent_retries() {
     assert!(!summary.confirmed_at.is_empty());
     assert_eq!(summary.lines[0].sku, "FLT-001");
     assert_eq!(summary.lines[0].product_name, "Filtro de aceite");
+}
+
+#[test]
+fn maps_reused_request_with_different_sale_data_to_a_stable_conflict() {
+    let request_id = "550e8400-e29b-41d4-a716-446655440046";
+    let mut connection = open_seeded_catalog().unwrap();
+    assert!(matches!(
+        confirm_sale(&mut connection, request(request_id, None, Some(2_500))).unwrap(),
+        ConfirmSaleResponse::Success(_)
+    ));
+
+    let ConfirmSaleResponse::Error(error) =
+        confirm_sale(&mut connection, request(request_id, Some(2_500), None)).unwrap()
+    else {
+        panic!("expected a stable request conflict");
+    };
+    assert_eq!(error.code, "request_conflict");
+    assert_eq!(
+        error.message,
+        "This request ID was already used with different sale data."
+    );
 }
 
 #[test]

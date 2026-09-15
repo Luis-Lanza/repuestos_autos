@@ -19,7 +19,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationCompatibility {
@@ -179,6 +179,18 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         transaction.execute_batch(include_str!("migrations/0010_post_sale_lifecycle.sql"))?;
         validate_version_ten_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 10)?;
+        transaction.commit()?;
+        version = 10;
+    }
+
+    if version == 10 {
+        let transaction = connection.transaction()?;
+        validate_version_ten_schema(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0011_sale_idempotency_conflicts.sql"
+        ))?;
+        validate_version_eleven_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 11)?;
         transaction.commit()?;
     }
 
@@ -517,6 +529,39 @@ pub(super) fn validate_version_ten_schema(connection: &Connection) -> Result<()>
             WHERE cancellation_line.sale_line_id IS NULL
         )";
     if connection.query_row(INVALID_LIFECYCLE_FACTS, [], |row| row.get::<_, bool>(0))? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)?;
+    let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
+    if version >= 11
+        && !has_columns(
+            connection,
+            "sales",
+            &[
+                "operation_kind",
+                "payload_version",
+                "canonical_payload",
+                "payload_sha256",
+            ],
+        )?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
+fn validate_version_eleven_schema(connection: &Connection) -> Result<()> {
+    validate_version_ten_schema(connection)?;
+    if !has_columns(
+        connection,
+        "sales",
+        &[
+            "operation_kind",
+            "payload_version",
+            "canonical_payload",
+            "payload_sha256",
+        ],
+    )? {
         return Err(rusqlite::Error::InvalidQuery);
     }
     validate_foreign_keys(connection)
