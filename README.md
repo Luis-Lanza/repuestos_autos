@@ -107,8 +107,19 @@ npx tauri info
 
 # Verify the frontend and TypeScript build.
 npm test
+npm run typecheck:tests
 npx tsc --noEmit
 npm run build
+```
+
+To prove that test-only type errors fail the dedicated check without changing repository files, run this isolated configuration check. It must report `TS2322` and clean up its temporary directory:
+
+```bash
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+printf 'const intentionalTypeError: string = 42;\n' > "$tmp_dir/intentional.test.ts"
+printf '{"extends":"%s/tsconfig.tests.json","include":["%s/intentional.test.ts"]}\n' "$PWD" "$tmp_dir" > "$tmp_dir/tsconfig.json"
+npx tsc --project "$tmp_dir/tsconfig.json" --noEmit
 ```
 
 If Tauri reports a missing WebKitGTK package, verify Fedora can resolve the required native library:
