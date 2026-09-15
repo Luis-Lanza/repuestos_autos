@@ -670,12 +670,17 @@ mod command_surface_tests {
         }
     }
 
+    #[cfg(any(windows, target_os = "android"))]
+    const IPC_URL: &str = "http://tauri.localhost";
+    #[cfg(not(any(windows, target_os = "android")))]
+    const IPC_URL: &str = "tauri://localhost";
+
     fn request(command: &str) -> InvokeRequest {
         InvokeRequest {
             cmd: command.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "tauri://localhost".parse().unwrap(),
+            url: IPC_URL.parse().unwrap(),
             body: Default::default(),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_owned(),
@@ -849,8 +854,19 @@ mod command_surface_tests {
     #[test]
     fn registers_backup_commands_at_the_tauri_command_seam() {
         let (_app, window) = test_window();
-        assert!(get_ipc_response(&window, request("choose_backup_destination_command"),).is_ok());
-        assert!(get_ipc_response(&window, request("choose_restore_source_command")).is_ok());
+        for command in [
+            "choose_backup_destination_command",
+            "choose_restore_source_command",
+        ] {
+            let response = get_ipc_response(&window, request(command)).unwrap();
+            assert_eq!(
+                response
+                    .deserialize::<commands::backup::PathSelection>()
+                    .unwrap(),
+                commands::backup::PathSelection::Cancelled,
+                "{command} must return the test cancellation response",
+            );
+        }
         assert!(get_ipc_response(
             &window,
             request_with(
