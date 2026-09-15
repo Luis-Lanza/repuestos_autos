@@ -1,6 +1,6 @@
 const RESPONSE_KIND = { SUCCESS: "success", ERROR: "error" } as const;
 const ALERT_CLASSIFICATION = { OUT_OF_STOCK: "out_of_stock", LOW_STOCK: "low_stock" } as const;
-const ERROR_CODE = { INVALID_REQUEST: "invalid_request", INVALID_QUANTITY: "invalid_quantity", INVALID_COUNT: "invalid_count", REASON_REQUIRED: "reason_required", MISSING_PRODUCT: "missing_product", INACTIVE_PRODUCT: "inactive_product", UNCHANGED_COUNT: "unchanged_count", QUANTITY_OVERFLOW: "quantity_overflow", PERSISTED_DATA_INVALID: "persisted_data_invalid", PERSISTENCE_FAILURE: "persistence_failure" } as const;
+const ERROR_CODE = { INVALID_REQUEST: "invalid_request", INVALID_QUANTITY: "invalid_quantity", INVALID_COUNT: "invalid_count", REASON_REQUIRED: "reason_required", MISSING_PRODUCT: "missing_product", INACTIVE_PRODUCT: "inactive_product", UNCHANGED_COUNT: "unchanged_count", QUANTITY_OVERFLOW: "quantity_overflow", PERSISTED_DATA_INVALID: "persisted_data_invalid", REQUEST_CONFLICT: "request_conflict", PERSISTENCE_FAILURE: "persistence_failure" } as const;
 export interface StockEntryRequest { request_id: string; product_id: number; quantity: number; note: string | null; }
 export interface PhysicalCountRequest { request_id: string; product_id: number; count: number; reason: string; }
 export interface PersistedInventoryOperation { request_id: string; product_id: number; previous_quantity: number; quantity_delta: number; resulting_quantity: number; occurred_at: string; note: string | null; }

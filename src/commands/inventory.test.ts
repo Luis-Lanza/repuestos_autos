@@ -48,3 +48,8 @@ test("rejects fractional inventory quantities before invoking IPC", async () => 
   assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440212", product_id: 1, quantity: 1.5, note: null }), { kind: "error", code: "invalid_quantity", message: "The inventory operation could not be completed." });
   assert.deepEqual(await commands.confirmPhysicalCount({ request_id: "550e8400-e29b-41d4-a716-446655440213", product_id: 1, count: 1.5, reason: "counted" }), { kind: "error", code: "invalid_count", message: "The inventory operation could not be completed." });
 });
+
+test("preserves the stable request conflict code from inventory IPC", async () => {
+  const commands = createInventoryCommands(async () => ({ kind: "error", code: "request_conflict", message: "Native storage details" }));
+  assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440214", product_id: 1, quantity: 2, note: null }), { kind: "error", code: "request_conflict", message: "The inventory operation could not be completed." });
+});

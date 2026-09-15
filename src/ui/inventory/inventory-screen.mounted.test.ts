@@ -103,6 +103,24 @@ test("localizes failure and preserves retry", async () => {
   assert.ok(screen.getByRole("button", { name: "Reintentar" }));
 });
 
+test("shows a specific neutral message for reused inventory requests", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "search_products_command") return [product];
+    if (command === "confirm_stock_entry_command") return { kind: "error", code: "request_conflict", message: "Native storage and digest details" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen, {}));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  const feedback = await screen.findByRole("alert");
+  assert.match(feedback.textContent ?? "", /^El ID de solicitud ya fue usado con datos de inventario diferentes\. Reintentá con los datos correctos\./);
+  assert.equal(screen.queryByText(/Operación guardada/), null);
+  assert.doesNotMatch(feedback.textContent ?? "", /storage|digest|sqlite|database/i);
+  assert.ok(screen.getByRole("button", { name: "Reintentar" }));
+});
+
 test("clears the public stock cue while alerts load or are unavailable", async () => {
   let resolveAlerts!: (value: unknown) => void;
   let calls = 0;

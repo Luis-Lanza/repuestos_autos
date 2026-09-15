@@ -75,7 +75,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     if (!mounted.current) return;
     confirmLocked.current = false;
     if (response.kind === "success") { dispatch({ type: "confirmation_succeeded", result: response }); await refreshAlerts(); }
-    else dispatch({ type: "confirmation_failed", message: "No se pudo guardar la operación de inventario. Reintentá." });
+    else dispatch({ type: "confirmation_failed", message: response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : "No se pudo guardar la operación de inventario. Reintentá." });
   };
 
   const projection = projectedBalance(state);
