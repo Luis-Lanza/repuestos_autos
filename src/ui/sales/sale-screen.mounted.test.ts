@@ -15,9 +15,9 @@ document.head.append(style);
 const UUID = "550e8400-e29b-41d4-a716-446655440060";
 const RETRY_UUID = "550e8400-e29b-41d4-a716-446655440061";
 const products = [
-  { product_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, catalog_unit_price_centavos: 8550, revision: 2 },
-  { product_id: 2, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, catalog_unit_price_centavos: 12550, revision: 3 },
-  { product_id: 3, sku: "FIL-0", name: "Filtro agotado", category_name: "Filtros", available_quantity: 0, catalog_unit_price_centavos: 5000, revision: 1 },
+  { product_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, catalog_unit_price_centavos: 8550, list_price_centavos: 8550, minimum_sale_price_centavos: 8550, revision: 2 },
+  { product_id: 2, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, catalog_unit_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 12550, revision: 3 },
+  { product_id: 3, sku: "FIL-0", name: "Filtro agotado", category_name: "Filtros", available_quantity: 0, catalog_unit_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 5000, revision: 1 },
 ];
 const success = { kind: "success", sale_id: 9, request_id: UUID, status: "confirmed", confirmed_at: "2026-01-02T10:00:00Z", outcome: "confirmed", lines: [], payments: [], total_centavos: 8550 };
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -75,7 +75,7 @@ test("parses cash-only, QR-only and mixed Bs values into the exact command envel
     if (cash) await u.type(screen.getByRole("textbox", { name: "Efectivo recibido" }), cash);
     if (qr) await u.type(screen.getByRole("textbox", { name: "Pago QR" }), qr);
     await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" });
-    assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2 }], payment: { amount_tendered_centavos: expected[0], qr_applied_centavos: expected[1] } } });
+    assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: expected[0], qr_applied_centavos: expected[1] } } });
     view.unmount();
   }
 });
@@ -115,18 +115,19 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
   fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.change(controls[5], { target: { value: "1" } }); fireEvent.change(controls[6], { target: { value: "2" } }); fireEvent.click(controls[7]);
   assert.equal(confirms, 1); assert.equal(searches, 1); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
-  assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
+  assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
 });
 
-test("blocks a stale price until exact acknowledgement and retries with a fresh UUID", async () => {
-  installUuid(UUID, RETRY_UUID); const ids: string[] = []; let attempt = 0;
-  mockIPC((command, payload) => { if (command === "search_products_command") return [products[0]]; ids.push(String((payload?.request as { request_id: string }).request_id)); return ++attempt === 1 ? { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 9000, current_revision: 4 } : success; });
+test("blocks a backend minimum violation, preserves the draft, and focuses its final price", async () => {
+  installUuid(UUID, RETRY_UUID); let attempt = 0;
+  mockIPC((command) => command === "search_products_command" ? [products[0]] : (++attempt === 1 ? { kind: "minimum_price_violation", product_id: 1, current_minimum_unit_price_centavos: 9000 } : success));
   render(createElement(SaleScreen)); const u = await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
-  screen.getByText("El precio de Filtro aceite cambió de Bs 85,50 a Bs 90,00."); const accept = screen.getByRole("button", { name: "Aceptar precio actual" });
-  assert.equal(document.activeElement, accept); assert.equal((screen.getByRole("button", { name: "Confirmar venta" }) as HTMLButtonElement).disabled, true);
-  await u.click(accept); screen.getByText("Precio actual aceptado. Confirmá nuevamente para continuar.");
-  await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" }); assert.deepEqual(ids, [UUID, RETRY_UUID]);
+  const finalPrice = screen.getByRole("textbox", { name: "Precio de venta (Bs)" });
+  screen.getAllByText("El precio mínimo actual es Bs 90,00. Ajustá el precio de venta para continuar.");
+  assert.equal((finalPrice as HTMLInputElement).value, "85,50"); assert.equal(document.activeElement, finalPrice);
+  await u.clear(finalPrice); await u.type(finalPrice, "90,00"); await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("heading", { name: "Venta confirmada" });
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
@@ -169,8 +170,8 @@ test("replaces the draft with a stable persisted summary and resets through its 
   view.rerender(createElement(SaleScreen)); assert.equal(screen.getByRole("main").textContent, beforeMutation);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-persisted-summary[\s\S]*overflow-x: visible/);
   await u.click(screen.getByRole("button", { name: "Nueva venta" }));
-  response = { ...success, sale_id: 0, confirmed_at: "2026-08-14 10:42:00", lines: [{ product_id: 0, sku: "ZERO", product_name: "Valor cero", quantity: 0, unit_price_centavos: 0, line_total_centavos: 0 }], payments: [], total_centavos: 0 };
-  await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByText("Venta #0");
-  screen.getByText("14/08/2026, 10:42"); assert.ok(screen.getAllByText("Bs 0,00").length >= 3);
-  assert.equal(within(screen.getByRole("table", { name: "Pagos confirmados" })).queryAllByRole("row").length, 1);
+  response = { ...success, sale_id: 10, confirmed_at: "2026-08-14 10:42:00", lines: [{ product_id: 1, sku: "FIL-1", product_name: "Filtro aceite", quantity: 1, unit_price_centavos: 8_550, line_total_centavos: 8_550 }], payments: [{ method: "qr" as const, amount_applied_centavos: 8_550 }], total_centavos: 8_550 };
+  await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByText("Venta #10");
+  screen.getByText("14/08/2026, 10:42"); assert.ok(screen.getAllByText("Bs 85,50").length >= 3);
+  assert.equal(within(screen.getByRole("table", { name: "Pagos confirmados" })).queryAllByRole("row").length, 2);
 });
