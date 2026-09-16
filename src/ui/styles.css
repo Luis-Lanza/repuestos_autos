@@ -300,6 +300,7 @@ img, svg, video { max-inline-size: 100%; }
 [data-ui-sale-search] [data-ui-field] { margin: 0; }
 [data-ui-sale-list] { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 [data-ui-sale-list] > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); align-items: center; padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
+[data-ui-sale-cart] > li { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 [data-ui-sale-list] > li > div:first-child { display: grid; min-inline-size: 0; }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 

@@ -130,6 +130,27 @@ test("blocks a backend minimum violation, preserves the draft, and focuses its f
   await screen.findByRole("heading", { name: "Venta confirmada" });
 });
 
+test("keeps cart facts bounded when a final price error is mounted", async () => {
+  mockIPC((command) => command === "search_products_command" ? [products[0]] : Promise.reject(new Error("confirmation must be blocked")));
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  const finalPrice = screen.getByRole("textbox", { name: "Precio de venta (Bs)" });
+  await u.clear(finalPrice);
+  await u.type(finalPrice, "80");
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+
+  const cart = screen.getByRole("list", { name: "Carrito" });
+  assert.equal(cart.getAttribute("data-ui-sale-cart"), "true");
+  const line = within(cart).getByRole("listitem");
+  assert.equal(line.children.length, 5);
+  assert.equal(finalPrice.getAttribute("aria-invalid"), "true");
+  const errorId = finalPrice.getAttribute("aria-describedby");
+  assert.ok(errorId);
+  assert.equal(document.getElementById(errorId)?.textContent, "El precio de venta no puede ser menor que el precio mínimo de Bs 85,50.");
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*>\s*li\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-search\], \[data-ui-sale-list\] > li \{ grid-template-columns: minmax\(0, 1fr\);/s);
+});
+
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
   installUuid(); const pending = deferred<unknown>(); mockIPC((command) => command === "search_products_command" ? [products[0]] : pending.promise);
   const view = render(createElement(SaleScreen)); await addFirst(); fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" }));

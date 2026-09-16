@@ -114,7 +114,7 @@ export function SaleScreen() {
         discoveryFeedback, createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-sale-list": true }, catalogItems)),
       createElement(Panel, { label: "Carrito" } as never,
         state.lines.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "El carrito está vacío.") : null,
-        createElement("ul", { "aria-label": "Carrito", "data-ui-sale-list": true }, cartItems)),
+        createElement("ul", { "aria-label": "Carrito", "data-ui-sale-list": true, "data-ui-sale-cart": true }, cartItems)),
       createElement(Panel, { label: "Pago" } as never,
         createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, amount_tendered_centavos: undefined })); dispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }); } }) } as never),
         createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
