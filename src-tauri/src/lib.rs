@@ -302,6 +302,7 @@ type AppState = DatabaseState;
 fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
         search_products_command,
+        browse_products_command,
         confirm_sale_command,
         create_sale_return_command,
         cancel_sale_command,
@@ -309,6 +310,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         confirm_physical_count_command,
         list_inventory_alerts_command,
         list_catalog_maintenance_command,
+        list_catalog_categories_command,
         maintain_catalog_command,
         edit_catalog_command,
         catalog_metadata_detail_command,
@@ -449,6 +451,15 @@ fn search_products_command(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn browse_products_command(
+    state: tauri::State<AppState>,
+    request: commands::catalog::BrowseProductsRequest,
+) -> Result<commands::catalog::ProductBrowseResponse, String> {
+    state.with_read(|connection| Ok(commands::catalog::browse_products(connection, request)))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn confirm_sale_command(
     state: tauri::State<AppState>,
     request: commands::confirm_sale::ConfirmSaleRequest,
@@ -522,6 +533,14 @@ fn list_catalog_maintenance_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::catalog::CatalogMaintenanceListResponse, String> {
     state.with_read(commands::catalog::list_catalog_maintenance)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_catalog_categories_command(
+    state: tauri::State<AppState>,
+) -> Result<commands::catalog::CatalogMaintenanceListResponse, String> {
+    state.with_read(commands::catalog::list_catalog_categories)
 }
 
 #[cfg(feature = "desktop")]

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::application::catalog;
+use crate::application::catalog::{BrowseProductsInput, ProductActivityFilter, ProductStockFilter};
 use crate::domain::catalog::{CatalogActivity, CatalogIntent, CatalogTarget};
 use crate::infrastructure::sqlite::SqliteCatalogRepository;
 
@@ -8,6 +9,30 @@ use crate::infrastructure::sqlite::SqliteCatalogRepository;
 #[serde(deny_unknown_fields)]
 pub struct SearchProductsRequest {
     pub query: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowseProductsRequest {
+    pub query: Option<String>,
+    pub category_id: Option<i64>,
+    pub stock_state: String,
+    pub activity: String,
+    pub page: i64,
+    pub page_size: i64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProductBrowseResponse {
+    Success(catalog::ProductBrowsePage),
+    Error(CatalogBrowseError),
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct CatalogBrowseError {
+    pub code: &'static str,
+    pub message: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,13 +111,76 @@ pub struct CatalogMaintenanceError {
     pub message: &'static str,
 }
 
-pub use catalog::ProductSearchResult;
+pub use catalog::{ProductBrowseCategory, ProductBrowsePage, ProductBrowseResult, ProductSearchResult};
+
+pub fn browse_products(
+    connection: &rusqlite::Connection,
+    request: BrowseProductsRequest,
+) -> ProductBrowseResponse {
+    let stock_filter = match request.stock_state.as_str() {
+        "all" => ProductStockFilter::All,
+        "low_stock" => ProductStockFilter::LowStock,
+        "out_of_stock" => ProductStockFilter::OutOfStock,
+        "available" => ProductStockFilter::Available,
+        "alerts" => ProductStockFilter::Alerts,
+        _ => return ProductBrowseResponse::Error(browse_validation_error()),
+    };
+    let activity_filter = match request.activity.as_str() {
+        "active" => ProductActivityFilter::Active,
+        "archived" => ProductActivityFilter::Archived,
+        "all" => ProductActivityFilter::All,
+        _ => return ProductBrowseResponse::Error(browse_validation_error()),
+    };
+    if request.category_id.is_some_and(|id| id <= 0)
+        || request.page < 1
+        || request.page_size < 1
+        || request.page_size > 50
+    {
+        return ProductBrowseResponse::Error(browse_validation_error());
+    }
+    match catalog::browse_active_products(
+        connection,
+        &BrowseProductsInput {
+            query: request.query,
+            category_id: request.category_id,
+            stock_filter,
+            activity_filter,
+            page: request.page,
+            page_size: request.page_size,
+        },
+    ) {
+        Ok(page) => ProductBrowseResponse::Success(page),
+        Err(_) => ProductBrowseResponse::Error(browse_persistence_error()),
+    }
+}
 
 pub fn search_products(
     connection: &rusqlite::Connection,
     request: SearchProductsRequest,
 ) -> Result<Vec<ProductSearchResult>, String> {
     catalog::search_active_products(connection, &request.query)
+        .map_err(|_| "persistence_failure".into())
+}
+
+pub fn list_catalog_categories(
+    connection: &rusqlite::Connection,
+) -> Result<CatalogMaintenanceListResponse, String> {
+    connection
+        .prepare("SELECT id, name, active, revision FROM categories ORDER BY name LIMIT 100")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| {
+                    Ok(CatalogMaintenanceRecord {
+                        entity_id: row.get(0)?,
+                        target: "category",
+                        label: row.get(1)?,
+                        activity: activity_name(row.get(2)?),
+                        revision: row.get(3)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map(|records| CatalogMaintenanceListResponse::Success { records })
         .map_err(|_| "persistence_failure".into())
 }
 
@@ -284,6 +372,18 @@ fn activity(value: CatalogActivity) -> &'static str {
     match value {
         CatalogActivity::Active => "active",
         CatalogActivity::Archived => "archived",
+    }
+}
+fn browse_validation_error() -> CatalogBrowseError {
+    CatalogBrowseError {
+        code: "validation_error",
+        message: "Review the product browse filters and try again.",
+    }
+}
+fn browse_persistence_error() -> CatalogBrowseError {
+    CatalogBrowseError {
+        code: "persistence_failure",
+        message: "The product catalog could not be loaded.",
     }
 }
 fn validation_error() -> CatalogMaintenanceError {

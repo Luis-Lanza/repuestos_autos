@@ -1,13 +1,14 @@
 import { createElement, type ChangeEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
 
-import { ATTRIBUTE_FIELD_TYPE, CATALOG_INTENT, catalogMaintenanceCommands, type CatalogMaintenanceRecord, type CatalogMetadataDetail } from "../../commands/catalog.ts";
+import { ATTRIBUTE_FIELD_TYPE, CATALOG_INTENT, browseProducts, catalogMaintenanceCommands, type CatalogMaintenanceRecord, type CatalogMetadataDetail } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { createCatalogEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "./product-browser.ts";
 
 type Dispatch = (action: CatalogMaintenanceAction) => void;
 type SetForm = (form: CatalogEditForm) => void;
-type CatalogLoadCommands = Pick<typeof catalogMaintenanceCommands, "detail" | "list">;
+type CatalogLoadCommands = Pick<typeof catalogMaintenanceCommands, "detail" | "listCategories">;
 
 export function CatalogMaintenanceRecovery({ required, onReload }: { required: boolean; onReload: () => void }) {
   return required ? createElement(Action, { variant: "secondary", onClick: onReload }, "Recargar registros del catálogo") : null;
@@ -17,7 +18,7 @@ export function CatalogSuccessNotice({ notice }: { notice: string | null }) {
 }
 export async function loadCatalogRecords(commands: CatalogLoadCommands, dispatch: Dispatch) {
   dispatch({ type: "load_started" });
-  const response = await commands.list();
+  const response = await commands.listCategories();
   dispatch(response.kind === "success" ? { type: "loaded", records: response.records } : { type: "load_failed" });
 }
 export async function loadCatalogDetail(commands: CatalogLoadCommands, dispatch: Dispatch, setForm: SetForm, record: CatalogMaintenanceRecord) {
@@ -68,14 +69,30 @@ export function CatalogMaintenanceScreen() {
   const [form, setForm] = useState<CatalogEditForm | null>(null);
   const mounted = useRef(true);
   const attempt = useRef(0);
+  const browseAttempt = useRef(0);
+  const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, activity: "all" });
   const mutationLocked = useRef(false);
   useEffect(() => () => { mounted.current = false; attempt.current += 1; mutationLocked.current = true; }, []);
 
   const load = async () => {
     const current = ++attempt.current;
     dispatch({ type: "load_started" });
-    const response = await catalogMaintenanceCommands.list();
-    if (mounted.current && current === attempt.current) dispatch(response.kind === "success" ? { type: "loaded", records: response.records } : { type: "load_failed" });
+    const response = await catalogMaintenanceCommands.listCategories();
+    if (mounted.current && current === attempt.current) {
+      dispatch(response.kind === "success" ? { type: "loaded", records: response.records } : { type: "load_failed" });
+      if (response.kind === "success") void browseCatalogProducts();
+    }
+  };
+  const browseCatalogProducts = async (page = 1) => {
+    const current = ++browseAttempt.current;
+    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: "all", activity: browser.activity, page, request_id: current });
+    try {
+      const result = await browseProducts({ query: browser.query, category_id: browser.category_id, activity: browser.activity, page, page_size: 20 });
+      if (mounted.current && current === browseAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: current, result });
+    } catch {
+      if (!mounted.current || current !== browseAttempt.current) return;
+      browserDispatch({ type: "browse_failed", request_id: current, message: "La navegación paginada de productos no está disponible en esta versión." });
+    }
   };
   const loadDetail = async (record: CatalogMaintenanceRecord) => {
     const current = ++attempt.current;
@@ -128,6 +145,9 @@ export function CatalogMaintenanceScreen() {
   };
   const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : { ...current, [field]: value });
   const pending = state.status === "pending";
+  const submitBrowse = (event: FormEvent) => { event.preventDefault(); void browseCatalogProducts(browser.page); };
+  // The category-maintenance endpoint returns only bounded category records; product records come from the paged browser.
+  const visibleRecords = state.records;
 
   return createElement("main", { "aria-labelledby": "catalog-maintenance-heading" },
     createElement("h1", { id: "catalog-maintenance-heading" }, "Catálogo"),
@@ -137,10 +157,13 @@ export function CatalogMaintenanceScreen() {
     state.status === "unavailable" && !state.selected ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "El catálogo no está disponible. ", createElement(Action, { variant: "tertiary", onClick: reload }, "Reintentar catálogo"))) : null,
     createElement("div", { "data-ui-catalog-layout": true },
       createElement(Panel, { label: "Registros del catálogo" } as never,
+        createElement("h2", null, "Categorías"),
         state.status === "ready" && state.records.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "Todavía no hay registros del catálogo.") : null,
-        createElement("ul", { "data-ui-catalog-master": true }, state.records.map((record) => createElement("li", { key: `${record.target}-${record.entity_id}`, "data-ui-selected": state.selected?.target === record.target && state.selected.entity_id === record.entity_id || undefined },
+        createElement("ul", { "data-ui-catalog-master": true }, visibleRecords.map((record) => createElement("li", { key: `${record.target}-${record.entity_id}`, "data-ui-selected": state.selected?.target === record.target && state.selected.entity_id === record.entity_id || undefined },
           createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => void loadDetail(record), "aria-label": `Ver detalles de ${record.label}` }, createElement("span", null, createElement("strong", null, record.label), createElement("small", null, record.target === "product" ? "Producto" : "Categoría"), createElement(Badge, { kind: record.activity, text: record.activity === "active" ? "Activo" : "Archivado" }))),
           createElement(Action, { variant: record.activity === "active" ? "destructive" : "secondary", disabled: pending, onClick: () => void maintain(record) }, record.activity === "active" ? "Archivar" : "Reactivar"))))),
+        createElement("h2", null, "Productos"),
+        createElement(ProductBrowser, { state: browser, onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onActivityChange: (value) => browserDispatch({ type: "activity_changed", value }), showActivity: true, onSubmit: submitBrowse, onPageChange: (page) => void browseCatalogProducts(page), onSelect: (product) => void loadDetail({ target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision }), allowUnavailableSelection: true, actionLabel: "Editar" }),
       createElement(Panel, { label: "Detalle y edición" } as never,
         state.selected && !state.detail ? createElement("div", { "data-ui-catalog-identity": true }, createElement("strong", null, `Selección: ${state.selected.label}`), createElement(Badge, { kind: state.selected.activity, text: state.selected.activity === "active" ? "Activo" : "Archivado" })) : null,
         state.status === "loading" && state.selected ? createElement(Feedback, { kind: "loading" } as never, "Cargando el registro seleccionado…") : null,

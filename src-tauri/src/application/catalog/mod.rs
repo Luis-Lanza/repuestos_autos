@@ -275,6 +275,168 @@ pub struct ProductSearchResult {
     pub revision: i64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductStockFilter {
+    All,
+    LowStock,
+    OutOfStock,
+    Available,
+    Alerts,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductActivityFilter {
+    Active,
+    Archived,
+    All,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowseProductsInput {
+    pub query: Option<String>,
+    pub category_id: Option<i64>,
+    pub stock_filter: ProductStockFilter,
+    pub activity_filter: ProductActivityFilter,
+    pub page: i64,
+    pub page_size: i64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ProductBrowseResult {
+    pub product_id: i64,
+    pub category_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_name: String,
+    pub available_quantity: i64,
+    pub catalog_unit_price_centavos: i64,
+    pub list_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
+    pub revision: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct ProductBrowseCategory {
+    pub category_id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ProductBrowsePage {
+    pub products: Vec<ProductBrowseResult>,
+    pub categories: Vec<ProductBrowseCategory>,
+    pub page: i64,
+    pub page_size: i64,
+    pub total: i64,
+    pub total_pages: i64,
+}
+
+pub fn browse_active_products(
+    connection: &Connection,
+    input: &BrowseProductsInput,
+) -> Result<ProductBrowsePage> {
+    const MAX_PAGE_SIZE: i64 = 50;
+    if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let query = input.query.as_deref().and_then(normalized_search_query);
+    let stock_clause = match input.stock_filter {
+        ProductStockFilter::All => "1 = 1",
+        ProductStockFilter::LowStock => "s.quantity BETWEEN 1 AND 1",
+        ProductStockFilter::OutOfStock => "s.quantity = 0",
+        ProductStockFilter::Available => "s.quantity > 1",
+        ProductStockFilter::Alerts => "s.quantity <= 1",
+    };
+    let activity_clause = match input.activity_filter {
+        ProductActivityFilter::Active => "p.active = 1 AND c.active = 1",
+        ProductActivityFilter::Archived => "p.active = 0 AND c.active = 1",
+        ProductActivityFilter::All => "c.active = 1",
+    };
+    let (search_clause, category_clause) = if query.is_some() {
+        ("search.content MATCH ?1", if input.category_id.is_some() { "AND p.category_id = ?2" } else { "" })
+    } else {
+        ("1 = 1", if input.category_id.is_some() { "AND p.category_id = ?1" } else { "" })
+    };
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id
+         JOIN categories c ON c.id = p.category_id
+         JOIN stock_balances s ON s.product_id = p.id
+         WHERE {search_clause} {category_clause}
+           AND {activity_clause} AND {stock_clause}"
+    );
+    let mut count_args: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(ref query) = query { count_args.push(query); }
+    if let Some(ref category_id) = input.category_id { count_args.push(category_id); }
+    let total = connection.query_row(
+        &count_sql,
+        rusqlite::params_from_iter(count_args),
+        |row| row.get::<_, i64>(0),
+    )?;
+    let total_pages = (total + input.page_size - 1) / input.page_size;
+    let offset = (input.page - 1)
+        .checked_mul(input.page_size)
+        .ok_or(rusqlite::Error::InvalidQuery)?;
+    let limit_index = 1 + query.is_some() as usize + input.category_id.is_some() as usize;
+    let offset_index = limit_index + 1;
+    let products_sql = format!(
+        "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
+                p.list_price_centavos, p.minimum_unit_price_centavos, p.revision
+         FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id
+         JOIN categories c ON c.id = p.category_id
+         JOIN stock_balances s ON s.product_id = p.id
+         WHERE {search_clause} {category_clause}
+           AND {activity_clause} AND {stock_clause}
+         ORDER BY lower(p.name), p.id
+         LIMIT ?{limit_index} OFFSET ?{offset_index}"
+    );
+    let mut product_args: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(ref query) = query { product_args.push(query); }
+    if let Some(ref category_id) = input.category_id { product_args.push(category_id); }
+    product_args.push(&input.page_size);
+    product_args.push(&offset);
+    let products = connection
+        .prepare(&products_sql)?
+        .query_map(
+            rusqlite::params_from_iter(product_args),
+            |row| {
+                Ok(ProductBrowseResult {
+                    product_id: row.get(0)?,
+                    category_id: row.get(1)?,
+                    sku: row.get(2)?,
+                    name: row.get(3)?,
+                    category_name: row.get(4)?,
+                    available_quantity: row.get(5)?,
+                    catalog_unit_price_centavos: row.get(6)?,
+                    list_price_centavos: row.get(6)?,
+                    minimum_sale_price_centavos: row.get(7)?,
+                    revision: row.get(8)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>>>()?;
+    let mut categories = connection.prepare(
+        "SELECT id, name FROM categories WHERE active = 1 ORDER BY lower(name), id",
+    )?;
+    let categories = categories
+        .query_map([], |row| {
+            Ok(ProductBrowseCategory {
+                category_id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ProductBrowsePage {
+        products,
+        categories,
+        page: input.page,
+        page_size: input.page_size,
+        total,
+        total_pages,
+    })
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CategoryFieldInput {

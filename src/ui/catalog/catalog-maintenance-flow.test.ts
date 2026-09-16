@@ -61,7 +61,7 @@ test("keeps selected detail identity through failure and retries the same reques
   await loadCatalogDetail(commands, dispatch, (next) => { form = next; }, selected);
   assert.deepEqual(state.selected, selected);
   await reloadCatalogRecords(commands, dispatch, (next) => { form = next; }, state.selected);
-  assert.deepEqual(calls, ["catalog_metadata_detail_command", "list_catalog_maintenance_command", "catalog_metadata_detail_command"]);
+  assert.deepEqual(calls, ["catalog_metadata_detail_command", "list_catalog_categories_command", "catalog_metadata_detail_command"]);
   assert.equal(state.detail?.target, "category");
   assert.deepEqual(form, { name: "Filters", attribute_values: {} });
 });

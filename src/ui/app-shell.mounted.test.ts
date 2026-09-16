@@ -60,7 +60,7 @@ test("AppShell exposes identity and the six existing actions through persistent 
   assert.doesNotMatch(inventory.outerHTML, /badge|count|status|alert|warning|stock|dot/i);
 });
 
-test("App shows only the mounted Inventory-owned cue and clears it on screen replacement", async () => {
+test("App keeps the global Inventory alert count across screens and opens the alert filter", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [{ product_id: 7, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] };
     throw new Error(`Unexpected command: ${command}`);
@@ -73,7 +73,27 @@ test("App shows only the mounted Inventory-owned cue and clears it on screen rep
   await user.click(inventory);
   await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
   await user.click(within(navigation).getByRole("button", { name: "Ventas" }));
-  assert.equal(inventory.textContent, "Inventario");
+  assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/);
+  await user.click(inventory);
+  assert.ok(await screen.findByRole("combobox", { name: "Estado del stock" }));
+  assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "alerts");
+});
+
+test("clears the sidebar count while a refresh fails instead of retaining stale alert state", async () => {
+  let calls = 0;
+  mockIPC((command) => {
+    if (command !== "list_inventory_alerts_command") throw new Error(`Unexpected command: ${command}`);
+    calls += 1;
+    return calls === 1 ? { kind: "alerts", alerts: [{ product_id: 7, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] } : Promise.reject(new Error("refresh failed"));
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(App));
+  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  const inventory = within(navigation).getByRole("button", { name: "Inventario" });
+  await waitFor(() => assert.match(inventory.textContent ?? "", /1 alerta de stock/));
+  await user.click(within(navigation).getByRole("button", { name: "Ventas" }));
+  await waitFor(() => assert.doesNotMatch(inventory.textContent ?? "", /alerta de stock/));
+  assert.ok(calls >= 2);
 });
 
 test("screenAfter preserves the complete transition table and Sales fallback", () => {

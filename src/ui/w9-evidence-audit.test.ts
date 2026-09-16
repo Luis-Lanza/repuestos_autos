@@ -90,6 +90,7 @@ const ticket11RegistrationMarkers = [
 const ticket11RegistrationLineAllowlist = new Set([
   "use tauri::Manager;",
   "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
   "use tauri::{Manager, Runtime};",
   "#[cfg(all(feature = \"desktop\", not(test)))]",
   "#[cfg(all(feature = \"desktop\", test))]",
@@ -106,6 +107,7 @@ const ticket11RegistrationLineAllowlist = new Set([
   ".plugin(tauri_plugin_dialog::init())",
   ".invoke_handler(tauri::generate_handler![",
   "search_products_command,",
+  "browse_products_command,",
   "confirm_sale_command,",
   "create_sale_return_command,",
   "cancel_sale_command,",
@@ -113,8 +115,9 @@ const ticket11RegistrationLineAllowlist = new Set([
   "confirm_physical_count_command,",
   "list_inventory_alerts_command,",
   "list_catalog_maintenance_command,",
+  "list_catalog_categories_command,",
   "maintain_catalog_command,",
-  "edit_catalog_command,",
+  "edit_catalog_command",
   "catalog_metadata_detail_command,",
   "list_categories_command,",
   "create_category_command,",
@@ -122,6 +125,15 @@ const ticket11RegistrationLineAllowlist = new Set([
   "list_sales_history_command,",
   "])",
   "command_builder(builder.plugin(tauri_plugin_dialog::init()))",
+  "fn browse_products_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::catalog::BrowseProductsRequest,",
+  ") -> Result<commands::catalog::ProductBrowseResponse, String> {",
+  "state.with_read(|connection| Ok(commands::catalog::browse_products(connection, request)))",
+  "fn list_catalog_categories_command(",
+  ") -> Result<commands::catalog::CatalogMaintenanceListResponse, String> {",
+  "state.with_read(commands::catalog::list_catalog_categories)",
+  "commands::catalog::list_catalog_categories",
   "async fn choose_backup_destination_command(",
   "window: tauri::WebviewWindow,",
   "async fn choose_backup_destination_command<R: Runtime>(",
@@ -181,6 +193,18 @@ const ticket11RegistrationLineAllowlist = new Set([
   "}",
 ]);
 
+function assertCatalogRegistrationAllowlist(libDiff: string) {
+  const changedLines = libDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /browse_products_command/);
+  assert.match(libDiff, /list_catalog_categories_command/);
+  assert.ok(
+    changedLines.every((line) => ticket11RegistrationLineAllowlist.has(line.slice(1).trim())),
+    "unexpected Catalog command registration drift",
+  );
+}
+
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -208,7 +232,15 @@ function assertW9ProtectedDiffPolicy(
   baselineLockValue: Record<string, any>,
   libDiff: string,
 ) {
-  const allowedPaths = new Set(["package.json", "package-lock.json", "src-tauri/src/lib.rs"]);
+  const allowedPaths = new Set([
+    "package.json",
+    "package-lock.json",
+    "src-tauri/src/lib.rs",
+    "src/commands/catalog.ts",
+    "src/commands/catalog.test.ts",
+    "src-tauri/src/application/catalog/mod.rs",
+    "src-tauri/src/commands/catalog.rs",
+  ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
 
@@ -221,7 +253,8 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    assertTicket11RegistrationAllowlist(libDiff);
+    if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
+    else assertTicket11RegistrationAllowlist(libDiff);
   }
 }
 
@@ -319,8 +352,8 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
     ["src-tauri/src/application/catalog.rs"],
     ["src-tauri/Cargo.toml"],
     ["src-tauri/build.rs"],
-    ["src-tauri/src/commands/catalog.rs"],
-    ["src/commands/catalog.ts"],
+    ["src-tauri/src/commands/inventory.rs"],
+    ["src/commands/inventory.ts"],
   ]) {
     assert.throws(
       () => assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, ticket11Diff),
@@ -339,6 +372,18 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
   assert.throws(
     () => assertTicket11RegistrationAllowlist("+ fn unrelated_runtime_change() { native_runtime_drift(); }"),
     /missing ticket-11 marker|unexpected src-tauri\/src\/lib\.rs drift/,
+  );
+});
+
+test("W9 parses Catalog registration diffs by actual newline and rejects unrelated drift", () => {
+  const allowedCatalogDiff = [
+    "+ browse_products_command,",
+    "+ list_catalog_categories_command,",
+  ].join("\n");
+  assert.doesNotThrow(() => assertCatalogRegistrationAllowlist(allowedCatalogDiff));
+  assert.throws(
+    () => assertCatalogRegistrationAllowlist(`${allowedCatalogDiff}\n+ fn unrelated_catalog_runtime_change() { native_runtime_drift(); }`),
+    /unexpected Catalog command registration drift/,
   );
 });
 

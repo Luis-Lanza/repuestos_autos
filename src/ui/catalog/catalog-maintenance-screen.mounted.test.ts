@@ -10,6 +10,8 @@ import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
 
 const active = { entity_id: 1, target: "product", label: "Filtro Premium · FIL-PRE-014", activity: "active", revision: 7 };
 const archived = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
+const browseProduct = { product_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium", category_name: "Filtros", available_quantity: 0, catalog_unit_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 10000, revision: 7 };
+const browse = (products = [browseProduct]) => ({ kind: "success", products, categories: [{ category_id: 4, name: "Filtros" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const detail = {
   target: "product", entity_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium",
   list_price_centavos: 12550, minimum_sale_price_centavos: 10000, activity: "active", revision: 7,
@@ -24,7 +26,7 @@ const detail = {
 test("renders loading, empty, and a selected Spanish master-detail hierarchy", async () => {
   let resolveList!: (value: unknown) => void;
   mockIPC((command) => {
-    if (command === "list_catalog_maintenance_command") return new Promise((resolve) => { resolveList = resolve; });
+    if (command === "list_catalog_categories_command") return new Promise((resolve) => { resolveList = resolve; });
     if (command === "catalog_metadata_detail_command") return detail;
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -35,7 +37,7 @@ test("renders loading, empty, and a selected Spanish master-detail hierarchy", a
   assert.ok(await screen.findByText("Todavía no hay registros del catálogo."));
   view.unmount();
 
-  mockIPC((command) => command === "list_catalog_maintenance_command"
+  mockIPC((command) => command === "list_catalog_categories_command"
     ? { kind: "success", records: [active, archived] }
     : command === "catalog_metadata_detail_command" ? detail : Promise.reject(new Error(command)));
   render(createElement(CatalogMaintenanceScreen));
@@ -62,7 +64,7 @@ test("validates and focuses dynamic fields, then preserves edit and lifecycle co
   let maintainRequest: Record<string, unknown> | undefined;
   let edits = 0;
   mockIPC((command, payload) => {
-    if (command === "list_catalog_maintenance_command") return { kind: "success", records: [active] };
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [active] };
     if (command === "catalog_metadata_detail_command") return detail;
     if (command === "edit_catalog_command") { edits += 1; editRequest = payload?.request as Record<string, unknown>; return new Promise((resolve) => { resolveEdit = resolve; }); }
     if (command === "maintain_catalog_command") { maintainRequest = payload?.request as Record<string, unknown>; return { kind: "success", ...active, activity: "archived", revision: 8 }; }
@@ -96,7 +98,7 @@ test("validates and focuses dynamic fields, then preserves edit and lifecycle co
 
 test("focuses each validation field, including SKU and both prices", async () => {
   mockIPC((command) => {
-    if (command === "list_catalog_maintenance_command") return { kind: "success", records: [active] };
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [active] };
     if (command === "catalog_metadata_detail_command") return detail;
     throw new Error(command);
   });
@@ -133,7 +135,7 @@ test("distinguishes initial unavailable from empty and recovers selected unavail
   let lists = 0;
   let details = 0;
   mockIPC((command) => {
-    if (command === "list_catalog_maintenance_command") return ++lists === 1 ? { kind: "error", code: "catalog_unavailable" } : { kind: "success", records: [active] };
+    if (command === "list_catalog_categories_command") return ++lists === 1 ? { kind: "error", code: "catalog_unavailable" } : { kind: "success", records: [active] };
     if (command === "catalog_metadata_detail_command") return ++details === 1 ? { kind: "error", code: "catalog_unavailable" } : detail;
     throw new Error(command);
   });
@@ -152,7 +154,7 @@ test("does not let a stale reload chain supersede a newer selection", async () =
   let lists = 0, resolveReload!: (value: unknown) => void;
   const details: number[] = [];
   mockIPC((command, payload) => {
-    if (command === "list_catalog_maintenance_command") return ++lists === 1 ? { kind: "success", records: [active, archived] } : new Promise((resolve) => { resolveReload = resolve; });
+    if (command === "list_catalog_categories_command") return ++lists === 1 ? { kind: "success", records: [active, archived] } : new Promise((resolve) => { resolveReload = resolve; });
     if (command === "catalog_metadata_detail_command") { const id = (payload?.request as { entity_id: number }).entity_id; details.push(id); return id === 1 ? { kind: "error", code: "stale_catalog_record" } : { target: "category", entity_id: 2, name: "Encendido", activity: "archived", revision: 3, attribute_definitions: [] }; }
     throw new Error(command);
   });
@@ -169,7 +171,7 @@ test("does not let a stale reload chain supersede a newer selection", async () =
 test("keeps selected identity during unavailable and stale reload recovery", async () => {
   let details = 0;
   mockIPC((command) => {
-    if (command === "list_catalog_maintenance_command") return { kind: "success", records: [active] };
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [active] };
     if (command === "catalog_metadata_detail_command") return ++details === 1 ? { kind: "error", code: "stale_catalog_record", message: "Native" } : detail;
     throw new Error(command);
   });
@@ -191,7 +193,7 @@ test("does not resume the post-edit detail load after a newer selection", async 
   const newer = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
   const newerDetail = { target: "category", entity_id: 2, name: "Encendido", activity: "archived", revision: 3, attribute_definitions: [] };
   mockIPC((command, payload) => {
-    if (command === "list_catalog_maintenance_command") return ++lists === 1
+    if (command === "list_catalog_categories_command") return ++lists === 1
       ? { kind: "success", records: [active, newer] }
       : new Promise((resolve) => { resolveReload = resolve; });
     if (command === "catalog_metadata_detail_command") {
@@ -222,12 +224,28 @@ test("does not resume the post-edit detail load after a newer selection", async 
   assert.ok(screen.getByRole("textbox", { name: "Nombre de la categoría" }));
 });
 
+test("allows editing an out-of-stock product from the paged catalog browser", async () => {
+  mockIPC((command) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [{ entity_id: 4, target: "category", label: "Filtros", activity: "active", revision: 1 }] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return detail;
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const product = await screen.findByText("Filtro Premium");
+  assert.ok(product);
+  const edit = screen.getByRole("button", { name: "Editar" });
+  assert.equal((edit as HTMLButtonElement).disabled, false);
+  await userEvent.click(edit);
+  assert.ok(await screen.findByRole("textbox", { name: "Nombre del producto" }));
+});
+
 test("does not replace a newer selected detail when an older response resolves later", async () => {
   const newer = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
   const newerDetail = { target: "category", entity_id: 2, name: "Encendido", activity: "archived", revision: 3, attribute_definitions: [] };
   const detailResolvers = new Map<number, (value: unknown) => void>();
   mockIPC((command, payload) => {
-    if (command === "list_catalog_maintenance_command") return { kind: "success", records: [active, newer] };
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [active, newer] };
     if (command === "catalog_metadata_detail_command") {
       const entityId = (payload?.request as { entity_id: number }).entity_id;
       return new Promise((resolve) => detailResolvers.set(entityId, resolve));

@@ -1,13 +1,14 @@
 import { createElement, type ChangeEvent, type FormEvent, useCallback, useEffect, useReducer, useRef, useState } from "react";
 
-import { searchProducts } from "../../commands/catalog.ts";
+import { browseProducts, type ProductBrowseResult, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { createInventoryFlow, initialInventoryState, projectedBalance, type InventoryState } from "./inventory-flow.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
 
 export const inventoryScreenDescription = "Operaciones de entrada de stock y conteo físico.";
-type Product = Awaited<ReturnType<typeof searchProducts>>[number];
+type Product = ProductBrowseResult;
 type LoadState = "initial" | "loading" | "ready" | "unavailable";
 
 export function inventoryProductLabel(product: Product) { return `${product.sku} — ${product.name} (${product.available_quantity})`; }
@@ -17,52 +18,61 @@ export function InventoryProductResults({ products, onSelect }: { products: Prod
     createElement("li", { key: product.product_id }, createElement("span", null, inventoryProductLabel(product)), createElement(Action, { variant: "secondary", onClick: () => onSelect(product) }, "Seleccionar"))));
 }
 
-export function createInventoryCatalogInteraction(searchActiveProducts = searchProducts) {
-  return { search: searchActiveProducts, select: (product: Product) => ({ type: "product_selected" as const, product }) };
+export function createInventoryCatalogInteraction(searchActiveProducts: (query: string) => Promise<ProductSearchResult[]> = async () => []) {
+  return { search: searchActiveProducts, select: (product: Product | ProductSearchResult) => ({ type: "product_selected" as const, product }) };
 }
 
 export function InventoryOperationChoices({ operation, onChange, disabled = false }: { operation: InventoryState["operation"]; onChange: (operation: InventoryState["operation"]) => void; disabled?: boolean }) {
   return createElement(Field, { kind: "select", label: "Operación", control: createElement("select", { value: operation, disabled, onChange: (event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value as InventoryState["operation"]) }, createElement("option", { value: "stock_entry" }, "Entrada de stock"), createElement("option", { value: "physical_count" }, "Conteo físico")) } as never);
 }
 
-export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null) => void }) {
+export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null) => void; onInventoryAlertsRefresh?: () => void; initialStockState?: ProductStockState }) {
   const onAlertCueChange = props?.onAlertCueChange;
   const [state, dispatch] = useReducer(createInventoryFlow, initialInventoryState);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Product[]>([]);
-  const [searchState, setSearchState] = useState<LoadState>("initial");
+  const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
   const [alertState, setAlertState] = useState<LoadState>("loading");
   const mounted = useRef(true);
   const searchAttempt = useRef(0);
+  const alertAttempt = useRef(0);
   const confirmLocked = useRef(false);
   const catalog = createInventoryCatalogInteraction();
 
-  useEffect(() => () => { mounted.current = false; searchAttempt.current += 1; confirmLocked.current = true; }, []);
+  useEffect(() => () => { mounted.current = false; searchAttempt.current += 1; alertAttempt.current += 1; confirmLocked.current = true; }, []);
   const refreshAlerts = useCallback(async () => {
     setAlertState("loading");
-    onAlertCueChange?.(null);
+    const attempt = ++alertAttempt.current;
     const response = await inventoryCommands.listAlerts();
-    if (!mounted.current) return;
+    if (!mounted.current || attempt !== alertAttempt.current) return;
     if (response.kind === "success") { dispatch({ type: "alerts_refreshed", alerts: response.alerts }); setAlertState("ready"); }
     else setAlertState("unavailable");
-  }, [onAlertCueChange]);
+  }, []);
   useEffect(() => { void refreshAlerts(); }, [refreshAlerts]);
   useEffect(() => {
     const cue = alertState === "ready" && state.alerts.length ? `${state.alerts.length} ${state.alerts.length === 1 ? "alerta" : "alertas"} de stock` : null;
     onAlertCueChange?.(cue);
-    return () => onAlertCueChange?.(null);
   }, [alertState, state.alerts.length, onAlertCueChange]);
 
   const search = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const attempt = ++searchAttempt.current;
-    setSearchState("loading");
+    const attempt = Math.max(++searchAttempt.current, browser.request_id + 1);
+    searchAttempt.current = attempt;
+    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, activity: "active", page: 1, request_id: attempt });
     try {
-      const found = await catalog.search(query);
-      if (mounted.current && attempt === searchAttempt.current) { setResults(found); setSearchState("ready"); }
-    } catch {
-      if (mounted.current && attempt === searchAttempt.current) setSearchState("unavailable");
-    }
+      const page = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, page: 1, page_size: 20 });
+      if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result: page });
+    } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
+  };
+  useEffect(() => {
+    if (props.initialStockState === "alerts") void search({ preventDefault: () => undefined } as FormEvent<HTMLFormElement>);
+  }, []);
+  const changePage = async (page: number) => {
+    const attempt = Math.max(++searchAttempt.current, browser.request_id + 1);
+    searchAttempt.current = attempt;
+    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, activity: "active", page, request_id: attempt });
+    try {
+      const result = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, page, page_size: 20 });
+      if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
+    } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
   };
   const confirm = async () => {
     if (!state.product || confirmLocked.current) return;
@@ -74,8 +84,11 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
       : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason });
     if (!mounted.current) return;
     confirmLocked.current = false;
-    if (response.kind === "success") { dispatch({ type: "confirmation_succeeded", result: response }); await refreshAlerts(); }
-    else dispatch({ type: "confirmation_failed", message: response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : "No se pudo guardar la operación de inventario. Reintentá." });
+    if (response.kind === "success") {
+      dispatch({ type: "confirmation_succeeded", result: response });
+      props.onInventoryAlertsRefresh?.();
+      await refreshAlerts();
+    } else dispatch({ type: "confirmation_failed", message: response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : "No se pudo guardar la operación de inventario. Reintentá." });
   };
 
   const projection = projectedBalance(state);
@@ -90,14 +103,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     createElement("p", null, inventoryScreenDescription),
     createElement("div", { "data-ui-inventory-layout": true },
       createElement(Panel, { label: "Operación de inventario" } as never,
-        createElement("form", { onSubmit: search, "aria-busy": searchState === "loading" },
-          createElement(Field, { kind: "search", label: "Buscar producto", control: createElement("input", { value: query, disabled: pending, onChange: (event) => setQuery(event.target.value) }) } as never),
-          createElement(Action, { variant: "secondary", type: "submit", disabled: pending }, "Buscar")),
-        searchState === "initial" ? createElement(Feedback, { kind: "initial" } as never, "Seleccioná un producto para comenzar.")
-          : searchState === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Buscando productos…")
-          : searchState === "unavailable" ? createElement(Feedback, { kind: "error" } as never, "No se pudo buscar en el catálogo local. Reintentá.")
-          : results.length === 0 ? createElement(Feedback, { kind: "empty" } as never, `No encontramos productos para “${query}”.`)
-          : createElement(InventoryProductResults, { products: results, onSelect: (product) => dispatch(catalog.select(product)) }),
+        !state.product ? createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => dispatch(catalog.select(product)), actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
           createElement("div", { "data-ui-inventory-selection": true }, createElement("strong", null, state.product.name), createElement("span", { "data-ui-kind": "sku" }, `SKU: ${(state.product as Product).sku}`), createElement("span", null, `Stock actual: ${state.product.available_quantity}`)),
           createElement(InventoryOperationChoices, { operation: state.operation, disabled: pending, onChange: (operation) => dispatch({ type: "operation_changed", operation }) }),

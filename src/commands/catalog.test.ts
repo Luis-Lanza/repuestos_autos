@@ -1,9 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createCatalogMaintenanceCommands, createSearchProductsCommand } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogMaintenanceCommands, createSearchProductsCommand } from "./catalog.ts";
 
 const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
+const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9 }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+
+test("decodes the paged browse contract and sends optional filters in its request envelope", async () => {
+  const calls: unknown[] = [];
+  const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return browsePage; });
+  assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9 }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
+  assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "low_stock", activity: "active", page: 2, page_size: 20 } } }]);
+});
+
+test("rejects malformed paged browse responses without exposing native details", async () => {
+  for (const response of [null, { ...browsePage, products: [{ ...searchProduct, category_id: 0 }] }, { ...browsePage, total: -1 }, { ...browsePage, page_size: 51 }]) {
+    const browse = createBrowseProductsCommand(async () => response);
+    await assert.rejects(browse(), /product catalog/);
+  }
+});
 
 test("projects search products and strips native fields", async () => {
   const calls: unknown[] = [];
@@ -48,6 +63,13 @@ test("maps malformed maintenance results and invoke failures to an opaque failur
   const unavailable = createCatalogMaintenanceCommands(async () => { throw new Error("SQLite details"); });
   assert.deepEqual(await malformed.list(), { kind: "error", code: "persistence_failure", message: "The catalog could not be loaded." });
   assert.deepEqual(await unavailable.list(), { kind: "error", code: "persistence_failure", message: "The catalog could not be loaded." });
+});
+
+test("uses the bounded category-maintenance path separately from product browsing", async () => {
+  const calls: string[] = [];
+  const commands = createCatalogMaintenanceCommands(async (command) => { calls.push(command); return { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, product_count: 999 }] }; });
+  assert.deepEqual(await commands.listCategories(), { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0 }] });
+  assert.deepEqual(calls, ["list_catalog_categories_command"]);
 });
 
 test("projects successful maintenance records without backend-only fields", async () => {

@@ -1,10 +1,10 @@
 import { createElement, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
-import { searchProducts } from "../../commands/catalog.ts";
+import { browseProducts, type ProductBrowseResult } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sale.ts";
-import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
+import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { catalogResultDetails } from "./catalog-result.ts";
 import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, effectiveDraftUnitPriceCentavos, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
 import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
 
 const INVALID_BS = "Ingresá un monto válido en Bs, con hasta dos decimales.";
@@ -22,9 +22,9 @@ function finalPriceError(line: DraftLine): string | undefined {
   return price < line.minimum_price_centavos ? `El precio de venta no puede ser menor que el precio mínimo de ${formatBs(line.minimum_price_centavos)}.` : undefined;
 }
 
-export function SaleScreen() {
+export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}) {
   const [state, dispatch] = useReducer(createSaleFlow, initialSaleState);
-  const [query, setQuery] = useState("");
+  const [browser, browserDispatch] = useReducer(createProductBrowserFlow, initialProductBrowserState);
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
   const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null);
@@ -38,10 +38,23 @@ export function SaleScreen() {
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (confirming.current) return;
-    const attempt = ++searchSequence.current;
-    dispatch({ type: "catalog_search_started", query, request_id: attempt });
-    try { const results = await searchProducts(query); if (mounted.current && attempt === searchSequence.current) dispatch({ type: "catalog_search_succeeded", request_id: attempt, results }); }
-    catch { if (mounted.current && attempt === searchSequence.current) dispatch({ type: "catalog_search_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
+    const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
+    searchSequence.current = attempt;
+    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: "all", activity: "active", page: 1, request_id: attempt });
+    try {
+      const page = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: "all", page: 1, page_size: 20 });
+      if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result: page });
+    } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
+  }
+  async function changePage(page: number) {
+    if (page < 1 || confirming.current) return;
+    const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
+    searchSequence.current = attempt;
+    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: "all", activity: "active", page, request_id: attempt });
+    try {
+      const result = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: "all", page, page_size: 20 });
+      if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
+    } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
   }
 
   async function confirm() {
@@ -72,7 +85,7 @@ export function SaleScreen() {
     try {
       const response = await confirmSale(request);
       if (!mounted.current || attempt !== confirmationSequence.current) return;
-      if (response.kind === "success") { setPersistedDetails(projectPersistedSaleSummary(response)); dispatch({ type: "confirmation_succeeded", summary: response }); }
+      if (response.kind === "success") { setPersistedDetails(projectPersistedSaleSummary(response)); dispatch({ type: "confirmation_succeeded", summary: response }); props.onInventoryAlertsRefresh?.(); }
       else if (response.kind === "minimum_price_violation") dispatch({ type: "minimum_price_violation", ...response });
       else if (response.kind === "stale_catalog_record") dispatch({ type: "confirmation_failed", message: "El catálogo cambió. Revisá el precio de venta e intentá nuevamente." });
       else if (response.code === "invalid_final_price") dispatch({ type: "final_price_validation_failed", message: response.message });
@@ -81,19 +94,10 @@ export function SaleScreen() {
     finally { if (attempt === confirmationSequence.current) confirming.current = false; }
   }
 
-  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setPersistedDetails(null); setQuery(""); setPaymentErrors({}); dispatch({ type: "discard" }); } });
-  const discovery = state.catalog_discovery;
-  const discoveryFeedback = discovery.status === "initial" ? createElement(Feedback, { kind: "initial" } as never, "Buscá un producto para comenzar.") : discovery.status === "loading" ? createElement(Feedback, { kind: "loading", "aria-label": "Buscando productos…" } as never, "Buscando productos…") : discovery.status === "empty" ? createElement(Feedback, { kind: "empty" } as never, `No encontramos productos para “${discovery.query}”.`) : discovery.status === "error" ? createElement(Feedback, { kind: "error" } as never, discovery.error) : null;
+  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setPersistedDetails(null); browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current }); setPaymentErrors({}); dispatch({ type: "discard" }); } });
   const total = formatBs(draftTotalCentavos(state.lines));
   const pending = state.confirmation === "pending";
-  const catalogItems = discovery.results.map((product) => {
-    const details = catalogResultDetails(product, { inCart: state.lines.some((line) => line.product_id === product.product_id) });
-    return createElement("li", { key: details.product.id },
-      createElement("div", null, createElement("strong", null, details.product.name), createElement("span", { "data-ui-sku": true }, details.product.sku), createElement("span", null, details.product.category)),
-      createElement("span", { "data-ui-money": true }, details.price.text),
-      createElement(Badge, { kind: details.stock.kind === "low" ? "low-stock" : details.stock.kind === "out" ? "out-of-stock" : "available", text: details.stock.text }),
-      createElement(Action, { variant: "secondary", disabled: pending || details.availability !== "available", onClick: () => draftDispatch({ type: "add_product", product }) }, "Agregar"));
-  });
+  const addProduct = (product: ProductBrowseResult) => draftDispatch({ type: "add_product", product });
   const cartItems = state.lines.map((line) => createElement("li", { key: line.product_id },
     createElement("div", null,
       createElement("strong", null, line.product_name), createElement("span", { "data-ui-sku": true }, line.sku),
@@ -108,10 +112,7 @@ export function SaleScreen() {
     createElement("h1", { id: "sale-heading" }, "Ventas"),
     createElement("div", { "data-ui-sale-layout": true },
       createElement(Panel, { label: "Catálogo" } as never,
-        createElement("form", { onSubmit: search, "data-ui-sale-search": true },
-          createElement(Field, { kind: "search", label: "Buscar en el catálogo", control: createElement("input", { value: query, disabled: pending, onChange: (event) => { if (!confirming.current) setQuery(event.target.value); } }) } as never),
-          createElement(Action, { variant: "secondary", type: "submit", disabled: pending }, "Buscar")),
-        discoveryFeedback, createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-sale-list": true }, catalogItems)),
+        createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Carrito" } as never,
         state.lines.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "El carrito está vacío.") : null,
         createElement("ul", { "aria-label": "Carrito", "data-ui-sale-list": true, "data-ui-sale-cart": true }, cartItems)),
@@ -123,5 +124,5 @@ export function SaleScreen() {
         state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
         createElement("div", { "data-ui-sale-actions": true },
           createElement(Action, { variant: "primary", pending, pendingLabel: "Confirmando…", disabled: state.lines.length === 0, onClick: confirm }, "Confirmar venta"),
-          createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => { if (confirming.current) return; confirmationSequence.current += 1; draftDispatch({ type: "discard" }); setQuery(""); setPaymentErrors({}); } }, "Descartar borrador")))));
+          createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => { if (confirming.current) return; confirmationSequence.current += 1; draftDispatch({ type: "discard" }); browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current }); setPaymentErrors({}); } }, "Descartar borrador")))));
 }

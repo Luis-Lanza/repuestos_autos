@@ -7,7 +7,8 @@ import userEvent from "@testing-library/user-event";
 
 import { InventoryScreen } from "./inventory-screen.ts";
 
-const product = { product_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, revision: 0 };
+const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 0 };
+const browse = (products: typeof product[] = [product]) => ({ kind: "success", products, categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const success = (request_id: string) => ({ kind: "success", request_id, product_id: 1, previous_quantity: 10, quantity_delta: 3, resulting_quantity: 11, occurred_at: "2025-01-01T00:00:00Z", note: null });
 
 async function searchAndSelect() {
@@ -25,7 +26,7 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   let confirmations = 0;
   mockIPC((command, payload) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
-    if (command === "search_products_command") return [product];
+    if (command === "browse_products_command") return browse();
     if (command === "confirm_stock_entry_command") {
       confirmations += 1;
       requestId = String((payload?.request as { request_id?: unknown }).request_id);
@@ -51,6 +52,22 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   assert.ok(screen.getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
 });
 
+test("requests the owning App to refresh sidebar alerts after a successful mutation", async () => {
+  let ownerRefreshes = 0;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") return success("inventory-request");
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen, { onInventoryAlertsRefresh: () => { ownerRefreshes += 1; } }));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByText("Operación guardada. Stock actual: 11.");
+  assert.equal(ownerRefreshes, 1);
+});
+
 test("shows loading/no-results, physical-count validation, and exact prioritized stock cues", async () => {
   let searches = 0;
   let resolveSearch!: (value: unknown) => void;
@@ -60,7 +77,7 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
       { product_id: 2, product_name: "Bujía", quantity: 1, classification: "low_stock" },
       { product_id: 3, product_name: "Correa", quantity: 0, classification: "out_of_stock" },
     ] };
-    if (command === "search_products_command") return ++searches === 1 ? new Promise((resolve) => { resolveSearch = resolve; }) : [product];
+    if (command === "browse_products_command") return ++searches === 1 ? new Promise((resolve) => { resolveSearch = (value) => resolve(browse(value as typeof product[])); }) : browse();
     if (command === "confirm_physical_count_command") { physicalCount = (payload?.request as { count?: unknown }).count; return success("count-request"); }
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -88,10 +105,29 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   assert.match(items[1].textContent ?? "", /Stock bajo: 1.*Bujía/);
 });
 
+test("renders category and stock filters through the paged inventory browse contract", async () => {
+  const calls: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") { calls.push(payload); return browse(); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen, {}));
+  const user = userEvent.setup({ document });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Estado del stock" }), "out_of_stock");
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Categoría" }), "1");
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  assert.deepEqual(calls, [
+    { request: { query: null, category_id: null, stock_state: "out_of_stock", activity: "active", page: 1, page_size: 20 } },
+    { request: { query: null, category_id: 1, stock_state: "out_of_stock", activity: "active", page: 1, page_size: 20 } },
+  ]);
+});
+
 test("localizes failure and preserves retry", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
-    if (command === "search_products_command") return [product];
+    if (command === "browse_products_command") return browse();
     if (command === "confirm_stock_entry_command") return { kind: "error", code: "persistence_failure", message: "Native" };
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -106,7 +142,7 @@ test("localizes failure and preserves retry", async () => {
 test("shows a specific neutral message for reused inventory requests", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
-    if (command === "search_products_command") return [product];
+    if (command === "browse_products_command") return browse();
     if (command === "confirm_stock_entry_command") return { kind: "error", code: "request_conflict", message: "Native storage and digest details" };
     throw new Error(`Unexpected command: ${command}`);
   });
