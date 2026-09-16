@@ -8,6 +8,10 @@ use repuestos_autos::domain::{MoneyCentavos, Quantity, RequestId};
 use repuestos_autos::infrastructure::sqlite::sale_repository::SqliteSaleRepository;
 use repuestos_autos::infrastructure::sqlite::{open_database, production_database_config};
 
+fn money(value: i64) -> MoneyCentavos {
+    MoneyCentavos::new(value).unwrap()
+}
+
 fn request() -> ConfirmSaleRequest {
     ConfirmSaleRequest {
         request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440000").unwrap(),
@@ -64,6 +68,7 @@ fn authoritative_request(
                 })
                 .unwrap(),
                 captured_revision: 0,
+                final_unit_price: None,
                 acknowledged_price: None,
                 acknowledged_revision: None,
             })
@@ -153,6 +158,7 @@ fn captured_request(
             quantity: Quantity::new(1).unwrap(),
             captured_unit_price: MoneyCentavos::new(price).unwrap(),
             captured_revision: revision,
+            final_unit_price: None,
             acknowledged_price: acknowledged.map(|(price, _)| MoneyCentavos::new(price).unwrap()),
             acknowledged_revision: acknowledged.map(|(_, revision)| revision),
         }],
@@ -171,7 +177,7 @@ fn stale_prices_require_an_exact_acknowledgement_and_confirmed_lines_remain_hist
     let before = snapshot(&connection);
     connection
         .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 2700, revision = 1 WHERE id = 1",
+            "UPDATE products SET list_price_centavos = 2700, minimum_unit_price_centavos = 2700, revision = 1 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -187,7 +193,7 @@ fn stale_prices_require_an_exact_acknowledgement_and_confirmed_lines_remain_hist
     assert_eq!(snapshot(&connection), before);
     connection
         .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 2800, revision = 2 WHERE id = 1",
+            "UPDATE products SET list_price_centavos = 2800, minimum_unit_price_centavos = 2800, revision = 2 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -218,7 +224,7 @@ fn stale_prices_require_an_exact_acknowledgement_and_confirmed_lines_remain_hist
     .unwrap();
     connection
         .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 3000, revision = 3 WHERE id = 1",
+            "UPDATE products SET list_price_centavos = 3000, minimum_unit_price_centavos = 3000, revision = 3 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -278,7 +284,7 @@ fn rejects_invalid_authoritative_payments_without_persisting_any_effects() {
 #[test]
 fn rolls_back_later_stock_failure_and_allows_the_same_request_to_retry() {
     let mut connection = open_seeded_catalog().unwrap();
-    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000)", []).unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(
             "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 0)",
@@ -474,7 +480,7 @@ fn rejects_corrupt_confirmed_reservations_without_new_effects() {
 #[test]
 fn resolves_catalog_prices_in_request_order_and_writes_compatibility_snapshots() {
     let mut connection = open_seeded_catalog().unwrap();
-    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000)", []).unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(
             "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 4)",
@@ -525,7 +531,7 @@ fn reservation_conflicts_when_retry_identity_changes() {
     .unwrap();
     connection
         .execute(
-            "UPDATE products SET sku = 'REN-999', name = 'Renamed filter', minimum_unit_price_centavos = 9999 WHERE id = 1",
+            "UPDATE products SET sku = 'REN-999', name = 'Renamed filter', list_price_centavos = 9999, minimum_unit_price_centavos = 9999 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -585,7 +591,7 @@ fn reservation_conflicts_when_retry_identity_changes() {
 #[test]
 fn confirms_a_multi_line_cash_sale_with_persisted_stock_movements_and_summary() {
     let mut connection = open_seeded_catalog().unwrap();
-    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000)", []).unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(
             "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 4)",
@@ -622,7 +628,7 @@ fn confirms_a_multi_line_cash_sale_with_persisted_stock_movements_and_summary() 
 #[test]
 fn rolls_back_every_effect_when_a_later_line_has_insufficient_stock() {
     let mut connection = open_seeded_catalog().unwrap();
-    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000)", []).unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(
             "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 0)",
@@ -926,7 +932,7 @@ fn sqlite_enforces_foreign_keys_request_id_row_checks_and_immutable_movements() 
 #[test]
 fn authoritative_identity_replays_exactly_and_conflicts_without_effects() {
     let mut connection = open_seeded_catalog().unwrap();
-    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000)", []).unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(
             "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 4)",
@@ -1007,11 +1013,79 @@ fn authoritative_identity_replays_exactly_and_conflicts_without_effects() {
 }
 
 #[test]
+fn mixed_final_price_request_replays_exactly_and_conflicts_on_changed_identity() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filtro de aire', 1, 3000, 3000)", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 4)",
+            [],
+        )
+        .unwrap();
+    let request = |final_unit_price, legacy_captured_unit_price| ApplicationConfirmSaleRequest {
+        request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440153").unwrap(),
+        lines: vec![
+            ApplicationRequestedLine {
+                product_id: 1,
+                quantity: Quantity::new(1).unwrap(),
+                captured_unit_price: money(2_500),
+                captured_revision: 0,
+                final_unit_price: Some(money(final_unit_price)),
+                acknowledged_price: None,
+                acknowledged_revision: None,
+            },
+            ApplicationRequestedLine {
+                product_id: 3,
+                quantity: Quantity::new(1).unwrap(),
+                captured_unit_price: money(legacy_captured_unit_price),
+                captured_revision: 0,
+                final_unit_price: None,
+                acknowledged_price: None,
+                acknowledged_revision: None,
+            },
+        ],
+        payment: PaymentInput {
+            amount_tendered: None,
+            qr_applied: Some(money(final_unit_price + 3_000)),
+        },
+    };
+
+    let first = confirm_authoritative(&mut connection, request(2_750, 3_000)).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT payload_version FROM sales WHERE id = ?1",
+                [first.sale_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        2
+    );
+    let before_retry = snapshot(&connection);
+
+    let replay = confirm_authoritative(&mut connection, request(2_750, 3_000)).unwrap();
+    assert_eq!(replay, first);
+    assert_eq!(snapshot(&connection), before_retry);
+
+    assert_eq!(
+        confirm_authoritative(&mut connection, request(2_800, 3_000)),
+        Err(ConfirmSaleError::RequestConflict)
+    );
+    assert_eq!(snapshot(&connection), before_retry);
+
+    assert_eq!(
+        confirm_authoritative(&mut connection, request(2_750, 2_999)),
+        Err(ConfirmSaleError::RequestConflict)
+    );
+    assert_eq!(snapshot(&connection), before_retry);
+}
+
+#[test]
 fn acknowledged_price_and_revision_nullability_is_part_of_identity() {
     let mut connection = open_seeded_catalog().unwrap();
     connection
         .execute(
-            "UPDATE products SET minimum_unit_price_centavos = 2700, revision = 1 WHERE id = 1",
+            "UPDATE products SET list_price_centavos = 2700, minimum_unit_price_centavos = 2700, revision = 1 WHERE id = 1",
             [],
         )
         .unwrap();
@@ -1080,5 +1154,154 @@ fn malformed_persisted_identity_fails_closed_as_invalid_data() {
             captured_request(request_id, 2_500, 0, None),
         ),
         Err(ConfirmSaleError::PersistedDataInvalid),
+    );
+}
+
+
+#[test]
+fn explicit_final_price_uses_final_for_totals_and_persists_independent_snapshots() {
+    let mut connection = repuestos_autos::infrastructure::sqlite::open_seeded_catalog().unwrap();
+    let request = ApplicationConfirmSaleRequest {
+        request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440150").unwrap(),
+        lines: vec![ApplicationRequestedLine {
+            product_id: 1,
+            quantity: Quantity::new(2).unwrap(),
+            captured_unit_price: money(2_500),
+            captured_revision: 0,
+            final_unit_price: Some(money(2_750)),
+            acknowledged_price: None,
+            acknowledged_revision: None,
+        }],
+        payment: PaymentInput {
+            amount_tendered: None,
+            qr_applied: Some(money(5_500)),
+        },
+    };
+
+    let sale = ConfirmSaleUseCase::new(&mut connection, &SqliteSaleRepository)
+        .confirm(request)
+        .unwrap();
+
+    assert_eq!(sale.total, money(5_500));
+    assert_eq!(sale.lines[0].negotiated_unit_price, money(2_750));
+    assert_eq!(sale.lines[0].minimum_unit_price_snapshot, money(2_500));
+    assert_eq!(sale.lines[0].list_price_snapshot, Some(money(2_500)));
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT negotiated_unit_price_centavos, list_price_snapshot_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos FROM sale_lines WHERE sale_id = ?1",
+                [sale.sale_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap(),
+        (2_750, Some(2_500), 2_500, 5_500)
+    );
+    assert!(connection
+        .execute(
+            "UPDATE sale_lines SET list_price_snapshot_centavos = 3_100 WHERE sale_id = ?1",
+            [sale.sale_id],
+        )
+        .is_err());
+}
+
+#[test]
+fn explicit_final_price_below_reloaded_minimum_is_bounded_and_atomic() {
+    let mut connection = repuestos_autos::infrastructure::sqlite::open_seeded_catalog().unwrap();
+    connection
+        .execute(
+            "UPDATE products SET list_price_centavos = 2_700, minimum_unit_price_centavos = 2_700 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    let request = ApplicationConfirmSaleRequest {
+        request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440151").unwrap(),
+        lines: vec![ApplicationRequestedLine {
+            product_id: 1,
+            quantity: Quantity::new(1).unwrap(),
+            captured_unit_price: money(2_500),
+            captured_revision: 0,
+            final_unit_price: Some(money(2_600)),
+            acknowledged_price: None,
+            acknowledged_revision: None,
+        }],
+        payment: PaymentInput {
+            amount_tendered: None,
+            qr_applied: Some(money(2_600)),
+        },
+    };
+
+    assert_eq!(
+        ConfirmSaleUseCase::new(&mut connection, &SqliteSaleRepository).confirm(request),
+        Err(ConfirmSaleError::FinalPriceBelowMinimum {
+            product_id: 1,
+            current_minimum_unit_price: money(2_700),
+        })
+    );
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(connection.query_row("SELECT quantity FROM stock_balances WHERE product_id = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 8);
+}
+
+
+#[test]
+fn minimum_above_list_price_is_rejected_as_invalid_persisted_data() {
+    let mut connection = repuestos_autos::infrastructure::sqlite::open_seeded_catalog().unwrap();
+    connection
+        .execute_batch("DROP TRIGGER products_validate_price_update;")
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE products SET minimum_unit_price_centavos = 2_600 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    let request = ApplicationConfirmSaleRequest {
+        request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440154").unwrap(),
+        lines: vec![ApplicationRequestedLine {
+            product_id: 1,
+            quantity: Quantity::new(1).unwrap(),
+            captured_unit_price: money(2_600),
+            captured_revision: 0,
+            final_unit_price: Some(money(2_600)),
+            acknowledged_price: None,
+            acknowledged_revision: None,
+        }],
+        payment: PaymentInput {
+            amount_tendered: None,
+            qr_applied: Some(money(2_600)),
+        },
+    };
+
+    assert_eq!(
+        ConfirmSaleUseCase::new(&mut connection, &SqliteSaleRepository).confirm(request),
+        Err(ConfirmSaleError::PersistedDataInvalid)
+    );
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM sales", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+}
+
+#[test]
+fn changed_explicit_final_price_conflicts_on_request_id_reuse() {
+    let mut connection = repuestos_autos::infrastructure::sqlite::open_seeded_catalog().unwrap();
+    let request = |final_price| ApplicationConfirmSaleRequest {
+        request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440152").unwrap(),
+        lines: vec![ApplicationRequestedLine {
+            product_id: 1,
+            quantity: Quantity::new(1).unwrap(),
+            captured_unit_price: money(2_500),
+            captured_revision: 0,
+            final_unit_price: Some(money(final_price)),
+            acknowledged_price: None,
+            acknowledged_revision: None,
+        }],
+        payment: PaymentInput {
+            amount_tendered: None,
+            qr_applied: Some(money(final_price)),
+        },
+    };
+    ConfirmSaleUseCase::new(&mut connection, &SqliteSaleRepository)
+        .confirm(request(2_750))
+        .unwrap();
+    assert_eq!(
+        ConfirmSaleUseCase::new(&mut connection, &SqliteSaleRepository).confirm(request(2_800)),
+        Err(ConfirmSaleError::RequestConflict)
     );
 }

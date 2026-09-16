@@ -294,3 +294,95 @@ test("rejects unsafe, non-integer, negative, and non-positive values before invo
 
   assert.equal(invoked, false);
 });
+
+
+test("decodes non-positive final-price validation as a bounded field error", async () => {
+  const confirmSale = createConfirmSaleCommand(async () => ({
+    kind: "error",
+    code: "invalid_final_price",
+    message: "The final price must be positive.",
+  }));
+
+  assert.deepEqual(await confirmSale({
+    request_id: "550e8400-e29b-41d4-a716-446655440058",
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0, final_unit_price_centavos: 2500 }],
+    payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 },
+  }), {
+    kind: "error",
+    code: "invalid_final_price",
+    message: "The final price must be positive.",
+  });
+});
+
+test("decodes the bounded minimum-price violation and nullable snapshots", async () => {
+  const confirmSale = createConfirmSaleCommand(async () => ({
+    kind: "minimum_price_violation",
+    product_id: 1,
+    current_minimum_unit_price_centavos: 2_700,
+  }));
+  assert.deepEqual(await confirmSale({
+    request_id: "550e8400-e29b-41d4-a716-446655440058",
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+    payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_500 },
+  }), {
+    kind: "minimum_price_violation",
+    product_id: 1,
+    current_minimum_unit_price_centavos: 2_700,
+  });
+
+  const withSnapshots = createConfirmSaleCommand(async () => ({
+    kind: "success",
+    sale_id: 8,
+    request_id: "550e8400-e29b-41d4-a716-446655440059",
+    status: "confirmed",
+    confirmed_at: "2026-03-08T12:00:00Z",
+    outcome: "confirmed",
+    lines: [{ product_id: 1, sku: "SKU-1", product_name: "Filter", quantity: 1, unit_price_centavos: 2_750, minimum_unit_price_snapshot_centavos: 2_500, list_price_snapshot_centavos: null, line_total_centavos: 2_750 }],
+    payments: [{ method: "qr", amount_applied_centavos: 2_750 }],
+    total_centavos: 2_750,
+  }));
+  const result = await withSnapshots({
+    request_id: "550e8400-e29b-41d4-a716-446655440059",
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+    payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_750 },
+  });
+  assert.equal(result.kind, "success");
+  if (result.kind === "success") {
+    assert.equal(result.lines[0].minimum_unit_price_snapshot_centavos, 2_500);
+    assert.equal(result.lines[0].list_price_snapshot_centavos, null);
+   }
+ });
+
+test("rejects unsafe and nonpositive persisted sale facts", async () => {
+  const request = { request_id: "550e8400-e29b-41d4-a716-446655440060", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 } };
+  const valid = { kind: "success", sale_id: 7, request_id: request.request_id, status: "confirmed", confirmed_at: "now", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU", product_name: "Filter", quantity: 1, unit_price_centavos: 2500, line_total_centavos: 2500 }], payments: [{ method: "qr", amount_applied_centavos: 2500 }], total_centavos: 2500 };
+  const invalidResponses = [
+    { ...valid, sale_id: 0 },
+    { ...valid, sale_id: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, lines: [{ ...valid.lines[0], product_id: 0 }] },
+    { ...valid, lines: [{ ...valid.lines[0], quantity: 0 }] },
+    { ...valid, lines: [{ ...valid.lines[0], unit_price_centavos: -1 }] },
+    { ...valid, lines: [{ ...valid.lines[0], line_total_centavos: Number.MAX_SAFE_INTEGER + 1 }] },
+    { ...valid, payments: [{ method: "qr", amount_applied_centavos: -1 }] },
+    { ...valid, payments: [{ method: "cash", amount_applied_centavos: 1, amount_tendered_centavos: 0, change_given_centavos: 0 }] },
+    { ...valid, payments: [{ method: "cash", amount_applied_centavos: 1, amount_tendered_centavos: 1, change_given_centavos: -1 }] },
+    { ...valid, total_centavos: -1 },
+  ];
+  for (const response of invalidResponses) {
+    const confirmSale = createConfirmSaleCommand(async () => response);
+    assert.deepEqual(await confirmSale(request), { kind: "error", code: "persistence_failure", message: "The sale could not be persisted." });
+  }
+});
+
+test("rejects invalid stale identifiers, prices, and revisions", async () => {
+  const request = { request_id: "550e8400-e29b-41d4-a716-446655440061", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2500 } };
+  for (const response of [
+    { kind: "stale_catalog_record", product_id: 0, current_unit_price_centavos: 2500, current_revision: 1 },
+    { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 0, current_revision: 1 },
+    { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2500, current_revision: -1 },
+    { kind: "stale_catalog_record", product_id: Number.MAX_SAFE_INTEGER + 1, current_unit_price_centavos: 2500, current_revision: 1 },
+  ]) {
+    const confirmSale = createConfirmSaleCommand(async () => response);
+    assert.deepEqual(await confirmSale(request), { kind: "error", code: "persistence_failure", message: "The sale could not be persisted." });
+  }
+});

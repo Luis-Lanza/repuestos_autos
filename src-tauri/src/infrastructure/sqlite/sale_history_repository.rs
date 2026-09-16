@@ -17,6 +17,8 @@ type LineRow = (
     Option<String>,
     i64,
     i64,
+    Option<i64>,
+    Option<i64>,
     i64,
     i64,
     i64,
@@ -83,7 +85,7 @@ impl SaleHistoryDetailReader for SqliteSaleHistoryReader<'_> {
         let Some((sale_id, confirmed_at, status, total)) = sale else {
             return Ok(None);
         };
-        let mut lines_statement = self.0.prepare("SELECT id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, line_total_centavos, COALESCE((SELECT SUM(r.quantity) FROM sale_return_lines r WHERE r.sale_line_id = l.id), 0), COALESCE((SELECT c.restored_quantity FROM sale_cancellation_lines c WHERE c.sale_line_id = l.id), 0) FROM sale_lines l WHERE sale_id = ?1 ORDER BY id").map_err(|_| HistoryError::Persistence)?;
+        let mut lines_statement = self.0.prepare("SELECT id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, list_price_snapshot_centavos, line_total_centavos, COALESCE((SELECT SUM(r.quantity) FROM sale_return_lines r WHERE r.sale_line_id = l.id), 0), COALESCE((SELECT c.restored_quantity FROM sale_cancellation_lines c WHERE c.sale_line_id = l.id), 0) FROM sale_lines l WHERE sale_id = ?1 ORDER BY id").map_err(|_| HistoryError::Persistence)?;
         let lines = lines_statement
             .query_map([sale_id], |row| {
                 Ok((
@@ -96,6 +98,8 @@ impl SaleHistoryDetailReader for SqliteSaleHistoryReader<'_> {
                     row.get(6)?,
                     row.get(7)?,
                     row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
                 ))
             })
             .map_err(|_| HistoryError::Persistence)?
@@ -216,6 +220,8 @@ fn line_from_row(
         product_name,
         quantity,
         unit_price,
+        minimum_snapshot,
+        list_snapshot,
         line_total,
         returned,
         cancelled,
@@ -235,6 +241,8 @@ fn line_from_row(
         product_name,
         quantity: Quantity::new(quantity).map_err(|_| HistoryError::PersistedDataInvalid)?,
         unit_price_centavos: money(unit_price)?,
+        minimum_unit_price_snapshot_centavos: optional_money(minimum_snapshot)?,
+        list_price_snapshot_centavos: optional_money(list_snapshot)?,
         line_total_centavos: money(line_total)?,
         returned_quantity: returned,
         cancellation_restored_quantity: cancelled,
@@ -258,6 +266,9 @@ fn payment_from_row(
 }
 fn money(value: i64) -> Result<MoneyCentavos, HistoryError> {
     MoneyCentavos::new(value).map_err(|_| HistoryError::PersistedDataInvalid)
+}
+fn optional_money(value: Option<i64>) -> Result<Option<MoneyCentavos>, HistoryError> {
+    value.map(money).transpose()
 }
 fn count(value: i64) -> Result<u32, HistoryError> {
     u32::try_from(value).map_err(|_| HistoryError::PersistedDataInvalid)

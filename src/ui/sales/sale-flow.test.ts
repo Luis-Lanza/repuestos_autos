@@ -39,6 +39,8 @@ const brakePad: ProductSearchResult = {
   category_name: "Brakes",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_500,
+  list_price_centavos: 2_500,
+  minimum_sale_price_centavos: 2_500,
   revision: 0,
 };
 
@@ -74,6 +76,7 @@ test("rejects unsafe draft multiplication and accumulation", () => {
     ...createSaleFlow(initialSaleState, { type: "add_product", product: brakePad }).lines[0],
     quantity: Number.MAX_SAFE_INTEGER,
     captured_unit_price_centavos: 2,
+    final_price_input: "",
   };
   const halfMaxLine = {
     ...largeLine,
@@ -103,6 +106,9 @@ test("adds active search results as quantity-only sale intent", () => {
       quantity: 1,
       captured_unit_price_centavos: 2_500,
       captured_revision: 0,
+      list_price_centavos: 2_500,
+      minimum_price_centavos: 2_500,
+      final_price_input: "25,00",
     },
   ]);
 });
@@ -176,6 +182,18 @@ test("distinguishes catalog loading, empty, and error while retaining the query"
   assert.equal(failed.catalog_discovery.status, "error");
   assert.equal(failed.catalog_discovery.query, "correa");
   assert.equal(failed.catalog_discovery.error, "No se pudo buscar en el catálogo local.");
+});
+
+test("maps backend non-positive final price to the focused field error", () => {
+  const drafted = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
+  const invalid = createSaleFlow({ ...drafted, lines: [{ ...drafted.lines[0], final_price_input: "0" }] }, {
+    type: "final_price_validation_failed",
+    message: "The final price must be positive.",
+  });
+
+  assert.equal(invalid.price_errors[1], "El precio de venta debe ser mayor que cero.");
+  assert.equal(invalid.focus_price_product_id, 1);
+  assert.equal(invalid.feedback, "El precio de venta debe ser mayor que cero.");
 });
 
 test("requires acknowledgement for the exact current stale price and revision", () => {

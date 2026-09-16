@@ -30,7 +30,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 11] = [
+const MIGRATIONS: [&str; 14] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -45,6 +45,15 @@ const MIGRATIONS: [&str; 11] = [
     include_str!("../src/infrastructure/sqlite/migrations/0011_sale_idempotency_conflicts.sql"),
     include_str!(
         "../src/infrastructure/sqlite/migrations/0012_inventory_idempotency_conflicts.sql"
+    ),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0013_catalog_dual_pricing.sql"
+    ),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0014_sale_list_price_snapshot.sql"
+    ),
+    include_str!(
+        "../src/infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"
     ),
 ];
 
@@ -470,6 +479,24 @@ fn accepts_unlinked_legacy_v9_correction_movements() {
         CURRENT_SCHEMA_VERSION
     );
 
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_with_missing_v14_trigger() {
+    let directory = temporary_directory("missing-v14-trigger");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch("DROP TRIGGER confirmed_sale_lines_immutable_price;")
+        .unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&source).unwrap()),
+        Err(BackupValidationError::InvalidBackup)
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 

@@ -22,6 +22,7 @@ fn confirmed_sale_immediately_surfaces_a_derived_low_stock_alert() {
                 quantity: 1,
                 captured_unit_price_centavos: 2_500,
                 captured_revision: 0,
+                final_unit_price_centavos: None,
                 acknowledged_price_centavos: None,
                 acknowledged_revision: None,
             }],

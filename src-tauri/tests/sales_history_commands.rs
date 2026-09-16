@@ -13,7 +13,7 @@ fn insert_sale(connection: &rusqlite::Connection, id: i64, confirmed_at: &str) {
         .unwrap();
     connection
         .execute(
-            "INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos, sku_snapshot, product_name_snapshot) VALUES (?1, 1, 1, 2500, 2500, 2500, NULL, NULL)",
+            "INSERT INTO sale_lines (sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, list_price_snapshot_centavos, line_total_centavos, sku_snapshot, product_name_snapshot) VALUES (?1, 1, 1, 2500, 2000, 3000, 2500, NULL, NULL)",
             [id],
         )
         .unwrap();
@@ -60,6 +60,9 @@ fn sales_history_commands_project_tagged_read_only_outcomes() {
     assert_eq!(detail.lines[0].sku, None);
     assert_eq!(detail.lines[0].product_name, None);
     assert_eq!(detail.lines[0].quantity.value(), 1);
+    let detail_json = serde_json::to_value(&detail).unwrap();
+    assert_eq!(detail_json["lines"][0]["minimum_unit_price_snapshot_centavos"], 2000);
+    assert_eq!(detail_json["lines"][0]["list_price_snapshot_centavos"], 3000);
     assert_eq!(
         (
             detail.lines[0].returned_quantity,

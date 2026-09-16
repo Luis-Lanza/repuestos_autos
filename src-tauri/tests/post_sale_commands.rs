@@ -11,8 +11,8 @@ use repuestos_autos::{
 fn confirmed_sale(connection: &mut rusqlite::Connection) -> (i64, [i64; 2]) {
     connection
         .execute(
-            "INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) \
-             VALUES (3, 1, 'FLT-002', 'Filter two', 1, 3000)",
+            "INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) \
+             VALUES (3, 1, 'FLT-002', 'Filter two', 1, 3000, 3000)",
             [],
         )
         .unwrap();

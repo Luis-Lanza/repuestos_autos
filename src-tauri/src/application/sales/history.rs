@@ -90,6 +90,8 @@ pub struct HistoricalLine {
     pub product_name: Option<String>,
     pub quantity: Quantity,
     pub unit_price_centavos: MoneyCentavos,
+    pub minimum_unit_price_snapshot_centavos: Option<MoneyCentavos>,
+    pub list_price_snapshot_centavos: Option<MoneyCentavos>,
     pub line_total_centavos: MoneyCentavos,
     pub returned_quantity: i64,
     pub cancellation_restored_quantity: i64,

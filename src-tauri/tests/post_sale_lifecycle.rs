@@ -27,7 +27,7 @@ fn scalar<P: rusqlite::Params>(connection: &Connection, sql: &str, params: P) ->
 }
 
 fn confirm_two_line_sale(connection: &mut Connection) -> i64 {
-    connection.execute("INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filter two', 1, 3000)", []).unwrap();
+    connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filter two', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(
             "INSERT INTO stock_balances (product_id, quantity) VALUES (3, 4)",
@@ -185,7 +185,7 @@ fn sqlite_post_sale_lifecycle_commits_and_rolls_back_in_a_migrated_database() {
                 .repository_transaction()
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            10
+            15
         );
         transaction
             .repository_transaction()

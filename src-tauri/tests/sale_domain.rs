@@ -1,5 +1,5 @@
 use repuestos_autos::domain::sales::{
-    Payment, PaymentBreakdown, PaymentError, PaymentInput, Sale, SaleLine,
+    Payment, PaymentBreakdown, PaymentError, PaymentInput, Sale, SaleError, SaleLine,
 };
 use repuestos_autos::domain::{MoneyCentavos, Quantity, RequestId};
 
@@ -54,10 +54,91 @@ fn priced_line_exposes_the_authoritative_unit_price_and_checked_total() {
     assert_eq!(priced.unit_price(), money(2_500));
     assert_eq!(priced.total(), money(5_000));
 }
+
+#[test]
+fn agreed_line_keeps_final_list_and_minimum_prices_independent() {
+    let agreed = SaleLine::agreed(
+        1,
+        Quantity::new(2).unwrap(),
+        money(2_750),
+        Some(money(3_000)),
+        money(2_500),
+    )
+    .unwrap();
+
+    assert_eq!(agreed.unit_price(), money(2_750));
+    assert_eq!(agreed.list_price_snapshot(), Some(money(3_000)));
+    assert_eq!(agreed.minimum_unit_price_snapshot(), money(2_500));
+    assert_eq!(agreed.total(), money(5_500));
+}
+
+#[test]
+fn agreed_line_rejects_minimum_price_above_list_price() {
+    assert_eq!(
+        SaleLine::agreed(
+            1,
+            Quantity::new(1).unwrap(),
+            money(3_500),
+            Some(money(3_000)),
+            money(3_001),
+        ),
+        Err(SaleError::MinimumPriceAboveListPrice),
+    );
+}
+
+#[test]
+fn agreed_line_accepts_minimum_equal_to_list_price() {
+    let agreed = SaleLine::agreed(
+        1,
+        Quantity::new(1).unwrap(),
+        money(3_000),
+        Some(money(3_000)),
+        money(3_000),
+    )
+    .unwrap();
+
+    assert_eq!(agreed.list_price_snapshot(), Some(money(3_000)));
+}
+
+#[test]
+fn agreed_line_accepts_legacy_missing_list_price_snapshot() {
+    let agreed = SaleLine::agreed(
+        1,
+        Quantity::new(1).unwrap(),
+        money(3_000),
+        None,
+        money(3_000),
+    )
+    .unwrap();
+
+    assert_eq!(agreed.list_price_snapshot(), None);
+}
+
+#[test]
+fn agreed_line_rejects_non_positive_or_below_minimum_final_prices() {
+    assert!(SaleLine::agreed(
+        1,
+        Quantity::new(1).unwrap(),
+        money(0),
+        Some(money(3_000)),
+        money(2_500),
+    )
+    .is_err());
+    assert!(SaleLine::agreed(
+        1,
+        Quantity::new(1).unwrap(),
+        money(2_499),
+        Some(money(3_000)),
+        money(2_500),
+    )
+    .is_err());
+}
+
 #[test]
 fn priced_line_rejects_checked_total_overflow() {
     assert!(SaleLine::priced(1, Quantity::new(2).unwrap(), money(i64::MAX)).is_err());
 }
+
 #[test]
 fn cash_only_derives_exact_applied_amount_and_change() {
     assert_eq!(
@@ -69,6 +150,7 @@ fn cash_only_derives_exact_applied_amount_and_change() {
         }]
     );
 }
+
 #[test]
 fn cash_only_exact_tender_has_zero_change() {
     assert_eq!(
@@ -80,6 +162,7 @@ fn cash_only_exact_tender_has_zero_change() {
         }]
     );
 }
+
 #[test]
 fn qr_only_derives_one_qr_payment() {
     assert_eq!(
@@ -89,6 +172,7 @@ fn qr_only_derives_one_qr_payment() {
         }]
     );
 }
+
 #[test]
 fn mixed_payment_emits_qr_before_cash_and_derives_exact_or_change() {
     assert_eq!(
@@ -113,6 +197,7 @@ fn mixed_payment_emits_qr_before_cash_and_derives_exact_or_change() {
         ]
     );
 }
+
 #[test]
 fn explicit_zero_qr_creates_no_qr_row() {
     let payments = derive(5_000, Some(5_000), Some(0))
@@ -122,6 +207,7 @@ fn explicit_zero_qr_creates_no_qr_row() {
     assert_eq!(payments.len(), 1);
     assert!(matches!(payments[0], Payment::Cash { .. }));
 }
+
 #[test]
 fn qr_above_total_is_rejected() {
     assert_eq!(
@@ -129,6 +215,7 @@ fn qr_above_total_is_rejected() {
         Err(PaymentError::QrExceedsTotal)
     );
 }
+
 #[test]
 fn missing_or_insufficient_cash_for_remaining_total_is_rejected() {
     assert_eq!(
@@ -140,6 +227,7 @@ fn missing_or_insufficient_cash_for_remaining_total_is_rejected() {
         Err(PaymentError::InsufficientCashTender)
     );
 }
+
 #[test]
 fn positive_cash_tender_after_full_qr_is_rejected() {
     assert_eq!(
@@ -147,6 +235,7 @@ fn positive_cash_tender_after_full_qr_is_rejected() {
         Err(PaymentError::UnexpectedCashTender)
     );
 }
+
 #[test]
 fn zero_tender_after_full_qr_creates_no_cash_row() {
     assert_eq!(
@@ -156,6 +245,7 @@ fn zero_tender_after_full_qr_creates_no_cash_row() {
         }]
     );
 }
+
 #[test]
 fn sale_rejects_empty_lines() {
     assert!(Sale::new(vec![], vec![]).is_err());

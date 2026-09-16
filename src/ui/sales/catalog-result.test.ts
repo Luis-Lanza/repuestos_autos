@@ -11,6 +11,8 @@ const brakePad: ProductSearchResult = {
   category_name: "Frenos",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_509,
+  list_price_centavos: 2_509,
+  minimum_sale_price_centavos: 2_509,
   revision: 0,
 };
 

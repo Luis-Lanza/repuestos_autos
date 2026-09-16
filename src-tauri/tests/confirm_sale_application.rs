@@ -169,6 +169,7 @@ fn requested_line(product_id: i64) -> ApplicationRequestedLine {
         quantity: Quantity::new(1).unwrap(),
         captured_unit_price: money(2_500),
         captured_revision: 0,
+        final_unit_price: None,
         acknowledged_price: None,
         acknowledged_revision: None,
     }
@@ -186,6 +187,7 @@ fn summary() -> PersistedSaleSummary {
             quantity: Quantity::new(1).unwrap(),
             negotiated_unit_price: money(2_500),
             minimum_unit_price_snapshot: money(2_500),
+            list_price_snapshot: None,
             line_total: money(2_500),
         }],
         payments: vec![Payment::cash(money(2_500), money(3_000), money(500)).unwrap()],

@@ -310,6 +310,20 @@ test("maps malformed history response fields and invoke rejections to persistenc
   assert.deepEqual(await rejected.detail(71), failure);
 });
 
+test("preserves nullable historical snapshots only when null", async () => {
+  const value = wire();
+  const original = originalLine(value);
+  original.minimum_unit_price_snapshot_centavos = null;
+  original.list_price_snapshot_centavos = null;
+  const commands = createSalesHistoryCommands(async () => value.detail);
+  const result = await commands.detail(71);
+  assert.equal(result.kind, "success");
+  if (result.kind === "success") {
+    assert.equal(result.detail.lines[0].minimum_unit_price_snapshot_centavos, null);
+    assert.equal(result.detail.lines[0].list_price_snapshot_centavos, null);
+  }
+});
+
 test("preserves server correction order and accepts the current uncorrected shape", async () => {
   const corrected = wire();
   const detail = detailValue(corrected);
@@ -369,4 +383,34 @@ test("preserves server correction order and accepts the current uncorrected shap
     uncorrected.list,
   );
   assert.deepEqual(await legacy.detail(71), uncorrected.detail);
+});
+
+test("rejects negative and unsafe history facts by field", async () => {
+  const cases: Array<[Method, Mutation]> = [
+    ["list", (value) => (summaryValue(value).sale_id = 0)],
+    ["list", (value) => (summaryValue(value).line_count = -1)],
+    ["list", (value) => (summaryValue(value).payment_count = Number.MAX_SAFE_INTEGER + 1)],
+    ["list", (value) => (summaryValue(value).total_centavos = -1)],
+    ["detail", (value) => (detailValue(value).sale_id = Number.MAX_SAFE_INTEGER + 1)],
+    ["detail", (value) => (originalLine(value).product_id = -1)],
+    ["detail", (value) => (originalLine(value).quantity = 0)],
+    ["detail", (value) => (originalLine(value).unit_price_centavos = -1)],
+    ["detail", (value) => (originalLine(value).line_total_centavos = Number.MAX_SAFE_INTEGER + 1)],
+    ["detail", (value) => (originalLine(value).returned_quantity = -1)],
+    ["detail", (value) => (originalLine(value).cancellation_restored_quantity = Number.MAX_SAFE_INTEGER + 1)],
+    ["detail", (value) => (originalLine(value).minimum_unit_price_snapshot_centavos = -1)],
+    ["detail", (value) => (originalLine(value).minimum_unit_price_snapshot_centavos = undefined)],
+    ["detail", (value) => (originalLine(value).list_price_snapshot_centavos = Number.MAX_SAFE_INTEGER + 1)],
+    ["detail", (value) => (payment(value).amount_applied_centavos = -1)],
+    ["detail", (value) => (payment(value).amount_tendered_centavos = Number.MAX_SAFE_INTEGER + 1)],
+    ["detail", (value) => (payment(value).change_given_centavos = -1)],
+    ["detail", (value) => (returnedLine(value).quantity = -1)],
+    ["detail", (value) => (cancelledLine(value).restored_quantity = Number.MAX_SAFE_INTEGER + 1)],
+  ];
+  for (const [method, mutate] of cases) {
+    const value = wire();
+    mutate(value);
+    const commands = createSalesHistoryCommands(async (command) => command === "list_sales_history_command" ? value.list : value.detail);
+    assert.deepEqual(await call(commands, method), failure);
+  }
 });

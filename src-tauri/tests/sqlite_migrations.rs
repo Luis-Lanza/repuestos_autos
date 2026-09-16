@@ -1,6 +1,6 @@
 use repuestos_autos::infrastructure::sqlite::{
-    migration_compatibility, open_database, production_database_config, MigrationCompatibility,
-    CURRENT_SCHEMA_VERSION,
+    migration_compatibility, open_database, open_seeded_catalog, production_database_config,
+    MigrationCompatibility, CURRENT_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,24 @@ const VERSION_SEVEN_MIGRATION: &str =
     include_str!("../src/infrastructure/sqlite/migrations/0007_catalog_maintenance.sql");
 const VERSION_EIGHT_MIGRATION: &str = include_str!(
     "../src/infrastructure/sqlite/migrations/0008_catalog_metadata_name_uniqueness.sql"
+);
+const VERSION_NINE_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0009_sales_history_index.sql"
+);
+const VERSION_TEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0010_post_sale_lifecycle.sql"
+);
+const VERSION_ELEVEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0011_sale_idempotency_conflicts.sql"
+);
+const VERSION_TWELVE_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0012_inventory_idempotency_conflicts.sql"
+);
+const VERSION_THIRTEEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0013_catalog_dual_pricing.sql"
+);
+const VERSION_FOURTEEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0014_sale_list_price_snapshot.sql"
 );
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -76,6 +94,20 @@ fn create_version_eight_database(directory: &Path) -> PathBuf {
     connection.pragma_update(None, "user_version", 8).unwrap();
     path
 }
+fn create_version_twelve_database(directory: &Path) -> PathBuf {
+    let path = create_version_eight_database(directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_NINE_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 9).unwrap();
+    connection.execute_batch(VERSION_TEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 10).unwrap();
+    connection.execute_batch(VERSION_ELEVEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 11).unwrap();
+    connection.execute_batch(VERSION_TWELVE_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 12).unwrap();
+    path
+}
+
 fn user_version(path: &Path) -> i64 {
     Connection::open(path)
         .unwrap()
@@ -366,7 +398,7 @@ fn version_six_enforces_each_movement_type_composite_links_and_immutability() {
     let directory = temporary_directory("migration-v6-invariants");
     let path = create_version_five_database(&directory);
     let connection = open_database(&production_database_config(&directory)).unwrap();
-    connection.execute_batch("INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta) VALUES (41, 1, 'opening_stock', 1); INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (42, 1, 'stock_entry', 1, 'entry', 9); INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason) VALUES (43, 1, 10, 20, 'sale', -1, NULL), (44, 1, 10, 20, 'return', 1, NULL), (46, 1, 10, 20, 'cancellation', 1, 'reversed'); INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, reason, request_id, counted_quantity, resulting_quantity) VALUES (45, 1, 'adjustment', -1, 'counted', 'adjustment', 7, 7); INSERT INTO products (id, category_id, sku, name, active, minimum_unit_price_centavos) VALUES (2, 1, 'OTHER', 'Other', 1, 1);").unwrap();
+    connection.execute_batch("INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta) VALUES (41, 1, 'opening_stock', 1); INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (42, 1, 'stock_entry', 1, 'entry', 9); INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason) VALUES (43, 1, 10, 20, 'sale', -1, NULL), (44, 1, 10, 20, 'return', 1, NULL), (46, 1, 10, 20, 'cancellation', 1, 'reversed'); INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, reason, request_id, counted_quantity, resulting_quantity) VALUES (45, 1, 'adjustment', -1, 'counted', 'adjustment', 7, 7); INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (2, 1, 'OTHER', 'Other', 1, 1, 1);").unwrap();
     for invalid in ["INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, request_id, resulting_quantity) VALUES (1, 'stock_entry', -1, 'bad-sign', 1)", "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta) VALUES (1, 'sale', -1)", "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, request_id, counted_quantity, resulting_quantity) VALUES (1, 'adjustment', 1, ' ', 'bad-reason', 1, 1)", "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (1, 10, 20, 'cancellation', 1)", "INSERT INTO inventory_movements (product_id, sale_id, sale_line_id, movement_type, quantity_delta) VALUES (2, 10, 20, 'return', 1)"] {
         assert!(connection.execute(invalid, []).is_err());
     }
@@ -421,11 +453,126 @@ fn migrates_v8_history_index_preserving_facts_and_reopens_with_normalized_unique
             .unwrap(),
         "kept"
     );
-    assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) SELECT category_id, 'NEW-001', lower(trim(name)), 1, 1 FROM products WHERE id = 1", []).is_err());
+    assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) SELECT category_id, 'NEW-001', lower(trim(name)), 1, 1, 1 FROM products WHERE id = 1", []).is_err());
     drop(connection);
     drop(open_database(&config).unwrap());
     std::fs::remove_dir_all(directory).unwrap();
 }
+#[test]
+fn migration_v14_adds_nullable_immutable_list_snapshots_without_fabricating_legacy_facts() {
+    let directory = temporary_directory("migration-v14-list-snapshot");
+    let path = create_version_twelve_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_THIRTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 13).unwrap();
+    connection.execute_batch(VERSION_FOURTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 14).unwrap();
+    drop(connection);
+
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
+    assert!(connection
+        .query_row(
+            "SELECT list_price_snapshot_centavos IS NULL FROM sale_lines WHERE id = 20",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap());
+    assert!(connection
+        .execute(
+            "UPDATE sale_lines SET list_price_snapshot_centavos = 3001 WHERE id = 20",
+            [],
+        )
+        .is_err());
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn migrates_schema_v12_to_explicit_positive_list_and_minimum_prices() {
+    let directory = temporary_directory("migration-v13-prices");
+    let path = create_version_twelve_database(&directory);
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        connection
+            .query_row("SELECT list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1", [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+            .unwrap(),
+        (2_500, 2_500)
+    );
+    assert!(!connection.query_row("SELECT EXISTS (SELECT 1 FROM products WHERE list_price_centavos <= 0 OR minimum_unit_price_centavos <= 0 OR minimum_unit_price_centavos > list_price_centavos)", [], |row| row.get::<_, bool>(0)).unwrap());
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_non_positive_legacy_minimum_before_schema_v13_advancement() {
+    let directory = temporary_directory("migration-v13-invalid-minimum");
+    let path = create_version_twelve_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute("UPDATE products SET minimum_unit_price_centavos = 0 WHERE id = 1", []).unwrap();
+    drop(connection);
+    assert!(open_database(&production_database_config(&directory)).is_err());
+    assert_eq!(user_version(&path), 12);
+    let connection = Connection::open(&path).unwrap();
+    assert!(!connection.query_row("SELECT EXISTS (SELECT 1 FROM pragma_table_info('products') WHERE name = 'list_price_centavos')", [], |row| row.get::<_, bool>(0)).unwrap());
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn v15_product_price_triggers_reject_invalid_values_but_accept_the_exact_cap() {
+    const CAP: i64 = 9_007_199_254_740_991;
+    let connection = open_seeded_catalog().unwrap();
+
+    connection
+        .execute(
+            "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'CAP-001', 'At cap', 1, ?1, ?1)",
+            [CAP],
+        )
+        .unwrap();
+    for statement in [
+        "INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) VALUES (1, 'MISSING-LIST', 'Missing list', 1, 1)",
+        "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'MAX-LIST', 'Sentinel list', 1, 9223372036854775807, 1)",
+    ] {
+        assert!(connection.execute(statement, []).is_err(), "{statement}");
+    }
+    assert!(connection
+        .execute(
+            "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'OVER-MIN', 'Over minimum', 1, ?1, ?2)",
+            rusqlite::params![CAP, CAP + 1],
+        )
+        .is_err());
+    assert!(connection
+        .execute(
+            "UPDATE products SET list_price_centavos = ?1 WHERE sku = 'CAP-001'",
+            [CAP + 1],
+        )
+        .is_err());
+}
+
+#[test]
+fn rejects_v14_persisted_sentinel_price_before_advancing_to_v15() {
+    let directory = temporary_directory("migration-v15-sentinel");
+    let path = create_version_twelve_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_THIRTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 13).unwrap();
+    connection.execute_batch(VERSION_FOURTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 14).unwrap();
+    connection
+        .execute(
+            "UPDATE products SET list_price_centavos = 9223372036854775807 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(open_database(&production_database_config(&directory)).is_err());
+    assert_eq!(user_version(&path), 14);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn creates_schema_v11_with_sale_idempotency_identity_columns() {
     let directory = temporary_directory("migration-v10-foundation");
