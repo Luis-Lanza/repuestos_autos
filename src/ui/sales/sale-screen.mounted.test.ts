@@ -27,22 +27,34 @@ async function searchFor(value = "filtro") { const u = user(); await u.type(scre
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); return u; }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
 
-test("shows every discovery state and ignores reverse-order search completion", async () => {
-  const first = deferred<unknown>(), second = deferred<unknown>(), third = deferred<unknown>(); let call = 0;
-  mockIPC((command) => command === "browse_products_command" ? [first, second, third][call++].promise : Promise.reject());
+test("automatically loads the active first page once on mount", async () => {
+  const calls: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "browse_products_command") { calls.push(payload); return browse([products[0]]); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
   const view = render(createElement(SaleScreen));
-  screen.getByText("Buscá un producto para comenzar.");
+  await screen.findByText("Filtro aceite");
+  assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
+  view.unmount();
+});
+
+test("shows every discovery state and ignores reverse-order search completion", async () => {
+  const first = deferred<unknown>(), second = deferred<unknown>(), third = deferred<unknown>(), fourth = deferred<unknown>(); let call = 0;
+  mockIPC((command) => command === "browse_products_command" ? [first, second, third, fourth][call++].promise : Promise.reject());
+  const view = render(createElement(SaleScreen));
+  screen.getByText("Buscando productos…");
   const heading = screen.getByRole("heading", { level: 1, name: "Ventas" });
   assert.equal(heading.textContent, "Ventas"); assert.equal(heading.getAttribute("aria-label"), null); assert.equal(screen.getAllByRole("heading", { level: 1 }).length, 1);
   assert.deepEqual(screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent), ["Catálogo", "Carrito", "Pago", "Resumen"]);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-layout[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
   const u = await searchFor("viejo"); screen.getByText("Buscando productos…");
   await u.clear(screen.getByRole("searchbox")); await u.type(screen.getByRole("searchbox"), "nuevo{Enter}");
-  await act(() => { second.resolve(browse(products)); return second.promise; });
+  await act(() => { third.resolve(browse(products)); return third.promise; });
   screen.getByText("Filtro aceite"); screen.getByText("Disponible: 8"); screen.getByText("Stock bajo: 1"); screen.getByText("Sin stock: 0");
   await act(() => { first.resolve(browse([])); return first.promise; }); screen.getByText("Filtro aceite");
   await u.clear(screen.getByRole("searchbox")); await u.type(screen.getByRole("searchbox"), "tarde{Enter}"); view.unmount();
-  await act(() => { third.resolve(browse(products)); return third.promise; }); assert.equal(document.body.textContent, "")
+  await act(() => { fourth.resolve(browse(products)); return fourth.promise; }); assert.equal(document.body.textContent, "")
 });
 
 test("refreshes the inventory summary after a confirmed sale", async () => {
@@ -61,7 +73,10 @@ test("routes nonblank global sales search through the canonical paged browse com
   mockIPC((command, payload) => { calls.push({ command, payload }); return command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error("unexpected command")); });
   render(createElement(SaleScreen));
   await searchFor("filtro");
-  assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filtro", category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } }]);
+  assert.deepEqual(calls, [
+    { command: "browse_products_command", payload: { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
+    { command: "browse_products_command", payload: { request: { query: "filtro", category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
+  ]);
   assert.ok(screen.getByRole("button", { name: "Agregar" }));
 });
 
@@ -135,7 +150,7 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar" }), screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
   fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.change(controls[5], { target: { value: "1" } }); fireEvent.change(controls[6], { target: { value: "2" } }); fireEvent.click(controls[7]);
-  assert.equal(confirms, 1); assert.equal(searches, 1); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
+  assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
   assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
 });

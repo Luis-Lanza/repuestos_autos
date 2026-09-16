@@ -44,6 +44,9 @@ test("renders loading, empty, and a selected Spanish master-detail hierarchy", a
   const master = await screen.findByRole("region", { name: "Registros del catálogo" });
   assert.match(master.textContent ?? "", /Filtro Premium.*Activo.*Encendido.*Archivado/);
   assert.ok(within(master).getByRole("button", { name: "Reactivar" }));
+  assert.equal(within(master).queryByRole("region", { name: "Productos" }), null);
+  const workspace = screen.getByRole("region", { name: "Productos" }).parentElement;
+  assert.equal(workspace?.getAttribute("data-ui-catalog-workspace"), "true");
   await userEvent.click(within(master).getByRole("button", { name: /Ver detalles de Filtro Premium/ }));
   const editor = await screen.findByRole("region", { name: "Detalle y edición" });
   assert.match(editor.textContent ?? "", /Filtro Premium.*Activo.*Producto.*Categoría: 4/);
@@ -55,6 +58,8 @@ test("renders loading, empty, and a selected Spanish master-detail hierarchy", a
   assert.ok(screen.getByRole("combobox", { name: "Material (obligatorio)" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-catalog-layout[^}]*336px[^}]*588px/);
+  assert.match(css, /data-ui-catalog-workspace[\s\S]*data-ui-product-browser[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /@media \(max-width: 1199px\) and \(min-width: 961px\)[\s\S]*data-ui-catalog-layout[^}]*minmax\(0, 1fr\)/);
   assert.match(css, /max-width: 960px[\s\S]*data-ui-catalog-layout[^}]*minmax\(0, 1fr\)/);
 });
 

@@ -52,27 +52,28 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     onAlertCueChange?.(cue);
   }, [alertState, state.alerts.length, onAlertCueChange]);
 
-  const search = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  async function browsePage(query: string, category_id: number | null, stock_state: ProductStockState, page: number) {
     const attempt = Math.max(++searchAttempt.current, browser.request_id + 1);
     searchAttempt.current = attempt;
-    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, activity: "active", page: 1, request_id: attempt });
+    browserDispatch({ type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
     try {
-      const page = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, page: 1, page_size: 20 });
-      if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result: page });
-    } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
-  };
-  useEffect(() => {
-    if (props.initialStockState === "alerts") void search({ preventDefault: () => undefined } as FormEvent<HTMLFormElement>);
-  }, []);
-  const changePage = async (page: number) => {
-    const attempt = Math.max(++searchAttempt.current, browser.request_id + 1);
-    searchAttempt.current = attempt;
-    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, activity: "active", page, request_id: attempt });
-    try {
-      const result = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: browser.stock_state, page, page_size: 20 });
+      const result = await browseProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
       if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
+  }
+  const initialBrowseStarted = useRef(false);
+  useEffect(() => {
+    if (initialBrowseStarted.current) return;
+    initialBrowseStarted.current = true;
+    void browsePage("", null, props.initialStockState ?? "all", 1);
+  }, []);
+  const search = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await browsePage(browser.query, browser.category_id, browser.stock_state, 1);
+  };
+  const changePage = async (page: number) => {
+    if (page < 1) return;
+    await browsePage(browser.query, browser.category_id, browser.stock_state, page);
   };
   const confirm = async () => {
     if (!state.product || confirmLocked.current) return;

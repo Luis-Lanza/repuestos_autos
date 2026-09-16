@@ -36,25 +36,28 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   }, [state.focus_price_product_id]);
   const draftDispatch = (action: Parameters<typeof dispatch>[0]) => { if (!confirming.current) dispatch(action); };
 
-  async function search(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (confirming.current) return;
+  async function browsePage(query: string, category_id: number | null, page: number) {
     const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
     searchSequence.current = attempt;
-    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: "all", activity: "active", page: 1, request_id: attempt });
+    browserDispatch({ type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt });
     try {
-      const page = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: "all", page: 1, page_size: 20 });
-      if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result: page });
+      const result = await browseProducts({ query, category_id, stock_state: "all", activity: "active", page, page_size: 20 });
+      if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
+  }
+  const initialBrowseStarted = useRef(false);
+  useEffect(() => {
+    if (initialBrowseStarted.current) return;
+    initialBrowseStarted.current = true;
+    void browsePage("", null, 1);
+  }, []);
+  async function search(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (confirming.current) return;
+    await browsePage(browser.query, browser.category_id, 1);
   }
   async function changePage(page: number) {
     if (page < 1 || confirming.current) return;
-    const attempt = Math.max(++searchSequence.current, browser.request_id + 1);
-    searchSequence.current = attempt;
-    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: "all", activity: "active", page, request_id: attempt });
-    try {
-      const result = await browseProducts({ query: browser.query, category_id: browser.category_id, stock_state: "all", page, page_size: 20 });
-      if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
-    } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
+    await browsePage(browser.query, browser.category_id, page);
   }
 
   async function confirm() {

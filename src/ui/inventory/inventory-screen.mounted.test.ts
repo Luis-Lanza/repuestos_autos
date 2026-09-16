@@ -20,6 +20,32 @@ async function searchAndSelect() {
   return user;
 }
 
+test("automatically loads active products once on mount", async () => {
+  const calls: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") { calls.push(payload); return browse(); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const view = render(createElement(InventoryScreen));
+  await screen.findByText("Filter");
+  assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
+  view.unmount();
+});
+
+test("uses the alert stock filter for sidebar entry without a duplicate browse", async () => {
+  const calls: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") { calls.push(payload); return browse(); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const view = render(createElement(InventoryScreen, { initialStockState: "alerts" }));
+  await screen.findByText("Filter");
+  assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "alerts", activity: "active", page: 1, page_size: 20 } }]);
+  view.unmount();
+});
+
 test("renders Spanish selection, whole-unit projection, pending lock, and success", async () => {
   let resolve!: (value: ReturnType<typeof success>) => void;
   let requestId = "";
@@ -77,12 +103,13 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
       { product_id: 2, product_name: "Bujía", quantity: 1, classification: "low_stock" },
       { product_id: 3, product_name: "Correa", quantity: 0, classification: "out_of_stock" },
     ] };
-    if (command === "browse_products_command") return ++searches === 1 ? new Promise((resolve) => { resolveSearch = (value) => resolve(browse(value as typeof product[])); }) : browse();
+    if (command === "browse_products_command") return ++searches === 1 ? browse([]) : searches === 2 ? new Promise((resolve) => { resolveSearch = (value) => resolve(browse(value as typeof product[])); }) : browse();
     if (command === "confirm_physical_count_command") { physicalCount = (payload?.request as { count?: unknown }).count; return success("count-request"); }
     throw new Error(`Unexpected command: ${command}`);
   });
   render(createElement(InventoryScreen, {}));
-  assert.ok(screen.getByText("Seleccioná un producto para comenzar."));
+  assert.ok(screen.getByText("Buscando productos…"));
+  await waitFor(() => assert.equal(searches, 1));
   const user = userEvent.setup({ document });
   const search = screen.getByRole("searchbox", { name: "Buscar producto" });
   await user.type(search, "nada{Enter}");
@@ -119,6 +146,7 @@ test("renders category and stock filters through the paged inventory browse cont
   await user.selectOptions(await screen.findByRole("combobox", { name: "Categoría" }), "1");
   await user.click(screen.getByRole("button", { name: "Buscar" }));
   assert.deepEqual(calls, [
+    { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } },
     { request: { query: null, category_id: null, stock_state: "out_of_stock", activity: "active", page: 1, page_size: 20 } },
     { request: { query: null, category_id: 1, stock_state: "out_of_stock", activity: "active", page: 1, page_size: 20 } },
   ]);
@@ -166,6 +194,7 @@ test("clears the public stock cue while alerts load or are unavailable", async (
       if (calls === 1) return new Promise((resolve) => { resolveAlerts = resolve; });
       return { kind: "alerts", alerts: [] };
     }
+    if (command === "browse_products_command") return browse([]);
     throw new Error(`Unexpected command: ${command}`);
   });
   const cues: Array<string | null> = [];
