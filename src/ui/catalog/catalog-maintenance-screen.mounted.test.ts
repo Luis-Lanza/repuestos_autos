@@ -12,7 +12,7 @@ const active = { entity_id: 1, target: "product", label: "Filtro Premium · FIL-
 const archived = { entity_id: 2, target: "category", label: "Encendido", activity: "archived", revision: 3 };
 const detail = {
   target: "product", entity_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium",
-  catalog_unit_price_centavos: 12550, activity: "active", revision: 7,
+  list_price_centavos: 12550, minimum_sale_price_centavos: 10000, activity: "active", revision: 7,
   attribute_definitions: [
     { definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] },
     { definition_id: 11, label: "Altura (mm)", field_type: "number", required: false, options: [] },
@@ -45,8 +45,10 @@ test("renders loading, empty, and a selected Spanish master-detail hierarchy", a
   await userEvent.click(within(master).getByRole("button", { name: /Ver detalles de Filtro Premium/ }));
   const editor = await screen.findByRole("region", { name: "Detalle y edición" });
   assert.match(editor.textContent ?? "", /Filtro Premium.*Activo.*Producto.*Categoría: 4/);
-  assert.equal((screen.getByRole("textbox", { name: "Precio actual del catálogo (Bs)" }) as HTMLInputElement).value, "125,50");
-  assert.ok(screen.getByText("Afecta solo ventas futuras. Las ventas confirmadas no cambian."));
+  assert.equal((screen.getByRole("textbox", { name: "Precio de lista (Bs)" }) as HTMLInputElement).value, "125,50");
+      assert.equal((screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }) as HTMLInputElement).value, "100,00");
+  assert.ok(screen.getByText("Referencia para nuevas ventas. Se guarda en centavos."));
+      assert.ok(screen.getByText("No puede superar el precio de lista."));
   assert.ok(screen.getByRole("textbox", { name: "Marca (obligatorio)" }));
   assert.ok(screen.getByRole("combobox", { name: "Material (obligatorio)" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
@@ -77,18 +79,54 @@ test("validates and focuses dynamic fields, then preserves edit and lifecycle co
   await waitFor(() => assert.equal(document.activeElement, brand));
   await user.type(brand, "Mann");
   await user.selectOptions(screen.getByRole("combobox", { name: "Material (obligatorio)" }), "Sintético");
-  await user.clear(screen.getByRole("textbox", { name: "Precio actual del catálogo (Bs)" }));
-  await user.type(screen.getByRole("textbox", { name: "Precio actual del catálogo (Bs)" }), "130,25");
+  await user.clear(screen.getByRole("textbox", { name: "Precio de lista (Bs)" }));
+  await user.type(screen.getByRole("textbox", { name: "Precio de lista (Bs)" }), "130,25");
   await user.click(screen.getByRole("button", { name: "Guardar metadatos" }));
   assert.equal(screen.getByRole("button", { name: "Guardando metadatos…" }).hasAttribute("disabled"), true);
   await user.click(screen.getByRole("button", { name: "Guardando metadatos…" }));
   assert.equal(edits, 1);
   assert.equal(editRequest?.expected_revision, 7);
-  assert.equal(editRequest?.catalog_unit_price_centavos, 13025);
+  assert.equal(editRequest?.list_price_centavos, 13025);
+      assert.equal(editRequest?.minimum_sale_price_centavos, 10000);
   resolveEdit({ kind: "success", ...active, revision: 8 });
   assert.ok(await screen.findByText("Catálogo actualizado."));
   await user.click(screen.getByRole("button", { name: "Archivar" }));
   await waitFor(() => assert.deepEqual(maintainRequest, { target: "product", entity_id: 1, intent: "archive", expected_revision: 7 }));
+});
+
+test("focuses each validation field, including SKU and both prices", async () => {
+  mockIPC((command) => {
+    if (command === "list_catalog_maintenance_command") return { kind: "success", records: [active] };
+    if (command === "catalog_metadata_detail_command") return detail;
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const user = userEvent.setup({ document });
+  await user.click(await screen.findByRole("button", { name: /Ver detalles/ }));
+  const sku = await screen.findByRole("textbox", { name: "SKU" });
+  const name = screen.getByRole("textbox", { name: "Nombre del producto" });
+  const listPrice = screen.getByRole("textbox", { name: "Precio de lista (Bs)" });
+  const minimumPrice = screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" });
+  const save = () => user.click(screen.getByRole("button", { name: "Guardar metadatos" }));
+
+  await user.clear(sku);
+  await save();
+  await waitFor(() => assert.equal(document.activeElement, sku));
+  await user.type(sku, "FIL-PRE-014");
+
+  await user.clear(name);
+  await save();
+  await waitFor(() => assert.equal(document.activeElement, name));
+  await user.type(name, "Filtro Premium");
+
+  await user.clear(listPrice);
+  await save();
+  await waitFor(() => assert.equal(document.activeElement, listPrice));
+  await user.type(listPrice, "125,50");
+
+  await user.clear(minimumPrice);
+  await save();
+  await waitFor(() => assert.equal(document.activeElement, minimumPrice));
 });
 
 test("distinguishes initial unavailable from empty and recovers selected unavailable detail", async () => {

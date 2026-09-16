@@ -31,10 +31,41 @@ fn maintenance_category_metadata_rejects_blank_names() {
 #[test]
 fn maintenance_product_metadata_rejects_non_positive_centavos() {
     assert_eq!(
-        validate_maintenance_product("FLT-001", "Oil filter", 0, &[], &[]),
-        Err(MaintenanceError::InvalidCatalogPrice)
+        validate_maintenance_product("FLT-001", "Oil filter", 0, 100, &[], &[]),
+        Err(MaintenanceError::InvalidListPrice)
     );
 }
+
+#[test]
+fn maintenance_product_metadata_rejects_minimum_above_list() {
+    assert_eq!(
+        validate_maintenance_product("FLT-001", "Oil filter", 2_500, 2_501, &[], &[]),
+        Err(MaintenanceError::MinimumSalePriceExceedsListPrice)
+    );
+}
+
+#[test]
+fn maintenance_product_metadata_rejects_non_positive_minimum() {
+    assert_eq!(
+        validate_maintenance_product("FLT-001", "Oil filter", 2_500, 0, &[], &[]),
+        Err(MaintenanceError::InvalidMinimumSalePrice)
+    );
+}
+
+#[test]
+fn maintenance_product_metadata_rejects_prices_above_the_safe_integer_cap() {
+        const CAP: i64 = 9_007_199_254_740_991;
+
+        assert_eq!(
+            validate_maintenance_product("FLT-001", "Oil filter", CAP + 1, CAP, &[], &[]),
+            Err(MaintenanceError::InvalidListPrice)
+        );
+        assert_eq!(
+            validate_maintenance_product("FLT-001", "Oil filter", CAP, CAP + 1, &[], &[]),
+            Err(MaintenanceError::InvalidMinimumSalePrice)
+        );
+        assert!(validate_maintenance_product("FLT-001", "Oil filter", CAP, CAP, &[], &[]).is_ok());
+    }
 
 #[test]
 fn maintenance_product_metadata_rejects_mistyped_values() {
@@ -42,6 +73,7 @@ fn maintenance_product_metadata_rejects_mistyped_values() {
         validate_maintenance_product(
             "FLT-001",
             "Oil filter",
+            2_500,
             2_500,
             &[AttributeDefinition {
                 id: 1,

@@ -78,6 +78,7 @@ impl CatalogMetadataRepository for MetadataRepository {
         _: &str,
         _: &str,
         _: i64,
+        _: i64,
         _: &[ValidatedAttributeValue],
     ) -> rusqlite::Result<CatalogSnapshot> {
         if self.write_stale {
@@ -110,6 +111,7 @@ fn product(revision: i64) -> EditCatalogInput {
         revision,
         "FLT-002",
         "  PREMIUM FILTER ",
+        4_000,
         3_000,
         vec![repuestos_autos::application::catalog::AttributeValueInput {
             definition_id: 1,

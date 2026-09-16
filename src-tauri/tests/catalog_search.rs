@@ -18,6 +18,21 @@ fn finds_active_seeded_products_by_every_searchable_catalog_field() {
 }
 
 #[test]
+fn exposes_true_list_price_and_minimum_price_separately() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection
+        .execute("UPDATE products SET list_price_centavos = 5000, minimum_unit_price_centavos = 2500 WHERE id = 1", [])
+        .unwrap();
+
+    let product = &repuestos_autos::catalog::search_active_products(&connection, "filtro")
+        .unwrap()[0];
+
+    assert_eq!(product.catalog_unit_price_centavos, 5000);
+    assert_eq!(product.list_price_centavos, 5000);
+    assert_eq!(product.minimum_sale_price_centavos, 2500);
+}
+
+#[test]
 fn enables_foreign_keys_for_the_disposable_database() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     let foreign_keys: i64 = connection
@@ -45,7 +60,7 @@ fn searches_the_canonical_fts_document_with_prefixes_and_a_bounded_result_set() 
     for index in 0..21 {
         connection
             .execute(
-                "INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) VALUES (1, ?1, ?2, 1, 2500)",
+                "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, ?1, ?2, 1, 2500, 2500)",
                 [format!("BRG-{index:02}"), format!("Bearing {index:02}")],
             )
             .expect("product persists");
@@ -80,7 +95,7 @@ fn searches_twenty_thousand_catalog_products_within_the_release_target() {
         .transaction()
         .expect("benchmark catalog transaction starts");
     let mut products = transaction
-        .prepare("INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) VALUES (1, ?1, ?2, 1, 2500)")
+        .prepare("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, ?1, ?2, 1, 2500, 2500)")
         .expect("product statement prepares");
     let mut balances = transaction
         .prepare("INSERT INTO stock_balances (product_id, quantity) VALUES (?1, 1)")

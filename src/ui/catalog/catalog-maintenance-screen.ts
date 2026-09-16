@@ -56,7 +56,8 @@ export function CatalogMetadataEditor({ detail, form, pending, feedback, fieldEr
     detail.target === "product" ? createElement("fieldset", null,
       createElement("legend", null, "Datos generales"),
       createElement(Field, { kind: "sku", label: "SKU", error: fieldErrors.sku, control: createElement("input", { id: "catalog-edit-sku", disabled: pending, value: form.sku ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("sku", event.target.value) }) } as never),
-      createElement(Field, { kind: "money", label: "Precio actual del catálogo (Bs)", hint: "Afecta solo ventas futuras. Las ventas confirmadas no cambian.", error: fieldErrors.catalog_unit_price_centavos, control: createElement("input", { id: "catalog-edit-price", disabled: pending, value: form.catalog_unit_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("catalog_unit_price_centavos", event.target.value) }) } as never),
+      createElement(Field, { kind: "money", label: "Precio de lista (Bs)", hint: "Referencia para nuevas ventas. Se guarda en centavos.", error: fieldErrors.list_price_centavos, control: createElement("input", { id: "catalog-edit-list-price", disabled: pending, value: form.list_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("list_price_centavos", event.target.value) }) } as never),
+          createElement(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de lista.", error: fieldErrors.minimum_sale_price_centavos, control: createElement("input", { id: "catalog-edit-minimum-price", disabled: pending, value: form.minimum_sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("minimum_sale_price_centavos", event.target.value) }) } as never),
       detail.attribute_definitions.length ? createElement("fieldset", null, createElement("legend", null, "Atributos dinámicos"), detail.attribute_definitions.map(attribute)) : null) : null,
     feedback ? createElement(Feedback, { kind: "error" } as never, feedback) : null,
     createElement(Action, { variant: "primary", type: "submit", pending, pendingLabel: "Guardando metadatos…" }, "Guardar metadatos"));
@@ -87,7 +88,10 @@ export function CatalogMaintenanceScreen() {
   useEffect(() => { void load(); }, []);
   useEffect(() => {
     const first = Object.keys(state.field_errors)[0];
-    if (first) document.getElementById(first.startsWith("attribute-") ? `catalog-${first}` : `catalog-edit-${first === "catalog_unit_price_centavos" ? "price" : first}`)?.focus();
+    if (first) {
+      const id = first.startsWith("attribute-") ? `catalog-${first}` : first === "list_price_centavos" ? "catalog-edit-list-price" : first === "minimum_sale_price_centavos" ? "catalog-edit-minimum-price" : `catalog-edit-${first}`;
+      document.getElementById(id)?.focus();
+    }
   }, [state.field_errors]);
 
   const reload = async () => {

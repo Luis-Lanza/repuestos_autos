@@ -17,7 +17,8 @@ export function OnboardingScreen({ onBack }: Props) {
   const [selectedId, setSelectedId] = useState("");
   const [sku, setSku] = useState("");
   const [productName, setProductName] = useState("");
-  const [price, setPrice] = useState("");
+  const [listPrice, setListPrice] = useState("");
+  const [minimumSalePrice, setMinimumSalePrice] = useState("");
   const [stock, setStock] = useState("");
   const [attributes, setAttributes] = useState<Record<number, string>>({});
   const [fieldError, setFieldError] = useState("");
@@ -59,13 +60,13 @@ export function OnboardingScreen({ onBack }: Props) {
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmitProduct(state) || productLock.current) return;
-    const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(price) === null ? "price" : parsePositiveWhole(stock) === null ? "stock" : (selected.fields.find((field) => field.required && !(attributes[field.definition_id] ?? "").trim()) ? "attribute" : "");
-    if (productErrors) { setFieldError(productErrors); focus(productErrors === "category" ? "product-category" : productErrors === "sku" ? "product-sku" : productErrors === "name" ? "product-name" : productErrors === "price" ? "catalog-price" : productErrors === "stock" ? "opening-stock" : `attribute-${selected?.fields.find((field) => field.required && !(attributes[field.definition_id] ?? "").trim())?.definition_id}`); return; }
+    const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parsePositiveWhole(stock) === null ? "stock" : (selected.fields.find((field) => field.required && !(attributes[field.definition_id] ?? "").trim()) ? "attribute" : "");
+    if (productErrors) { setFieldError(productErrors); focus(productErrors === "category" ? "product-category" : productErrors === "sku" ? "product-sku" : productErrors === "name" ? "product-name" : productErrors === "list-price" ? "list-price" : productErrors === "minimum-price" ? "minimum-sale-price" : productErrors === "stock" ? "opening-stock" : `attribute-${selected?.fields.find((field) => field.required && !(attributes[field.definition_id] ?? "").trim())?.definition_id}`); return; }
     const id = ++mutation.current; productLock.current = true; setFieldError(""); dispatch({ type: "product_started", requestId: id });
     try {
-      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, catalog_unit_price_centavos: parseBsToCentavos(price)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(selected!, attributes) });
+      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, list_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(selected!, attributes) });
       if (!mounted.current || id !== mutation.current) return;
-      if (response.kind === "success") { dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.` }); setSku(""); setProductName(""); setPrice(""); setStock(""); setAttributes({}); }
+      if (response.kind === "success") { dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.` }); setSku(""); setProductName(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setAttributes({}); }
       else dispatch({ type: "product_failed", requestId: id });
     } catch { if (mounted.current && id === mutation.current) dispatch({ type: "product_failed", requestId: id }); }
     finally { productLock.current = false; }
@@ -86,7 +87,8 @@ export function OnboardingScreen({ onBack }: Props) {
         h(Field, { kind: "select", label: "Categoría", error: fieldError === "category" ? "Seleccioná una categoría." : undefined, control: h("select", { id: "product-category", value: selectedId, disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => { setSelectedId(event.target.value); setAttributes({}); } }, state.categories.map((category) => h("option", { key: category.category_id, value: category.category_id }, category.name))) } as never),
         h(Field, { kind: "sku", label: "SKU", error: fieldError === "sku" ? "Ingresá el SKU." : undefined, control: h("input", { id: "product-sku", value: sku, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setSku(event.target.value) }) } as never),
         h(Field, { kind: "text", label: "Nombre del producto", error: fieldError === "name" ? "Ingresá el nombre del producto." : undefined, control: h("input", { id: "product-name", value: productName, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setProductName(event.target.value) }) } as never),
-        h(Field, { kind: "money", label: "Precio de catálogo (Bs)", hint: "Usá coma decimal; se envían centavos enteros.", error: fieldError === "price" ? "Ingresá un precio válido en Bs." : undefined, control: h("input", { id: "catalog-price", value: price, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setPrice(event.target.value) }) } as never),
+        h(Field, { kind: "money", label: "Precio de lista (Bs)", hint: "Usá coma decimal; se envían centavos enteros.", error: fieldError === "list-price" ? "Ingresá un precio de lista válido en Bs." : undefined, control: h("input", { id: "list-price", value: listPrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setListPrice(event.target.value) }) } as never),
+            h(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de lista.", error: fieldError === "minimum-price" ? "Ingresá un precio mínimo válido y menor o igual al precio de lista." : undefined, control: h("input", { id: "minimum-sale-price", value: minimumSalePrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setMinimumSalePrice(event.target.value) }) } as never),
         h(Field, { kind: "quantity", label: "Stock inicial (unidades enteras)", error: fieldError === "stock" ? "Ingresá una cantidad entera mayor que cero." : undefined, control: h("input", { id: "opening-stock", value: stock, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setStock(event.target.value) }) } as never),
         selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === "attribute" && field.required && !(attributes[field.definition_id] ?? "").trim() ? "Completá este campo." : undefined, control: fieldControl(field) } as never)),
         h(Action, { variant: "primary", type: "submit", pending: state.productStatus === "pending", pendingLabel: "Creando producto…" }, "Crear producto"))))

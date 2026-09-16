@@ -48,7 +48,7 @@ fn maintenance_request_rejects_unknown_fields() {
 #[test]
 fn typed_metadata_commands_deny_unknown_fields_and_project_stable_outcomes() {
     let mut connection = open_seeded_catalog().unwrap();
-    let invalid = r#"{"target":"product","entity_id":1,"expected_revision":0,"sku":"NEW-1","name":"New","catalog_unit_price_centavos":3000,"attribute_values":[{"definition_id":1,"value":"x","sql":"details"}]}"#;
+    let invalid = r#"{"target":"product","entity_id":1,"expected_revision":0,"sku":"NEW-1","name":"New","list_price_centavos":4000,"minimum_sale_price_centavos":3000,"attribute_values":[{"definition_id":1,"value":"x","sql":"details"}]}"#;
     assert!(serde_json::from_str::<EditCatalogRequest>(invalid).is_err());
     assert!(serde_json::from_str::<EditCatalogRequest>(r#"{"target":"category","entity_id":1,"expected_revision":0,"name":"Filters","unexpected":true}"#).is_err());
 
@@ -114,7 +114,8 @@ fn typed_metadata_commands_deny_unknown_fields_and_project_stable_outcomes() {
     assert!(matches!(detail, CatalogMetadataDetailResponse::Success(_)));
     assert_eq!(detail_json["target"], "product");
     assert_eq!(detail_json["sku"], "FLT-001");
-    assert_eq!(detail_json["catalog_unit_price_centavos"], 2_500);
+    assert_eq!(detail_json["list_price_centavos"], 2_500);
+    assert_eq!(detail_json["minimum_sale_price_centavos"], 2_500);
     assert_eq!(detail_json["revision"], 1);
     assert_eq!(detail_json["activity"], "archived");
     assert_eq!(detail_json["attribute_definitions"][0]["label"], "Material");

@@ -3,13 +3,24 @@ import test from "node:test";
 
 import { CATALOG_INTENT, CATALOG_TARGET, createCatalogMaintenanceCommands, createSearchProductsCommand } from "./catalog.ts";
 
-const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, catalog_unit_price_centavos: 2500, revision: 2 };
+const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
 
 test("projects search products and strips native fields", async () => {
   const calls: unknown[] = [];
   const search = createSearchProductsCommand(async (command, payload) => { calls.push({ command, payload }); return [{ ...searchProduct, internal: "hidden" }]; });
   assert.deepEqual(await search("filter"), [searchProduct]);
   assert.deepEqual(calls, [{ command: "search_products_command", payload: { request: { query: "filter" } } }]);
+});
+
+test("uses the true list price as the compatibility catalog price and keeps the minimum", async () => {
+  const search = createSearchProductsCommand(async () => [{
+    product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4,
+    catalog_unit_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 2500, revision: 2,
+  }]);
+  assert.deepEqual(await search("filter"), [{
+    product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4,
+    catalog_unit_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 2500, revision: 2,
+  }]);
 });
 
 test("rejects malformed search arrays, unsafe numbers, and native rejection text", async () => {
@@ -50,16 +61,16 @@ test("allowlists metadata detail and edit payloads with typed values", async () 
   const commands = createCatalogMaintenanceCommands(async (command, payload) => {
     calls.push({ command, payload });
     return command === "catalog_metadata_detail_command"
-      ? { target: "product", entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }], sql: "hidden" }
+      ? { target: "product", entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }], sql: "hidden" }
       : { kind: "success", entity_id: 1, target: "product", label: "", activity: "archived", revision: 4, sql: "hidden" };
   });
   const detail = await commands.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, ignored: true } as never);
-  const edited = await commands.edit({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, expected_revision: 3, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper", ignored: true }], ignored: true } as never);
+  const edited = await commands.edit({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, expected_revision: 3, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper", ignored: true }], ignored: true } as never);
   assert.deepEqual(calls, [
     { command: "catalog_metadata_detail_command", payload: { request: { target: "product", entity_id: 1 } } },
-    { command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 3, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper" }] } } },
+    { command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 3, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper" }] } } },
   ]);
-  assert.deepEqual(detail, { kind: "success", detail: { target: "product", entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] } });
+  assert.deepEqual(detail, { kind: "success", detail: { target: "product", entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] } });
   assert.deepEqual(edited, { kind: "success", entity_id: 1, target: "product", label: "", activity: "archived", revision: 4 });
 });
 
@@ -68,4 +79,27 @@ test("projects category detail and rejects malformed detail payloads", async () 
   const malformed = createCatalogMaintenanceCommands(async () => ({ target: "product", entity_id: 1, name: "Filter" }));
   assert.deepEqual(await category.detail({ target: CATALOG_TARGET.CATEGORY, entity_id: 2 }), { kind: "success", detail: { target: "category", entity_id: 2, name: "Filters", activity: "active", revision: 1, attribute_definitions: [] } });
   assert.deepEqual(await malformed.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: 1 }), { kind: "error", code: "persistence_failure", message: "The catalog could not be loaded." });
+});
+
+test("rejects unsafe, nonpositive, and inconsistent catalog facts", async () => {
+  const valid = { ...searchProduct };
+  const invalidProducts = [
+    { ...valid, product_id: 0 },
+    { ...valid, product_id: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, list_price_centavos: 0 },
+    { ...valid, list_price_centavos: undefined },
+    { ...valid, list_price_centavos: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, minimum_sale_price_centavos: -1 },
+    { ...valid, minimum_sale_price_centavos: undefined },
+    { ...valid, minimum_sale_price_centavos: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, catalog_unit_price_centavos: -1 },
+    { ...valid, available_quantity: -1 },
+    { ...valid, revision: -1 },
+    { ...valid, revision: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, list_price_centavos: 4_000, minimum_sale_price_centavos: 5_000 },
+  ];
+  for (const response of invalidProducts) {
+    const search = createSearchProductsCommand(async () => [response]);
+    await assert.rejects(search("filter"), /product search/);
+  }
 });

@@ -27,23 +27,23 @@ test("surfaces loading, unavailable, validation, conflict, failure, recovery, an
 });
 
 test("loads editable metadata, validates typed values, and reloads stable conflicts", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
   const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "detail_started" });
   const ready = createCatalogMaintenanceFlow(loading, { type: "detail_loaded", detail });
   const pending = createCatalogMaintenanceFlow(ready, { type: "edit_started" });
   const conflict = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_catalog_record" });
   const unavailable = createCatalogMaintenanceFlow(ready, { type: "detail_failed", code: "catalog_unavailable" });
   const reactivated = createCatalogMaintenanceFlow({ ...ready, records: [archived], selected: archived }, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3 } });
-  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", catalog_unit_price_centavos: "25,00", attribute_values: { 4: "Paper" } });
-  assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", catalog_unit_price_centavos: "inválido", attribute_values: { 4: "Paper" } }), null);
-  assert.equal(createCatalogEditRequest(detail, formForCatalogDetail(detail))?.catalog_unit_price_centavos, 2500);
+  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", list_price_centavos: "30,00", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } });
+  assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", list_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } }), null);
+  assert.equal(createCatalogEditRequest(detail, formForCatalogDetail(detail))?.list_price_centavos, 3000);
   assert.equal(pending.status, "pending");
   assert.equal(conflict.recovery_required, true);
   assert.equal(unavailable.status, "unavailable");
   assert.deepEqual([reactivated.records[0].activity, reactivated.selected?.activity, reactivated.detail?.activity], ["active", "active", "active"]);
   assert.deepEqual([reactivated.records[0].revision, reactivated.selected?.revision, reactivated.detail?.revision], [3, 3, 3]);
-  const screen = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: true, feedback: "Price must be whole centavos.", fieldErrors: { catalog_unit_price_centavos: "Price must be whole centavos." }, onChange: () => undefined, onSubmit: () => undefined }));
-  assert.match(screen, /Precio actual del catálogo \(Bs\).*Afecta solo ventas futuras/i);
+  const screen = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: true, feedback: "Price must be whole centavos.", fieldErrors: { list_price_centavos: "Price must be whole centavos." }, onChange: () => undefined, onSubmit: () => undefined }));
+  assert.match(screen, /Precio de lista \(Bs\).*Referencia para nuevas ventas/i);
   assert.match(screen, /Material/);
   assert.match(screen, /disabled/);
   assert.match(screen, /aria-invalid="true"/);
@@ -67,14 +67,14 @@ test("keeps selected detail identity through failure and retries the same reques
 });
 
 test("keeps success announced during refresh and scopes validation to invalid fields", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", catalog_unit_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
-  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", catalog_unit_price_centavos: "inválido", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
+  const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", list_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
   const saved = createCatalogMaintenanceFlow({ ...initialCatalogMaintenanceState, detail }, { type: "edit_succeeded" });
   const loading = createCatalogMaintenanceFlow(saved, { type: "load_started" });
   const listed = createCatalogMaintenanceFlow(loading, { type: "loaded", records: [] });
   const refreshed = createCatalogMaintenanceFlow(listed, { type: "detail_loaded", detail });
   const conflict = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: false, feedback: "This catalog record changed. Reload and try again.", fieldErrors: {}, onChange: () => undefined, onSubmit: () => undefined }));
-  assert.deepEqual(Object.keys(invalid).sort(), ["attribute-4", "attribute-5", "attribute-6", "catalog_unit_price_centavos", "name", "sku"]);
+  assert.deepEqual(Object.keys(invalid).sort(), ["attribute-4", "attribute-5", "attribute-6", "list_price_centavos", "name", "sku"]);
   assert.equal(loading.success_notice, "Catálogo actualizado.");
   assert.match(renderToStaticMarkup(createElement(CatalogSuccessNotice, { notice: listed.success_notice })), /role="status".*Catálogo actualizado/);
   assert.equal(refreshed.success_notice, "Catálogo actualizado.");

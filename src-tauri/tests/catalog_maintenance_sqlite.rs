@@ -139,6 +139,7 @@ fn metadata_edits_guard_revisions_replace_values_refresh_search_and_audit_togeth
             0,
             "NUE-001",
             "Nuevo filtro",
+            4_000,
             3_000,
             vec![
                 AttributeValueInput {
@@ -161,16 +162,17 @@ fn metadata_edits_guard_revisions_replace_values_refresh_search_and_audit_togeth
     assert_eq!(
         connection
             .query_row(
-                "SELECT sku, name, minimum_unit_price_centavos FROM products WHERE id = 1",
+                "SELECT sku, name, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1",
                 [],
                 |row| Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?
                 ))
             )
             .unwrap(),
-        ("NUE-001".into(), "Nuevo filtro".into(), 3_000)
+        ("NUE-001".into(), "Nuevo filtro".into(), 4_000, 3_000)
     );
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM product_attribute_values WHERE product_id = 1 AND ((definition_id = 2 AND text_value = 'paper') OR (definition_id = 3 AND number_value = 2.5) OR (definition_id = 4 AND option_value = 'Toyota'))", [], |row| row.get::<_, i64>(0)).unwrap(), 3);
     assert_eq!(
@@ -227,7 +229,7 @@ fn failed_metadata_audit_rolls_back_the_guarded_write_and_fts_document() {
     connection.execute_batch("CREATE TRIGGER reject_metadata_audit BEFORE INSERT ON catalog_audit BEGIN SELECT RAISE(ABORT, 'forced'); END;").unwrap();
     assert_eq!(
         EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository).execute(
-            EditCatalogInput::product(1, 0, "NUE-002", "Other", 3_000, vec![])
+            EditCatalogInput::product(1, 0, "NUE-002", "Other", 4_000, 3_000, vec![])
         ),
         Err(MaintainCatalogError::PersistenceFailure)
     );
