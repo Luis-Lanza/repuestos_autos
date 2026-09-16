@@ -26,6 +26,7 @@ pub struct PersistedLine {
     pub quantity: Quantity,
     pub negotiated_unit_price: MoneyCentavos,
     pub minimum_unit_price_snapshot: MoneyCentavos,
+    pub list_price_snapshot: Option<MoneyCentavos>,
     pub line_total: MoneyCentavos,
 }
 

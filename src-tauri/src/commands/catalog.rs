@@ -46,7 +46,8 @@ pub enum EditCatalogRequest {
         expected_revision: i64,
         sku: String,
         name: String,
-        catalog_unit_price_centavos: i64,
+        list_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
         attribute_values: Vec<EditAttributeValueRequest>,
     },
 }
@@ -198,7 +199,8 @@ pub fn edit_catalog(
             expected_revision,
             sku,
             name,
-            catalog_unit_price_centavos,
+            list_price_centavos,
+            minimum_sale_price_centavos,
             attribute_values,
         } if entity_id > 0 && expected_revision >= 0 => (
             entity_id,
@@ -208,7 +210,8 @@ pub fn edit_catalog(
                 expected_revision,
                 sku,
                 name,
-                catalog_unit_price_centavos,
+                list_price_centavos,
+                minimum_sale_price_centavos,
                 attribute_values
                     .into_iter()
                     .map(|value| catalog::AttributeValueInput {

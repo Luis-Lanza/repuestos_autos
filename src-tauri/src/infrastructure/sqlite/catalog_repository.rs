@@ -87,7 +87,7 @@ impl CreateProductRepository for SqliteCatalogRepository {
         values: &[ValidatedAttributeValue],
         category_name: &str,
     ) -> Result<i64> {
-        transaction.execute("INSERT INTO products (category_id, sku, name, active, minimum_unit_price_centavos) VALUES (?1, ?2, ?3, 1, ?4)", params![input.category_id, input.sku.trim(), input.name.trim(), input.catalog_unit_price_centavos])?;
+        transaction.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (?1, ?2, ?3, 1, ?4, ?5)", params![input.category_id, input.sku.trim(), input.name.trim(), input.list_price_centavos, input.minimum_sale_price_centavos])?;
         let product_id = transaction.last_insert_rowid();
         for value in values {
             match value {
@@ -253,12 +253,13 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         revision: i64,
         sku: &str,
         name: &str,
-        price: i64,
+        list_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
         values: &[ValidatedAttributeValue],
     ) -> Result<CatalogSnapshot> {
         let target = CatalogTarget::Product;
         let before = product_metadata_json(transaction, id)?;
-        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, minimum_unit_price_centavos = ?3, revision = revision + 1 WHERE id = ?4 AND revision = ?5", params![sku, name, price, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
+        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, list_price_centavos = ?3, minimum_unit_price_centavos = ?4, revision = revision + 1 WHERE id = ?5 AND revision = ?6", params![sku, name, list_price_centavos, minimum_sale_price_centavos, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
         transaction.execute(
             "DELETE FROM product_attribute_values WHERE product_id = ?1",
             [id],
@@ -308,7 +309,7 @@ fn category_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<Stri
 }
 
 fn product_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<String> {
-    transaction.query_row("SELECT json_object('sku', p.sku, 'name', p.name, 'catalog_unit_price_centavos', p.minimum_unit_price_centavos, 'revision', p.revision, 'attribute_values', json(COALESCE((SELECT json_group_array(json_object('definition_id', definition_id, 'text_value', text_value, 'number_value', number_value, 'option_value', option_value)) FROM product_attribute_values WHERE product_id = p.id), '[]'))) FROM products p WHERE p.id = ?1", [id], |row| row.get(0))
+    transaction.query_row("SELECT json_object('sku', p.sku, 'name', p.name, 'list_price_centavos', p.list_price_centavos, 'minimum_sale_price_centavos', p.minimum_sale_price_centavos, 'revision', p.revision, 'attribute_values', json(COALESCE((SELECT json_group_array(json_object('definition_id', definition_id, 'text_value', text_value, 'number_value', number_value, 'option_value', option_value)) FROM product_attribute_values WHERE product_id = p.id), '[]'))) FROM products p WHERE p.id = ?1", [id], |row| row.get(0))
 }
 
 fn audit_metadata(

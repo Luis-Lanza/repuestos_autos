@@ -14,6 +14,10 @@ pub enum ConfirmSaleError {
         current_unit_price: MoneyCentavos,
         current_revision: i64,
     },
+    FinalPriceBelowMinimum {
+        product_id: i64,
+        current_minimum_unit_price: MoneyCentavos,
+    },
     InvalidQuantity,
     MoneyOverflow,
     QrExceedsTotal,

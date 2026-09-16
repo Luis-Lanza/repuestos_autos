@@ -58,7 +58,8 @@ pub enum EditCatalogInput {
         expected_revision: i64,
         sku: String,
         name: String,
-        catalog_unit_price_centavos: i64,
+        list_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
         attribute_values: Vec<AttributeValueInput>,
     },
 }
@@ -75,7 +76,8 @@ impl EditCatalogInput {
         expected_revision: i64,
         sku: impl Into<String>,
         name: impl Into<String>,
-        catalog_unit_price_centavos: i64,
+        list_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
         attribute_values: Vec<AttributeValueInput>,
     ) -> Self {
         Self::Product {
@@ -83,7 +85,8 @@ impl EditCatalogInput {
             expected_revision,
             sku: sku.into(),
             name: name.into(),
-            catalog_unit_price_centavos,
+            list_price_centavos,
+            minimum_sale_price_centavos,
             attribute_values,
         }
     }
@@ -148,7 +151,8 @@ where
             EditCatalogInput::Product {
                 sku,
                 name,
-                catalog_unit_price_centavos,
+                list_price_centavos,
+                minimum_sale_price_centavos,
                 attribute_values,
                 ..
             } => {
@@ -172,7 +176,8 @@ where
                 let validated = crate::domain::catalog::validate_maintenance_product(
                     &sku,
                     &name,
-                    catalog_unit_price_centavos,
+                    list_price_centavos,
+                    minimum_sale_price_centavos,
                     &metadata.definitions,
                     &values,
                 )
@@ -186,7 +191,8 @@ where
                     revision,
                     sku.trim(),
                     name.trim(),
-                    catalog_unit_price_centavos,
+                    list_price_centavos,
+                    minimum_sale_price_centavos,
                     &validated,
                 )
             }
@@ -264,6 +270,8 @@ pub struct ProductSearchResult {
     pub category_name: String,
     pub available_quantity: i64,
     pub catalog_unit_price_centavos: i64,
+    pub list_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
     pub revision: i64,
 }
 
@@ -320,7 +328,8 @@ pub struct CreateProductInput {
     pub sku: String,
     pub name: String,
     pub category_id: i64,
-    pub catalog_unit_price_centavos: i64,
+    pub list_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
     pub opening_quantity: i64,
     pub attribute_values: Vec<AttributeValueInput>,
 }
@@ -332,7 +341,8 @@ pub struct CreatedProduct {
     pub name: String,
     pub category_id: i64,
     pub category_name: String,
-    pub catalog_unit_price_centavos: i64,
+    pub list_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
     pub available_quantity: i64,
     pub active: bool,
 }
@@ -352,7 +362,8 @@ pub enum CatalogMetadataDetail {
         category_id: i64,
         sku: String,
         name: String,
-        catalog_unit_price_centavos: i64,
+        list_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
         activity: &'static str,
         revision: i64,
         attribute_definitions: Vec<CategoryField>,
@@ -365,7 +376,9 @@ pub enum CreateProductError {
     InvalidProduct,
     MissingCategory,
     DuplicateSku,
-    InvalidCatalogPrice,
+    InvalidListPrice,
+    InvalidMinimumSalePrice,
+    MinimumSalePriceExceedsListPrice,
     InvalidOpeningQuantity,
     MissingRequiredField,
     InvalidAttributeValue,
@@ -416,7 +429,8 @@ where
         let validated = validate_product(
             &input.sku,
             &input.name,
-            input.catalog_unit_price_centavos,
+            input.list_price_centavos,
+            input.minimum_sale_price_centavos,
             input.opening_quantity,
             &definitions,
             &values,
@@ -442,7 +456,8 @@ where
             name: input.name.trim().into(),
             category_id: input.category_id,
             category_name,
-            catalog_unit_price_centavos: input.catalog_unit_price_centavos,
+            list_price_centavos: input.list_price_centavos,
+            minimum_sale_price_centavos: input.minimum_sale_price_centavos,
             available_quantity: input.opening_quantity,
             active: true,
         })
@@ -562,12 +577,12 @@ pub fn read_catalog_metadata_detail(
             .transpose(),
         CatalogTarget::Product => connection
             .query_row(
-                "SELECT category_id, sku, name, minimum_unit_price_centavos, active, revision FROM products WHERE id = ?1",
+                "SELECT category_id, sku, name, list_price_centavos, minimum_unit_price_centavos, active, revision FROM products WHERE id = ?1",
                 [entity_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
             )
             .optional()?
-            .map(|(category_id, sku, name, catalog_unit_price_centavos, active, revision)| {
+            .map(|(category_id, sku, name, list_price_centavos, minimum_sale_price_centavos, active, revision)| {
                 let mut statement = connection.prepare("SELECT definition_id, searchable_value FROM product_attribute_values WHERE product_id = ?1 ORDER BY definition_id")?;
                 let attribute_values = statement.query_map([entity_id], |row| Ok(AttributeValueInput { definition_id: row.get(0)?, value: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
                 Ok(CatalogMetadataDetail::Product {
@@ -575,7 +590,8 @@ pub fn read_catalog_metadata_detail(
                     category_id,
                     sku,
                     name,
-                    catalog_unit_price_centavos,
+                    list_price_centavos,
+                    minimum_sale_price_centavos,
                     activity: if active { "active" } else { "archived" },
                     revision,
                     attribute_definitions: load_category_fields(connection, category_id)?,
@@ -628,7 +644,13 @@ fn map_category_validation(error: CatalogValidationError) -> CreateCategoryError
 fn map_product_validation(error: CatalogValidationError) -> CreateProductError {
     match error {
         CatalogValidationError::InvalidProduct => CreateProductError::InvalidProduct,
-        CatalogValidationError::InvalidCatalogPrice => CreateProductError::InvalidCatalogPrice,
+        CatalogValidationError::InvalidListPrice => CreateProductError::InvalidListPrice,
+        CatalogValidationError::InvalidMinimumSalePrice => {
+            CreateProductError::InvalidMinimumSalePrice
+        }
+        CatalogValidationError::MinimumSalePriceExceedsListPrice => {
+            CreateProductError::MinimumSalePriceExceedsListPrice
+        }
         CatalogValidationError::InvalidOpeningQuantity => {
             CreateProductError::InvalidOpeningQuantity
         }
@@ -646,7 +668,9 @@ pub fn search_active_products(
         return Ok(Vec::new());
     };
     let mut statement = connection.prepare(
-        "SELECT p.id, p.sku, p.name, c.name, s.quantity, p.minimum_unit_price_centavos, p.revision
+        "SELECT p.id, p.sku, p.name, c.name, s.quantity,
+         p.list_price_centavos,
+         p.minimum_unit_price_centavos, p.revision
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
@@ -664,7 +688,9 @@ pub fn search_active_products(
                 category_name: row.get(3)?,
                 available_quantity: row.get(4)?,
                 catalog_unit_price_centavos: row.get(5)?,
-                revision: row.get(6)?,
+                list_price_centavos: row.get(5)?,
+                minimum_sale_price_centavos: row.get(6)?,
+                revision: row.get(7)?,
             })
         })?
         .collect();

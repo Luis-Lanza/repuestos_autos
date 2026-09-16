@@ -12,7 +12,7 @@ This PRD remains the target product scope; its requirements are not all delivere
 
 | Area | Current status |
 | --- | --- |
-| Catalog onboarding and maintenance, fixed-price POS, and operational inventory | Delivered. |
+| Catalog onboarding and maintenance, negotiated-price POS, and operational inventory | Delivered; negotiated pricing remains planned. |
 | Backup and restore | Implemented and supported by Fedora evidence; Windows task 4.1 evidence remains deferred. |
 | Sales history | Delivered as bounded, read-only calendar browsing with persisted sale details. |
 | Returns, cancellations, and reports | Planned requirements; no current Rust commands/application layer or UI implementation. |
@@ -38,7 +38,7 @@ The store maintains inventory and sales in multiple category-specific Excel file
 | Fast product discovery | Staff can find a known product from the global search in under 10 seconds. |
 | Reliable stock | Every confirmed inventory event updates stock and leaves an audit record. |
 | Prevent stockouts | Products at one unit or zero units appear immediately in the stock-alert view. |
-| Accurate sales records | Each confirmed sale retains its products, catalog price at sale time, payment breakdown, total, date, and time. |
+| Accurate sales records | Each confirmed sale retains its products, final agreed unit price, list/minimum price references at sale time, payment breakdown, total, date, and time. |
 
 ## 5. Functional requirements
 
@@ -48,14 +48,15 @@ The store maintains inventory and sales in multiple category-specific Excel file
 - Each category can define its own additional product fields. Example: a `Belts` category can define length, width, and number of ribs.
 - A category field has a label, data type (text, number, or predefined option), and required/optional setting.
 - Category-specific field values are shown in the product form and included in global search.
-- A product belongs to one category and has common fields: internal code/SKU, name, active status, current stock, catalog price, and category-specific fields.
+- A product belongs to one category and has common fields: internal code/SKU, name, active status, current stock, list price, minimum sale price, and category-specific fields.
+- A product's minimum sale price is positive and may not exceed its list price.
 - Initial categories, products, prices, and stock are entered manually. Excel import is out of scope.
 
 ### 5.2 Product search
 
 - Provide one global search entry point across all active categories and products.
 - Search by SKU, product name, category name, and configured category-specific field values.
-- Results show product name, SKU, category, available stock, and current catalog price.
+- Results show product name, SKU, category, available stock, and current list price.
 - Clearly distinguish low-stock and out-of-stock products.
 
 ### 5.3 Inventory and audit trail
@@ -77,10 +78,11 @@ The store maintains inventory and sales in multiple category-specific Excel file
 
 ### 5.5 Point of sale
 
-- Create a draft sale, search and add products, and enter quantities. Each line displays the product's current catalog price; operators cannot edit sale-line prices.
-- Catalog management can update a product's catalog price for future sales. A catalog-price update never changes a confirmed sale.
-- At confirmation, the backend resolves the authoritative current catalog price for every product and stores that price as the historical sale-line snapshot.
-- Confirming a sale stores the sale, its line items, sale-time catalog prices, total in Bs, date/time, and stock movements atomically.
+- Create a draft sale, search and add products, and enter quantities. Each line starts with the product's current list price as its editable final sale price.
+- A product has a list price and a minimum sale price. An operator may set a final sale-line price above, equal to, or below list price, but never below the product's current minimum sale price.
+- Catalog management can update a product's list price and minimum sale price for future sales. A price update never changes a confirmed sale.
+- At confirmation, the backend resolves the authoritative current minimum sale price for every product, validates every final sale-line price against it, and stores the final agreed, list-price, and minimum-price facts as historical sale-line snapshots.
+- Confirming a sale stores the sale, its line items, final agreed prices, list/minimum price references, total in Bs, date/time, and stock movements atomically.
 - When confirmation begins, the UI creates and retains a UUID request ID for that sale intent. Every retry or repeated click uses that same ID; retrying it returns the already-created sale rather than creating a duplicate.
 - A draft sale can be discarded without affecting stock.
 - **Planned; not currently implemented:** a confirmed sale can be cancelled only with a required reason. Cancellation remains visible in history and creates reversing stock movements; it does not delete the original sale.
@@ -109,7 +111,7 @@ The store maintains inventory and sales in multiple category-specific Excel file
 **Sales history is implemented. Reports remain planned.**
 
 - Provide a bounded, read-only sales history filtered by an inclusive calendar-date range. The list shows persisted date/time, status, total, line count, payment count, and payment methods, newest first.
-- Selecting a sale loads its persisted product, quantity, sale-time catalog-price, payment-breakdown, and total details without using current catalog values to fill missing historical snapshots.
+- Selecting a sale loads its persisted product, quantity, final agreed unit price, available sale-time list/minimum price references, payment-breakdown, and total details without using current catalog values to fill missing historical snapshots.
 - **Planned; not currently implemented:** provide reports for a selected date range, by product, and by category.
 - Planned report values use Bs and exclude cancelled sales from effective sales totals while preserving them in audit/history views.
 
@@ -125,8 +127,8 @@ The store maintains inventory and sales in multiple category-specific Excel file
 
 | Rule | Expected behavior |
 | --- | --- |
-| Fixed sale price | A sale line uses the product's authoritative current catalog price resolved by the backend at confirmation; an operator cannot negotiate or edit that price in checkout. |
-| Historical price | A sale line retains its catalog price at sale time even if catalog management changes the product price later. |
+| Negotiated sale price | A sale line starts at the product's current list price. An operator may edit its final price while the sale is a draft, but the backend rejects any final price below the authoritative current minimum sale price at confirmation. A final price above or below list price is a neutral business decision, not a discount or surcharge classification. |
+| Historical price | A sale line retains its final agreed price plus list-price and minimum-price references at sale time even if catalog management changes either product price later. |
 | Payment integrity | The system derives cash applied and change from the cart total, tendered cash, and any QR amount. The derived cash amount plus QR amounts applied exactly equals the sale total. |
 | Stock integrity | Confirming a multi-line sale applies every stock change or none. |
 | Corrections | Returns, adjustments, and cancellations create compensating records; a return is capped at each sale line’s remaining returnable quantity, is prohibited for cancelled sales, and cancellation restores only still-unreturned units. Historical records are never silently edited or deleted. |
@@ -153,7 +155,7 @@ The store maintains inventory and sales in multiple category-specific Excel file
 
 - [ ] Categories can define required and optional product fields, and their values are searchable.
 - [ ] Staff can create products manually and search them across all categories.
-- [ ] A sale cannot confirm with negative stock; its backend-resolved catalog price is stored as the sale-line snapshot.
+- [ ] A sale cannot confirm with negative stock or a final line price below the backend-resolved minimum; its final agreed price and list/minimum references are stored as sale-line snapshots.
 - [ ] Cash, QR, and mixed payments—including operator-entered cash tendered and system-derived applied amount and change—are validated and stored correctly.
 - [ ] Retrying a sale confirmation with the same request ID returns the existing sale and does not deduct stock again.
 - [ ] Stock entries, adjustments, sales, returns, and cancellations are timestamped and auditable.

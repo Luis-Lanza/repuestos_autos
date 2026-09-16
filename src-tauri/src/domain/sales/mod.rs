@@ -10,6 +10,7 @@ pub struct SaleLine {
     quantity: Quantity,
     unit_price: MoneyCentavos,
     minimum_unit_price_snapshot: MoneyCentavos,
+    list_price_snapshot: Option<MoneyCentavos>,
     total: MoneyCentavos,
 }
 
@@ -19,19 +20,47 @@ impl SaleLine {
         quantity: Quantity,
         unit_price: MoneyCentavos,
     ) -> Result<Self, SaleError> {
-        let total = unit_price
+        Self::agreed(product_id, quantity, unit_price, None, unit_price)
+    }
+
+    pub fn agreed(
+        product_id: i64,
+        quantity: Quantity,
+        final_unit_price: MoneyCentavos,
+        list_price_snapshot: Option<MoneyCentavos>,
+        minimum_unit_price_snapshot: MoneyCentavos,
+    ) -> Result<Self, SaleError> {
+        if final_unit_price.value() <= 0 {
+            return Err(SaleError::InvalidUnitPrice);
+        }
+        if minimum_unit_price_snapshot.value() <= 0 {
+            return Err(SaleError::InvalidMinimumPriceSnapshot);
+        }
+        if final_unit_price.value() < minimum_unit_price_snapshot.value() {
+            return Err(SaleError::FinalPriceBelowMinimum);
+        }
+        if list_price_snapshot.is_some_and(|price| price.value() <= 0) {
+            return Err(SaleError::InvalidListPriceSnapshot);
+        }
+        if list_price_snapshot
+            .is_some_and(|price| minimum_unit_price_snapshot.value() > price.value())
+        {
+            return Err(SaleError::MinimumPriceAboveListPrice);
+        }
+        let total = final_unit_price
             .checked_multiply(quantity.value())
             .map_err(|_| SaleError::MoneyOverflow)?;
         Ok(Self {
             product_id,
             quantity,
-            unit_price,
-            minimum_unit_price_snapshot: unit_price,
+            unit_price: final_unit_price,
+            minimum_unit_price_snapshot,
+            list_price_snapshot,
             total,
         })
     }
 
-    // Retained until the repository is migrated to resolve catalog prices itself.
+    // Retained for unchanged callers that provide the final price and minimum snapshot.
     pub fn new(
         product_id: i64,
         quantity: Quantity,
@@ -41,12 +70,16 @@ impl SaleLine {
         if negotiated_unit_price.value() < minimum_unit_price_snapshot.value() {
             return Err("negotiated price is below the current minimum");
         }
+        if negotiated_unit_price.value() <= 0 {
+            return Err("negotiated price must be positive");
+        }
         let total = negotiated_unit_price.checked_multiply(quantity.value())?;
         Ok(Self {
             product_id,
             quantity,
             unit_price: negotiated_unit_price,
             minimum_unit_price_snapshot,
+            list_price_snapshot: None,
             total,
         })
     }
@@ -63,7 +96,6 @@ impl SaleLine {
         self.unit_price
     }
 
-    // Retained for legacy SQLite mapping until PR 3 changes the persistence contract.
     pub fn negotiated_unit_price(self) -> MoneyCentavos {
         self.unit_price()
     }
@@ -75,11 +107,20 @@ impl SaleLine {
     pub fn minimum_unit_price_snapshot(self) -> MoneyCentavos {
         self.minimum_unit_price_snapshot
     }
+
+    pub fn list_price_snapshot(self) -> Option<MoneyCentavos> {
+        self.list_price_snapshot
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaleError {
     EmptyLines,
+    InvalidUnitPrice,
+    InvalidMinimumPriceSnapshot,
+    FinalPriceBelowMinimum,
+    InvalidListPriceSnapshot,
+    MinimumPriceAboveListPrice,
     MoneyOverflow,
     AppliedPaymentsDoNotEqualTotal,
 }
@@ -112,13 +153,11 @@ impl PaymentBreakdown {
         if qr_applied.value() > total.value() {
             return Err(PaymentError::QrExceedsTotal);
         }
-
         let cash_applied = subtract(total, qr_applied)?;
         let mut payments = Vec::with_capacity(2);
         if qr_applied.value() > 0 {
             payments.push(Payment::qr(qr_applied));
         }
-
         if cash_applied.value() == 0 {
             if input
                 .amount_tendered
@@ -128,7 +167,6 @@ impl PaymentBreakdown {
             }
             return Ok(Self { payments });
         }
-
         let amount_tendered = input
             .amount_tendered
             .ok_or(PaymentError::CashTenderRequired)?;
@@ -141,7 +179,6 @@ impl PaymentBreakdown {
             amount_tendered,
             change_given,
         });
-
         Ok(Self { payments })
     }
 

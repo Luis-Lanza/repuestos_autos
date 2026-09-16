@@ -19,7 +19,9 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 12;
+pub const CURRENT_SCHEMA_VERSION: i64 = 15;
+const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
+const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationCompatibility {
@@ -203,6 +205,55 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         validate_version_twelve_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 12)?;
         transaction.commit()?;
+        version = 12;
+    }
+
+    if version == 12 {
+        let transaction = connection.transaction()?;
+        validate_version_twelve_schema(&transaction)?;
+        if transaction.query_row(
+            "SELECT EXISTS (SELECT 1 FROM products WHERE minimum_unit_price_centavos <= 0)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        transaction.execute_batch(include_str!(
+            "migrations/0013_catalog_dual_pricing.sql"
+        ))?;
+        validate_version_thirteen_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 13)?;
+        transaction.commit()?;
+        version = 13;
+    }
+
+    if version == 13 {
+        let transaction = connection.transaction()?;
+        validate_version_thirteen_schema(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0014_sale_list_price_snapshot.sql"
+        ))?;
+        validate_version_fourteen_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 14)?;
+        transaction.commit()?;
+        version = 14;
+    }
+
+    if version == 14 {
+        let transaction = connection.transaction()?;
+        validate_version_fourteen_schema(&transaction)?;
+        validate_catalog_price_data(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0015_catalog_price_cap.sql"
+        ))?;
+        validate_version_fifteen_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 15)?;
+        transaction.commit()?;
+        version = 15;
+    }
+
+    if version == CURRENT_SCHEMA_VERSION {
+        validate_version_fifteen_schema(connection)?;
     }
 
     Ok(())
@@ -592,6 +643,100 @@ fn validate_version_eleven_schema(connection: &Connection) -> Result<()> {
     validate_foreign_keys(connection)
 }
 
+pub(super) fn validate_version_thirteen_schema(connection: &Connection) -> Result<()> {
+    validate_version_twelve_schema(connection)?;
+    if !has_columns(
+        connection,
+        "products",
+        &["list_price_centavos", "minimum_sale_price_centavos"],
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM products WHERE list_price_centavos <= 0 OR minimum_unit_price_centavos <= 0 OR minimum_unit_price_centavos > list_price_centavos)",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
+}
+
+fn validate_version_fourteen_schema(connection: &Connection) -> Result<()> {
+    validate_version_thirteen_schema(connection)?;
+    if !has_columns(connection, "sale_lines", &["list_price_snapshot_centavos"])? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sale_lines WHERE list_price_snapshot_centavos IS NOT NULL AND list_price_snapshot_centavos <= 0)",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if !schema_object_exists(connection, "trigger", "confirmed_sale_lines_immutable_price")?
+        || !connection.query_row(
+            "SELECT COALESCE(sql, '') LIKE '%list_price_snapshot_centavos%' FROM sqlite_master WHERE type = 'trigger' AND name = 'confirmed_sale_lines_immutable_price'",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
+}
+
+fn validate_version_fifteen_schema(connection: &Connection) -> Result<()> {
+    validate_version_fourteen_schema(connection)?;
+    validate_catalog_price_data(connection)?;
+    for (name, event) in [
+        (
+            "products_validate_price_insert",
+            "before insert on products",
+        ),
+        (
+            "products_validate_price_update",
+            "before update of list_price_centavos, minimum_unit_price_centavos on products",
+        ),
+    ] {
+        if !schema_object_exists(connection, "trigger", name)? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let sql = connection.query_row(
+            "SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
+            [name],
+            |row| row.get::<_, String>(0),
+        )?;
+        let sql = sql.to_ascii_lowercase();
+        if !sql.contains(event)
+            || ![
+                "raise(abort",
+                "9007199254740991",
+                "9223372036854775807",
+                "new.list_price_centavos <= 0",
+                "new.minimum_unit_price_centavos <= 0",
+                "new.minimum_unit_price_centavos > new.list_price_centavos",
+            ]
+            .iter()
+            .all(|fragment| sql.contains(fragment))
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    validate_foreign_keys(connection)
+}
+
+fn validate_catalog_price_data(connection: &Connection) -> Result<()> {
+    if connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM products WHERE list_price_centavos IS NULL OR list_price_centavos <= 0 OR list_price_centavos > ?1 OR list_price_centavos = ?2 OR minimum_unit_price_centavos IS NULL OR minimum_unit_price_centavos <= 0 OR minimum_unit_price_centavos > ?1 OR minimum_unit_price_centavos = ?2 OR minimum_unit_price_centavos > list_price_centavos)",
+        [MAX_CATALOG_PRICE_CENTAVOS, CATALOG_PRICE_SENTINEL],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
 fn validate_version_twelve_schema(connection: &Connection) -> Result<()> {
     validate_version_eleven_schema(connection)?;
     if !has_columns(
@@ -610,7 +755,7 @@ fn validate_version_twelve_schema(connection: &Connection) -> Result<()> {
 }
 
 fn has_columns(connection: &Connection, table: &str, required: &[&str]) -> Result<bool> {
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut statement = connection.prepare(&format!("PRAGMA table_xinfo({table})"))?;
     let actual = statement
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>>>()?;

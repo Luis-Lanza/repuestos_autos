@@ -13,6 +13,8 @@ pub struct ApplicationRequestedLine {
     pub quantity: Quantity,
     pub captured_unit_price: MoneyCentavos,
     pub captured_revision: i64,
+    /// Explicit negotiated-price route; `None` preserves the legacy behavior.
+    pub final_unit_price: Option<MoneyCentavos>,
     pub acknowledged_price: Option<MoneyCentavos>,
     pub acknowledged_revision: Option<i64>,
 }
@@ -34,13 +36,17 @@ pub struct SaleIdentity {
 impl SaleIdentity {
     pub fn from_request(request: &ApplicationConfirmSaleRequest) -> Self {
         let mut payload = Vec::new();
-        append_field(&mut payload, b"confirm_sale/v1");
+        let explicit_final_price = request.lines.iter().any(|line| line.final_unit_price.is_some());
+            append_field(&mut payload, if explicit_final_price { b"confirm_sale/v2" } else { b"confirm_sale/v1" });
         append_field(&mut payload, request.lines.len().to_string().as_bytes());
         for line in &request.lines {
             append_number(&mut payload, line.product_id);
             append_number(&mut payload, line.quantity.value());
             append_number(&mut payload, line.captured_unit_price.value());
             append_number(&mut payload, line.captured_revision);
+            if explicit_final_price {
+                append_nullable_number(&mut payload, line.final_unit_price.map(MoneyCentavos::value));
+            }
             append_nullable_number(
                 &mut payload,
                 line.acknowledged_price.map(MoneyCentavos::value),
@@ -58,7 +64,7 @@ impl SaleIdentity {
         let digest = format!("{:x}", Sha256::digest(&payload));
         Self {
             operation_kind: "confirm_sale".into(),
-            payload_version: 1,
+            payload_version: if explicit_final_price { 2 } else { 1 },
             canonical_payload: payload,
             payload_sha256: digest,
         }
@@ -255,9 +261,11 @@ fn validate_existing_identity(
 
 fn valid_confirm_sale_payload(payload: &[u8]) -> bool {
     let mut offset = 0;
-    if next_field(payload, &mut offset) != Some(b"confirm_sale/v1" as &[u8]) {
-        return false;
-    }
+    let version = match next_field(payload, &mut offset) {
+        Some(b"confirm_sale/v1") => 1,
+        Some(b"confirm_sale/v2") => 2,
+        _ => return false,
+    };
     let Some(line_count) = next_field(payload, &mut offset).and_then(parse_usize) else {
         return false;
     };
@@ -273,6 +281,9 @@ fn valid_confirm_sale_payload(payload: &[u8]) -> bool {
                 return false;
             }
         }
+        if version == 2 && !next_positive_nullable_number(payload, &mut offset) {
+            return false;
+        }
         if !next_nullable_number(payload, &mut offset)
             || !next_nullable_number(payload, &mut offset)
         {
@@ -282,6 +293,16 @@ fn valid_confirm_sale_payload(payload: &[u8]) -> bool {
     next_nullable_number(payload, &mut offset)
         && next_nullable_number(payload, &mut offset)
         && offset == payload.len()
+}
+
+fn next_positive_nullable_number(payload: &[u8], offset: &mut usize) -> bool {
+    match next_field(payload, offset) {
+        Some(b"null") => true,
+        Some(b"value") => next_field(payload, offset)
+            .and_then(parse_i64)
+            .is_some_and(|value| value > 0),
+        _ => false,
+    }
 }
 
 fn next_nullable_number(payload: &[u8], offset: &mut usize) -> bool {

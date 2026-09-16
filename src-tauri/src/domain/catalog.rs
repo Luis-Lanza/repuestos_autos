@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+pub const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
     Text,
@@ -70,7 +72,9 @@ pub enum CatalogValidationError {
     InvalidCategory,
     InvalidFieldDefinition,
     InvalidProduct,
-    InvalidCatalogPrice,
+    InvalidListPrice,
+    InvalidMinimumSalePrice,
+    MinimumSalePriceExceedsListPrice,
     InvalidOpeningQuantity,
     MissingRequiredField,
     InvalidAttributeValue,
@@ -113,7 +117,9 @@ pub struct TransitionPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaintenanceError {
     InvalidProduct,
-    InvalidCatalogPrice,
+    InvalidListPrice,
+    InvalidMinimumSalePrice,
+    MinimumSalePriceExceedsListPrice,
     InvalidAttributeValue,
     LifecycleBlocked,
 }
@@ -135,15 +141,24 @@ pub fn normalize_identity(value: &str) -> String {
 pub fn validate_maintenance_product(
     sku: &str,
     name: &str,
-    catalog_unit_price_centavos: i64,
+    list_price_centavos: i64,
+    minimum_sale_price_centavos: i64,
     definitions: &[AttributeDefinition],
     values: &[AttributeValueDraft],
 ) -> Result<Vec<ValidatedAttributeValue>, MaintenanceError> {
     if sku.trim().is_empty() || name.trim().is_empty() {
         return Err(MaintenanceError::InvalidProduct);
     }
-    if catalog_unit_price_centavos <= 0 {
-        return Err(MaintenanceError::InvalidCatalogPrice);
+    if list_price_centavos <= 0 || list_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+        return Err(MaintenanceError::InvalidListPrice);
+    }
+    if minimum_sale_price_centavos <= 0
+        || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
+    {
+        return Err(MaintenanceError::InvalidMinimumSalePrice);
+    }
+    if minimum_sale_price_centavos > list_price_centavos {
+        return Err(MaintenanceError::MinimumSalePriceExceedsListPrice);
     }
     validate_attribute_values(definitions, values)
         .map_err(|_| MaintenanceError::InvalidAttributeValue)
@@ -205,7 +220,8 @@ pub fn validate_category(
 pub fn validate_product(
     sku: &str,
     name: &str,
-    catalog_unit_price_centavos: i64,
+    list_price_centavos: i64,
+    minimum_sale_price_centavos: i64,
     opening_quantity: i64,
     definitions: &[AttributeDefinition],
     values: &[AttributeValueDraft],
@@ -213,8 +229,16 @@ pub fn validate_product(
     if sku.trim().is_empty() || name.trim().is_empty() {
         return Err(CatalogValidationError::InvalidProduct);
     }
-    if catalog_unit_price_centavos <= 0 {
-        return Err(CatalogValidationError::InvalidCatalogPrice);
+    if list_price_centavos <= 0 || list_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+        return Err(CatalogValidationError::InvalidListPrice);
+    }
+    if minimum_sale_price_centavos <= 0
+        || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
+    {
+        return Err(CatalogValidationError::InvalidMinimumSalePrice);
+    }
+    if minimum_sale_price_centavos > list_price_centavos {
+        return Err(CatalogValidationError::MinimumSalePriceExceedsListPrice);
     }
     if opening_quantity <= 0 {
         return Err(CatalogValidationError::InvalidOpeningQuantity);
@@ -298,7 +322,7 @@ mod tests {
             options: vec![],
         }];
 
-        let result = validate_product("SKU", "Product", 100, 1, &definitions, &[]);
+        let result = validate_product("SKU", "Product", 100, 100, 1, &definitions, &[]);
 
         assert_eq!(result, Err(CatalogValidationError::MissingRequiredField));
     }
@@ -316,7 +340,7 @@ mod tests {
             value: "Leather".into(),
         }];
 
-        let result = validate_product("SKU", "Product", 100, 1, &definitions, &values);
+        let result = validate_product("SKU", "Product", 100, 100, 1, &definitions, &values);
 
         assert_eq!(result, Err(CatalogValidationError::InvalidAttributeValue));
     }

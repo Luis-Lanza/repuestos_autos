@@ -44,7 +44,8 @@ pub trait CatalogMetadataRepository {
         revision: i64,
         sku: &str,
         name: &str,
-        price: i64,
+        list_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
         values: &[ValidatedAttributeValue],
     ) -> Result<CatalogSnapshot>;
 }

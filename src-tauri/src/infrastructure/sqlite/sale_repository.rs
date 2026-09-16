@@ -92,20 +92,50 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
             .map(|line| {
                 let product = transaction
                     .query_row(
-                        "SELECT p.active, c.active, p.minimum_unit_price_centavos, p.revision FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
+                        "SELECT p.active, c.active, p.list_price_centavos, p.minimum_unit_price_centavos, p.revision FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
                         [line.product_id],
-                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+                        |row| Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                        )),
                     )
                     .optional()
                     .map_err(|_| ConfirmSaleError::Persistence)?;
                 match product {
-                    Some((1, 1, price, revision)) => {
-                        let current = MoneyCentavos::new(price).map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
-                        if (line.captured_unit_price != current || line.captured_revision != revision)
-                            && (line.acknowledged_price != Some(current) || line.acknowledged_revision != Some(revision)) {
-                            return Err(ConfirmSaleError::StaleCatalogPrice { product_id: line.product_id, current_unit_price: current, current_revision: revision });
+                    Some((1, 1, list_price, minimum_price, revision)) => {
+                        let list = MoneyCentavos::new(list_price)
+                            .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
+                        let minimum = MoneyCentavos::new(minimum_price)
+                            .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
+                        if let Some(final_price) = line.final_unit_price {
+                            return SaleLine::agreed(
+                                line.product_id,
+                                line.quantity,
+                                final_price,
+                                Some(list),
+                                minimum,
+                            )
+                            .map_err(|error| match error {
+                                crate::domain::sales::SaleError::FinalPriceBelowMinimum =>
+                                    ConfirmSaleError::FinalPriceBelowMinimum {
+                                        product_id: line.product_id,
+                                        current_minimum_unit_price: minimum,
+                                    },
+                                crate::domain::sales::SaleError::MoneyOverflow =>
+                                    ConfirmSaleError::MoneyOverflow,
+                                crate::domain::sales::SaleError::MinimumPriceAboveListPrice =>
+                                    ConfirmSaleError::PersistedDataInvalid,
+                                _ => ConfirmSaleError::PersistedDataInvalid,
+                            });
                         }
-                        SaleLine::priced(line.product_id, line.quantity, current).map_err(|_| ConfirmSaleError::MoneyOverflow)
+                        if (line.captured_unit_price != minimum || line.captured_revision != revision)
+                            && (line.acknowledged_price != Some(minimum) || line.acknowledged_revision != Some(revision)) {
+                            return Err(ConfirmSaleError::StaleCatalogPrice { product_id: line.product_id, current_unit_price: minimum, current_revision: revision });
+                        }
+                        SaleLine::priced(line.product_id, line.quantity, minimum).map_err(|_| ConfirmSaleError::MoneyOverflow)
                     }
                     Some(_) => Err(ConfirmSaleError::ProductInactive),
                     None => Err(ConfirmSaleError::ProductMissing),
@@ -132,8 +162,8 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
         for line in sale.lines() {
             transaction
                 .execute(
-                    "INSERT INTO sale_lines (sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) SELECT ?1, ?2, sku, name, ?3, ?4, ?5, ?6 FROM products WHERE id = ?2",
-                    params![sale_id, line.product_id(), line.quantity().value(), line.unit_price().value(), line.unit_price().value(), line.total().value()],
+                    "INSERT INTO sale_lines (sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, list_price_snapshot_centavos, line_total_centavos) SELECT ?1, ?2, sku, name, ?3, ?4, ?5, ?6, ?7 FROM products WHERE id = ?2",
+                    params![sale_id, line.product_id(), line.quantity().value(), line.unit_price().value(), line.minimum_unit_price_snapshot().value(), line.list_price_snapshot().map(MoneyCentavos::value), line.total().value()],
                 )
                 .map_err(|_| ConfirmSaleError::Persistence)?;
             line_ids.push(transaction.last_insert_rowid());
@@ -231,18 +261,22 @@ impl SaleRepository for SqliteSaleRepository {
             )
             .map_err(|_| integrity_error())?;
         let lines = transaction
-            .prepare("SELECT l.product_id, COALESCE(l.sku_snapshot, p.sku), COALESCE(l.product_name_snapshot, p.name), l.quantity, l.negotiated_unit_price_centavos, l.minimum_unit_price_snapshot_centavos, l.line_total_centavos FROM sale_lines l JOIN products p ON p.id = l.product_id WHERE l.sale_id = ?1 ORDER BY l.id")
+            .prepare("SELECT l.product_id, COALESCE(l.sku_snapshot, p.sku), COALESCE(l.product_name_snapshot, p.name), l.quantity, l.negotiated_unit_price_centavos, l.minimum_unit_price_snapshot_centavos, l.list_price_snapshot_centavos, l.line_total_centavos FROM sale_lines l JOIN products p ON p.id = l.product_id WHERE l.sale_id = ?1 ORDER BY l.id")
             .map_err(database_error)?
-            .query_map([sale_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)))
+            .query_map([sale_id], |row| Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+                    row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+                )))
             .map_err(database_error)?
-            .collect::<Result<Vec<(i64, String, String, i64, i64, i64, i64)>, _>>()
+            .collect::<Result<Vec<(i64, String, String, i64, i64, i64, Option<i64>, i64)>, _>>()
             .map_err(database_error)?
             .into_iter()
-            .map(|(product_id, sku, product_name, quantity, negotiated, minimum, total)| Ok(PersistedLine {
+            .map(|(product_id, sku, product_name, quantity, negotiated, minimum, list, total)| Ok(PersistedLine {
                 product_id, sku, product_name,
                 quantity: Quantity::new(quantity).map_err(|_| integrity_error())?,
                 negotiated_unit_price: MoneyCentavos::new(negotiated).map_err(|_| integrity_error())?,
                 minimum_unit_price_snapshot: MoneyCentavos::new(minimum).map_err(|_| integrity_error())?,
+                list_price_snapshot: list.map(MoneyCentavos::new).transpose().map_err(|_| integrity_error())?,
                 line_total: MoneyCentavos::new(total).map_err(|_| integrity_error())?,
             }))
             .collect::<Result<Vec<_>, String>>()?;
