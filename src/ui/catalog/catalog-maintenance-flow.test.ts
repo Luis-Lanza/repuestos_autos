@@ -21,6 +21,7 @@ test("surfaces loading, unavailable, validation, conflict, failure, recovery, an
   assert.equal(validation.feedback, "Revisá los valores del catálogo e intentá nuevamente.");
   assert.equal(conflict.feedback, "Registro desactualizado. Recargá los registros del catálogo.");
   assert.equal(conflict.recovery_required, true);
+  assert.equal(conflict.lifecycle_feedback, "Registro desactualizado. Recargá los registros del catálogo.");
   assert.match(renderToStaticMarkup(createElement(CatalogMaintenanceRecovery, { required: conflict.recovery_required, onReload: () => undefined })), /Recargar registros del catálogo/);
   assert.equal(failure.status, "unavailable");
   assert.equal(restored.records[0].label, "Filter");
@@ -42,6 +43,19 @@ test("loads editable metadata, validates typed values, and reloads stable confli
   assert.equal(unavailable.status, "unavailable");
   assert.deepEqual([reactivated.records[0].activity, reactivated.selected?.activity, reactivated.detail?.activity], ["active", "active", "active"]);
   assert.deepEqual([reactivated.records[0].revision, reactivated.selected?.revision, reactivated.detail?.revision], [3, 3, 3]);
+  const refreshFailed = createCatalogMaintenanceFlow(reactivated, { type: "refresh_failed" });
+  const refreshStarted = createCatalogMaintenanceFlow(refreshFailed, { type: "refresh_started" });
+  const listRefreshed = createCatalogMaintenanceFlow(refreshStarted, { type: "refresh_list_succeeded", records: [archived] });
+  const refreshRetry = createCatalogMaintenanceFlow(listRefreshed, { type: "refresh_succeeded", records: [archived] });
+  const lockedRefresh = createCatalogMaintenanceFlow(listRefreshed, { type: "refresh_succeeded", records: [archived], keep_recovery_locked: true });
+  assert.equal(refreshFailed.recovery_required, true);
+  assert.equal(refreshFailed.status, "ready");
+  assert.deepEqual(refreshFailed.detail, reactivated.detail);
+  assert.equal(listRefreshed.recovery_required, true);
+  assert.equal(listRefreshed.status, "loading");
+  assert.equal(refreshRetry.recovery_required, false);
+  assert.equal(lockedRefresh.recovery_required, true);
+  assert.deepEqual(refreshRetry.records, [archived]);
   const screen = renderToStaticMarkup(createElement(CatalogMetadataEditor, { detail, form: formForCatalogDetail(detail), pending: true, feedback: "Price must be whole centavos.", fieldErrors: { list_price_centavos: "Price must be whole centavos." }, onChange: () => undefined, onSubmit: () => undefined }));
   assert.match(screen, /Precio de lista \(Bs\).*Referencia para nuevas ventas/i);
   assert.match(screen, /Material/);
@@ -69,7 +83,7 @@ test("keeps selected detail identity through failure and retries the same reques
 test("keeps success announced during refresh and scopes validation to invalid fields", () => {
   const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", list_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [] }, { definition_id: 5, label: "Length", field_type: "number" as const, required: false, options: [] }, { definition_id: 6, label: "Grade", field_type: "option" as const, required: false, options: ["A"] }], attribute_values: [] };
   const invalid = fieldErrorsForCatalogEdit(detail, { sku: "", name: "", list_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "", 5: "not-a-number", 6: "B" } });
-  const saved = createCatalogMaintenanceFlow({ ...initialCatalogMaintenanceState, detail }, { type: "edit_succeeded" });
+  const saved = createCatalogMaintenanceFlow({ ...initialCatalogMaintenanceState, detail }, { type: "edit_succeeded", record: { entity_id: 1, target: "product", label: "Filter", activity: "active", revision: 3 } });
   const loading = createCatalogMaintenanceFlow(saved, { type: "load_started" });
   const listed = createCatalogMaintenanceFlow(loading, { type: "loaded", records: [] });
   const refreshed = createCatalogMaintenanceFlow(listed, { type: "detail_loaded", detail });

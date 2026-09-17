@@ -16,6 +16,8 @@ export type ConfirmationDialogProps = {
   pending?: boolean;
   pendingLabel?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement>;
+  dialogId?: string;
+  dialogDataAttribute?: "catalog-edit-dialog";
   onCancel: () => void;
   onConfirm: () => void;
   children?: ReactNode;
@@ -51,7 +53,7 @@ function restore(invoker: HTMLElement | null) {
 
 export function ConfirmationDialog({
   open, purpose, layout = "default", title, description, confirmLabel, confirmDisabled = false, pending = false,
-  pendingLabel = "Procesando…", initialFocusRef, onCancel, onConfirm, children,
+  pendingLabel = "Procesando…", initialFocusRef, dialogId, dialogDataAttribute, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
   if (!(typeof description === "string" && description.trim()) && !isValidElement(description)) {
@@ -123,11 +125,12 @@ export function ConfirmationDialog({
 
   return createElement("div", { "data-ui-dialog-backdrop": true },
     createElement("div", {
-      id: purpose === "routine" ? "checkout-dialog" : undefined,
+      id: dialogId ?? (purpose === "routine" ? "checkout-dialog" : undefined),
       ref: dialogRef, role: "dialog", tabIndex: -1,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined, "data-ui-confirmation-dialog": purpose !== "routine" || undefined,
-      "data-ui-checkout-dialog": purpose === "routine" || undefined,
+      "data-ui-checkout-dialog": purpose === "routine" && dialogDataAttribute !== "catalog-edit-dialog" || undefined,
+      "data-ui-catalog-edit-dialog": dialogDataAttribute === "catalog-edit-dialog" || undefined,
       "data-ui-dialog-layout": layout,
       "data-ui-purpose": purpose,
     },
