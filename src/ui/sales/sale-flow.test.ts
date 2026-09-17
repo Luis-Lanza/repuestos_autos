@@ -6,6 +6,7 @@ import {
   createSaleFlow,
   draftLineSubtotalCentavos,
   draftTotalCentavos,
+  draftTotalUnits,
   effectiveDraftUnitPriceCentavos,
   formatBs,
   initialSaleState,
@@ -67,6 +68,8 @@ test("derives checked draft prices and totals while preserving captured facts", 
   assert.equal(effectiveDraftUnitPriceCentavos(quantityTwo.lines[0]), 2_750);
   assert.equal(draftLineSubtotalCentavos(quantityTwo.lines[0]), 5_500);
   assert.equal(draftTotalCentavos(quantityTwo.lines), 5_500);
+  assert.equal(draftTotalUnits(quantityTwo.lines), 2);
+  assert.equal(draftTotalUnits([quantityTwo.lines[0], { ...quantityTwo.lines[0], product_id: 2, quantity: 3 }]), 5);
   assert.equal(quantityTwo.lines[0].captured_unit_price_centavos, 2_500);
   assert.equal(quantityTwo.lines[0].captured_revision, 0);
 });

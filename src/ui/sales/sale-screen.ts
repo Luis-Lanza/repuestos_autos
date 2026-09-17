@@ -3,7 +3,8 @@ import { browseProducts, type ProductBrowseResult } from "../../commands/catalog
 import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sale.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, effectiveDraftUnitPriceCentavos, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
+import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
+import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
 import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
 
@@ -27,7 +28,8 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, initialProductBrowserState);
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
   const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
-  const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null);
   const searchSequence = useRef(0), confirmationSequence = useRef(0), confirming = useRef(false), mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; }, []);
   useEffect(() => {
@@ -61,7 +63,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   }
 
   async function confirm() {
-    if (confirming.current) return;
+    if (confirming.current || state.lines.length === 0) return;
     let firstInvalidPrice: number | null = null;
     for (const line of state.lines) { if (finalPriceError(line)) { firstInvalidPrice ??= line.product_id; } }
     if (firstInvalidPrice !== null) {
@@ -97,35 +99,50 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     finally { if (attempt === confirmationSequence.current) confirming.current = false; }
   }
 
+  const discardDraft = () => {
+    if (confirming.current) return;
+    confirmationSequence.current += 1;
+    draftDispatch({ type: "discard" });
+    setCheckoutOpen(false);
+    browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
+    setPaymentErrors({});
+  };
   if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setPersistedDetails(null); browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current }); setPaymentErrors({}); dispatch({ type: "discard" }); } });
   const total = formatBs(draftTotalCentavos(state.lines));
+  const totalUnits = draftTotalUnits(state.lines);
   const pending = state.confirmation === "pending";
   const addProduct = (product: ProductBrowseResult) => draftDispatch({ type: "add_product", product });
-  const cartItems = state.lines.map((line) => createElement("li", { key: line.product_id },
+  const cartItems = state.lines.map((line, index) => createElement("li", { key: line.product_id },
     createElement("div", null,
       createElement("strong", null, line.product_name), createElement("span", { "data-ui-sku": true }, line.sku),
       createElement("dl", { "data-ui-sale-price-facts": true },
         createElement("dt", null, "Precio de lista"), createElement("dd", { "data-ui-money": true }, formatBs(line.list_price_centavos)),
         createElement("dt", null, "Precio mínimo"), createElement("dd", { "data-ui-money": true }, formatBs(line.minimum_price_centavos)))),
-    createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.price_errors[line.product_id], control: createElement("input", { id: `sale-final-price-${line.product_id}`, value: line.final_price_input, disabled: pending, onChange: (event) => draftDispatch({ type: "line_final_price_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
+    createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.price_errors[line.product_id], control: createElement("input", { id: `sale-final-price-${line.product_id}`, ref: index === 0 ? checkoutInitialFocusRef : undefined, value: line.final_price_input, disabled: pending, onChange: (event) => draftDispatch({ type: "line_final_price_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
     createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
     createElement("span", { "data-ui-money": true }, `Subtotal: ${formatBs(draftLineSubtotalCentavos(line))}`),
     createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar")));
+  const checkoutContent = createElement("div", { "data-ui-checkout-content": true },
+    createElement("section", { "aria-labelledby": "checkout-cart-heading" },
+      createElement("h3", { id: "checkout-cart-heading" }, "Carrito"),
+      state.lines.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "El carrito está vacío.") : null,
+      createElement("ul", { "aria-label": "Carrito", "data-ui-sale-list": true, "data-ui-sale-cart": true }, cartItems)),
+    createElement("section", { "aria-labelledby": "checkout-payment-heading" },
+      createElement("h3", { id: "checkout-payment-heading" }, "Pago"),
+      createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, amount_tendered_centavos: undefined })); dispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }); } }) } as never),
+      createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
+    state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
+    createElement("div", { "data-ui-sale-actions": true },
+      createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador")));
   return createElement("main", { ref: draftRef, "aria-labelledby": "sale-heading", "aria-busy": pending || undefined, "data-ui-sale": true },
     createElement("h1", { id: "sale-heading" }, "Ventas"),
     createElement("div", { "data-ui-sale-layout": true },
       createElement(Panel, { label: "Catálogo" } as never,
         createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
-      createElement(Panel, { label: "Carrito" } as never,
-        state.lines.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "El carrito está vacío.") : null,
-        createElement("ul", { "aria-label": "Carrito", "data-ui-sale-list": true, "data-ui-sale-cart": true }, cartItems)),
-      createElement(Panel, { label: "Pago" } as never,
-        createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, amount_tendered_centavos: undefined })); dispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }); } }) } as never),
-        createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
-      createElement(Panel, { label: "Resumen" } as never,
-        createElement("p", { "data-ui-type": "total" }, `Total: ${total}`),
-        state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
-        createElement("div", { "data-ui-sale-actions": true },
-          createElement(Action, { variant: "primary", pending, pendingLabel: "Confirmando…", disabled: state.lines.length === 0, onClick: confirm }, "Confirmar venta"),
-          createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => { if (confirming.current) return; confirmationSequence.current += 1; draftDispatch({ type: "discard" }); browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current }); setPaymentErrors({}); } }, "Descartar borrador")))));
+      createElement(Panel, { label: "Resumen de venta" } as never,
+        createElement("div", { "data-ui-sale-summary": true },
+          createElement("p", { "data-ui-quantity": true }, `Unidades: ${totalUnits}`),
+          createElement("p", { "data-ui-type": "total" }, `Total: ${total}`),
+          createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: () => setCheckoutOpen(true) } , "Revisar y cobrar")))),
+    createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!pending && !confirming.current) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
 }

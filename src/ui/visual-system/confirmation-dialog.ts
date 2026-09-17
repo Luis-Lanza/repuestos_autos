@@ -2,13 +2,15 @@ import { createElement, isValidElement, useEffect, useId, useRef, type ReactElem
 
 import { Action } from "./controls.ts";
 
-export type DestructivePurpose = "restore" | "cancellation";
+export type DialogPurpose = "restore" | "cancellation" | "routine";
+export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
 export type ConfirmationDialogProps = {
   open: boolean;
-  purpose: DestructivePurpose;
+  purpose: DialogPurpose;
   title: string;
   description: string | ReactElement;
   confirmLabel: ReactNode;
+  confirmDisabled?: boolean;
   pending?: boolean;
   pendingLabel?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement>;
@@ -46,7 +48,7 @@ function restore(invoker: HTMLElement | null) {
 }
 
 export function ConfirmationDialog({
-  open, purpose, title, description, confirmLabel, pending = false,
+  open, purpose, title, description, confirmLabel, confirmDisabled = false, pending = false,
   pendingLabel = "Procesando…", initialFocusRef, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
@@ -119,9 +121,11 @@ export function ConfirmationDialog({
 
   return createElement("div", { "data-ui-dialog-backdrop": true },
     createElement("div", {
+      id: purpose === "routine" ? "checkout-dialog" : undefined,
       ref: dialogRef, role: "dialog", tabIndex: -1,
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
-      "aria-busy": pending || undefined, "data-ui-confirmation-dialog": true,
+      "aria-busy": pending || undefined, "data-ui-confirmation-dialog": purpose !== "routine" || undefined,
+      "data-ui-checkout-dialog": purpose === "routine" || undefined,
       "data-ui-purpose": purpose,
     },
     createElement("h2", { id: titleId }, title),
@@ -129,5 +133,5 @@ export function ConfirmationDialog({
     children,
     createElement("div", { "data-ui-dialog-actions": true },
       createElement(Action, { variant: "secondary", disabled: pending, onClick: () => { if (!pending) onCancel(); } }, "Volver"),
-      createElement(Action, { variant: "destructive", pending, pendingLabel, onClick: () => { if (!pending) onConfirm(); } }, confirmLabel))));
+      createElement(Action, { variant: purpose === "routine" ? "primary" : "destructive", pending, pendingLabel, disabled: confirmDisabled, onClick: () => { if (!pending && !confirmDisabled) onConfirm(); } }, confirmLabel))));
 }

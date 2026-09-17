@@ -39,6 +39,15 @@ export function draftLineSubtotalCentavos(line: DraftLine): number {
   return Number(subtotal);
 }
 export function draftTotalCentavos(lines: readonly DraftLine[]): number { let total = 0n; for (const line of lines) { total += BigInt(draftLineSubtotalCentavos(line)); if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError(UNSAFE_DRAFT_TOTAL); } return Number(total); }
+export function draftTotalUnits(lines: readonly DraftLine[]): number {
+  let total = 0;
+  for (const line of lines) {
+    if (!Number.isSafeInteger(line.quantity) || line.quantity < 0) throw new RangeError(UNSAFE_DRAFT_TOTAL);
+    total += line.quantity;
+    if (!Number.isSafeInteger(total)) throw new RangeError(UNSAFE_DRAFT_TOTAL);
+  }
+  return total;
+}
 
 export type DraftPayment = { amount_tendered_centavos: string; qr_applied_centavos: string; };
 export type CatalogDiscoveryState = { status: "initial" | "loading" | "results" | "empty" | "error"; query: string; request_id: number; results: ProductSearchResult[]; error: string | null; };

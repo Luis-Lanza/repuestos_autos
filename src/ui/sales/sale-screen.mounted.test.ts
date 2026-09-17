@@ -24,7 +24,7 @@ const success = { kind: "success", sale_id: 9, request_id: UUID, status: "confir
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const user = () => userEvent.setup({ document });
 async function searchFor(value = "filtro") { const u = user(); await u.type(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }), `${value}{Enter}`); return u; }
-async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); return u; }
+async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); return u; }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
 
 test("automatically loads the active first page once on mount", async () => {
@@ -49,11 +49,12 @@ test("contains the product result viewport between search and pagination without
   assert.equal(list.previousElementSibling?.tagName, "FORM");
   assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
   assert.equal(within(catalog).getAllByRole("listitem").length, 100);
-  assert.ok(screen.getByRole("region", { name: "Carrito" }));
-  assert.ok(screen.getByRole("region", { name: "Pago" }));
+  assert.ok(screen.getByRole("region", { name: "Resumen de venta" }));
+  assert.equal(screen.queryByRole("region", { name: "Carrito" }), null);
+  assert.equal(screen.queryByRole("region", { name: "Pago" }), null);
   assert.match(style.textContent ?? "", /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(style.textContent ?? "", /data-ui-product-browser-list[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
-  assert.match(style.textContent ?? "", /data-ui-sale-layout[^}]*grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)/s);
+  assert.match(style.textContent ?? "", /data-ui-sale-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
 });
 
 test("shows every discovery state and ignores reverse-order search completion", async () => {
@@ -63,7 +64,7 @@ test("shows every discovery state and ignores reverse-order search completion", 
   screen.getByText("Buscando productos…");
   const heading = screen.getByRole("heading", { level: 1, name: "Ventas" });
   assert.equal(heading.textContent, "Ventas"); assert.equal(heading.getAttribute("aria-label"), null); assert.equal(screen.getAllByRole("heading", { level: 1 }).length, 1);
-  assert.deepEqual(screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent), ["Catálogo", "Carrito", "Pago", "Resumen"]);
+  assert.deepEqual(screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent), ["Catálogo", "Resumen de venta"]);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-layout[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
   const u = await searchFor("viejo"); screen.getByText("Buscando productos…");
   await u.clear(screen.getByRole("searchbox")); await u.type(screen.getByRole("searchbox"), "nuevo{Enter}");
@@ -111,13 +112,30 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command"))); render(createElement(SaleScreen)); const u = await searchFor();
   const add = await screen.findAllByRole("button", { name: "Agregar" });
   assert.equal((add[2] as HTMLButtonElement).disabled, true); await u.click(add[0]); assert.equal((add[0] as HTMLButtonElement).disabled, true);
+  await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
   screen.getByRole("heading", { name: "Carrito" }); screen.getAllByText("FIL-1"); screen.getAllByText("Bs 85,50"); screen.getByText("Total: Bs 85,50");
   const quantity = screen.getByRole("spinbutton", { name: "Cantidad de Filtro aceite" }); fireEvent.change(quantity, { target: { value: "2" } });
   screen.getByText("Subtotal: Bs 171,00"); screen.getByText("Total: Bs 171,00");
+  within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("Unidades: 2");
   quantity.focus(); fireEvent.change(quantity, { target: { value: "0" } }); screen.getByText("Ingresá una cantidad entera mayor que cero."); assert.equal(document.activeElement, quantity);
   await u.click(screen.getByRole("button", { name: "Quitar" })); screen.getByText("El carrito está vacío.");
-  await u.click(add[1]); await u.type(screen.getByRole("textbox", { name: "Efectivo recibido" }), "10"); await u.click(screen.getByRole("button", { name: "Descartar borrador" }));
-  screen.getByText("El carrito está vacío."); assert.equal((screen.getByRole("textbox", { name: "Efectivo recibido" }) as HTMLInputElement).value, "");
+  await u.click(screen.getByRole("button", { name: "Volver" }));
+  assert.equal(screen.getByRole("button", { name: "Revisar y cobrar" }).getAttribute("aria-expanded"), "false");
+});
+
+test("disables empty-cart confirmation without invoking the native contract", async () => {
+  let confirms = 0;
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : (confirms++, success));
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Quitar" }));
+
+  const confirm = screen.getByRole("button", { name: "Confirmar venta" }) as HTMLButtonElement;
+  assert.equal(confirm.disabled, true);
+  assert.equal(document.activeElement, screen.getByRole("button", { name: "Volver" }));
+  fireEvent.click(confirm);
+  assert.equal(confirms, 0);
+  assert.equal(screen.getByRole("dialog", { name: "Revisar y cobrar" }).isConnected, true);
 });
 
 test("parses cash-only, QR-only and mixed Bs values into the exact command envelope", async () => {
@@ -162,7 +180,7 @@ test("shows a neutral specific message for a request conflict", async () => {
 test("locks every draft mutation and submitted intent during deferred confirmation", async () => {
   installUuid(); const pending = deferred<unknown>(); let confirms = 0, searches = 0, submitted: unknown;
   mockIPC((command, payload) => command === "browse_products_command" ? (searches++, browse(products)) : (confirms++, submitted = payload, pending.promise));
-  render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
+  render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
   fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" })); fireEvent.click(screen.getByRole("button", { name: "Confirmando…" }));
   const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar" }), screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
@@ -207,7 +225,7 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
   installUuid(); const pending = deferred<unknown>(); mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : pending.promise);
   const view = render(createElement(SaleScreen)); await addFirst(); fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" }));
-  assert.equal((screen.getByRole("button", { name: "Descartar borrador" }) as HTMLButtonElement).disabled, true); view.unmount();
+  assert.equal((screen.getByRole("button", { name: "Descartar borrador" }) as HTMLButtonElement).disabled, true); assert.equal((screen.getByRole("button", { name: "Volver" }) as HTMLButtonElement).disabled, true); view.unmount();
   await act(() => { pending.resolve(success); return pending.promise; }); assert.equal(document.body.textContent, "");
 });
 
