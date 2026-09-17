@@ -107,7 +107,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
     setPaymentErrors({});
   };
-  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setPersistedDetails(null); void browsePage("", null, 1); setPaymentErrors({}); dispatch({ type: "discard" }); } });
+  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setCheckoutOpen(false); setPersistedDetails(null); void browsePage("", null, 1); setPaymentErrors({}); dispatch({ type: "discard" }); } });
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
   const pending = state.confirmation === "pending";

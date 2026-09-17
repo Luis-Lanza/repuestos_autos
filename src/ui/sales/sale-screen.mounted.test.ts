@@ -347,6 +347,7 @@ test("starts and renders the active first page browse after Nueva venta", async 
   await screen.findByRole("heading", { name: "Venta confirmada" });
 
   await u.click(screen.getByRole("button", { name: "Nueva venta" }));
+  assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
   assert.equal(browseCalls.length, 3);
   assert.deepEqual(browseCalls[2], { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
   screen.getByText("Buscando productos…");
