@@ -50,6 +50,7 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-inventory-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/s);
 });
 

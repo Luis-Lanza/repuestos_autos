@@ -51,6 +51,7 @@ test("contains the product result viewport between search and pagination without
   assert.equal(within(catalog).getAllByRole("listitem").length, 100);
   assert.ok(screen.getByRole("region", { name: "Carrito" }));
   assert.ok(screen.getByRole("region", { name: "Pago" }));
+  assert.match(style.textContent ?? "", /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(style.textContent ?? "", /data-ui-product-browser-list[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
   assert.match(style.textContent ?? "", /data-ui-sale-layout[^}]*grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)/s);
 });

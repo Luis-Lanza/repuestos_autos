@@ -80,6 +80,7 @@ test("contains catalog product rows separately from search, pagination, and the 
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-catalog-master[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
   assert.doesNotMatch(css, /data-ui-catalog-master[^}]*max-block-size:\s*(?:520|208)px/s);
+  assert.match(css, /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(css, /data-ui-catalog-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
 });
 
