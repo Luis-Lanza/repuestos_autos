@@ -3,12 +3,12 @@ import { createElement, type ReactElement, type ReactNode, type RefObject } from
 import { ConfirmationDialog, type ConfirmationDialogProps } from "./confirmation-dialog.ts";
 
 /** A routine, non-destructive dialog for completing an in-progress checkout. */
-export type CheckoutDialogProps = Omit<ConfirmationDialogProps, "purpose"> & {
+export type CheckoutDialogProps = Omit<ConfirmationDialogProps, "purpose" | "layout"> & {
   description: string | ReactElement;
   confirmLabel: ReactNode;
   initialFocusRef?: RefObject<HTMLElement>;
 };
 
 export function CheckoutDialog(props: CheckoutDialogProps) {
-  return createElement(ConfirmationDialog, { ...props, purpose: "routine" });
+  return createElement(ConfirmationDialog, { ...props, purpose: "routine", layout: "checkout" });
 }

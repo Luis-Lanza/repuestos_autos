@@ -3,10 +3,12 @@ import { createElement, isValidElement, useEffect, useId, useRef, type ReactElem
 import { Action } from "./controls.ts";
 
 export type DialogPurpose = "restore" | "cancellation" | "routine";
+export type DialogLayout = "default" | "checkout";
 export type DestructivePurpose = Exclude<DialogPurpose, "routine">;
 export type ConfirmationDialogProps = {
   open: boolean;
   purpose: DialogPurpose;
+  layout?: DialogLayout;
   title: string;
   description: string | ReactElement;
   confirmLabel: ReactNode;
@@ -48,7 +50,7 @@ function restore(invoker: HTMLElement | null) {
 }
 
 export function ConfirmationDialog({
-  open, purpose, title, description, confirmLabel, confirmDisabled = false, pending = false,
+  open, purpose, layout = "default", title, description, confirmLabel, confirmDisabled = false, pending = false,
   pendingLabel = "Procesando…", initialFocusRef, onCancel, onConfirm, children,
 }: ConfirmationDialogProps) {
   if (typeof title !== "string" || !title.trim()) throw new TypeError("ConfirmationDialog requires a nonblank title");
@@ -126,6 +128,7 @@ export function ConfirmationDialog({
       "aria-modal": "true", "aria-labelledby": titleId, "aria-describedby": descriptionId,
       "aria-busy": pending || undefined, "data-ui-confirmation-dialog": purpose !== "routine" || undefined,
       "data-ui-checkout-dialog": purpose === "routine" || undefined,
+      "data-ui-dialog-layout": layout,
       "data-ui-purpose": purpose,
     },
     createElement("h2", { id: titleId }, title),

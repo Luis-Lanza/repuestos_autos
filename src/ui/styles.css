@@ -209,11 +209,55 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-confirmation-dialog], [data-ui-checkout-dialog] { inline-size: min(520px, 100%); max-block-size: 100%; overflow: auto; padding: var(--space-6); border: 1px solid var(--color-border-strong); border-radius: var(--radius-modal); background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
 [data-ui-confirmation-dialog] > p, [data-ui-checkout-dialog] > p { color: var(--color-text-muted); }
 [data-ui-checkout-content] { display: grid; gap: var(--space-5); }
-[data-ui-checkout-content] > section { min-inline-size: 0; }
+[data-ui-checkout-content] > section, [data-ui-checkout-rail] { min-inline-size: 0; }
 [data-ui-checkout-content] h3 { margin-block-start: var(--space-2); }
 [data-ui-checkout-content] [data-ui-sale-list] { max-block-size: 320px; overflow-y: auto; }
 [data-ui-checkout-content] [data-ui-sale-actions] { justify-content: flex-start; }
+[data-ui-checkout-total] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); margin: 0; padding-block: var(--space-4); border-block: 2px solid var(--color-border-strong); }
 [data-ui-dialog-actions] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-6); }
+
+@media (min-width: 961px) {
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] {
+    display: grid;
+    inline-size: min(1040px, 100%);
+    max-block-size: calc(100vh - var(--space-6) - var(--space-6));
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    column-gap: var(--space-6);
+    overflow: hidden;
+  }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] > :is(h2, p) { grid-column: 1 / -1; }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] > [data-ui-checkout-content] { display: contents; }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] > [data-ui-checkout-content] > section {
+    display: flex;
+    min-block-size: 0;
+    grid-column: 1;
+    grid-row: 3;
+    flex-direction: column;
+  }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] [data-ui-checkout-rail] {
+    display: grid;
+    align-content: start;
+    grid-column: 2;
+    grid-row: 3;
+    gap: var(--space-4);
+  }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] [data-ui-checkout-rail] > section,
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] [data-ui-checkout-rail] > [data-ui-sale-actions] { min-inline-size: 0; }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] [data-ui-checkout-rail] [data-ui-field] { margin-block-end: var(--space-3); }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] [data-ui-sale-cart] {
+    min-block-size: 0;
+    max-block-size: none;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] > [data-ui-dialog-actions] {
+    grid-column: 2;
+    grid-row: 4;
+    margin-block-start: var(--space-4);
+  }
+}
 
 [data-ui-status] {
   border: 1px solid currentColor;
@@ -414,6 +458,14 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-history-identity] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-history-return], [data-ui-history-cancellation] { padding: var(--space-4); overflow-x: hidden; }
   [data-ui-dialog-backdrop] { padding: var(--space-4); }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] {
+    display: block;
+    inline-size: min(520px, 100%);
+    max-block-size: 100%;
+    overflow: auto;
+  }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] > [data-ui-checkout-content] { display: grid; }
+  [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] [data-ui-checkout-rail] { display: grid; gap: var(--space-4); }
   [data-ui-aligned-data] thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
   [data-ui-aligned-data] :is(tbody, tr, td) { display: block; }
   [data-ui-aligned-data] tr { padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }

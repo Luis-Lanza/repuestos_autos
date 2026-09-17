@@ -33,6 +33,7 @@ test("routine checkout has a safe primary action and restores focus after Volver
   rendered = view({ initialFocusRef: first, children: createElement("input", { ref: first, "aria-label": "Precio" }), onCancel: () => rendered.rerender(createElement(CheckoutDialog, { open: false, title: "Revisar y cobrar", description: "Revisá la venta antes de confirmar.", confirmLabel: "Confirmar venta", onCancel: () => undefined, onConfirm: () => undefined })) });
   const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   assert.equal(dialog.getAttribute("data-ui-checkout-dialog"), "true");
+  assert.equal(dialog.getAttribute("data-ui-dialog-layout"), "checkout");
   assert.equal(dialog.getAttribute("data-ui-confirmation-dialog"), null);
   assert.equal(screen.getByRole("button", { name: "Confirmar venta" }).getAttribute("data-ui-action"), "primary");
   assert.equal(document.activeElement, first.current);

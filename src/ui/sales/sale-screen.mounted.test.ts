@@ -113,9 +113,18 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   const add = await screen.findAllByRole("button", { name: "Agregar" });
   assert.equal((add[2] as HTMLButtonElement).disabled, true); await u.click(add[0]); assert.equal((add[0] as HTMLButtonElement).disabled, true);
   await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  assert.equal(dialog.getAttribute("data-ui-dialog-layout"), "checkout");
+  const cart = within(dialog).getByRole("region", { name: "Carrito" });
+  const rail = dialog.querySelector("[data-ui-checkout-rail]");
+  assert.ok(rail);
+  assert.equal(cart.parentElement?.getAttribute("data-ui-checkout-content"), "true");
+  assert.equal(rail?.querySelector("[data-ui-checkout-total]")?.textContent, "Total actual: Bs 85,50");
+  assert.equal(dialog.querySelector("[data-ui-dialog-actions]")?.getAttribute("data-ui-dialog-actions"), "true");
   screen.getByRole("heading", { name: "Carrito" }); screen.getAllByText("FIL-1"); screen.getAllByText("Bs 85,50"); screen.getByText("Total: Bs 85,50");
   const quantity = screen.getByRole("spinbutton", { name: "Cantidad de Filtro aceite" }); fireEvent.change(quantity, { target: { value: "2" } });
   screen.getByText("Subtotal: Bs 171,00"); screen.getByText("Total: Bs 171,00");
+  assert.equal(rail?.querySelector("[data-ui-checkout-total]")?.textContent, "Total actual: Bs 171,00");
   within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("Unidades: 2");
   quantity.focus(); fireEvent.change(quantity, { target: { value: "0" } }); screen.getByText("Ingresá una cantidad entera mayor que cero."); assert.equal(document.activeElement, quantity);
   await u.click(screen.getByRole("button", { name: "Quitar" })); screen.getByText("El carrito está vacío.");
@@ -219,6 +228,9 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.ok(errorId);
   assert.equal(document.getElementById(errorId)?.textContent, "El precio de venta no puede ser menor que el precio mínimo de Bs 85,50.");
   assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*>\s*li\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*overflow:\s*hidden/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-rail[\s\S]*grid-column:\s*2/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*overflow:\s*auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-search\], \[data-ui-sale-list\] > li \{ grid-template-columns: minmax\(0, 1fr\);/s);
 });
 
