@@ -65,13 +65,17 @@ export function PersistedSaleSummaryView({ details, onNewSale }: { details: Pers
     createElement("header", { "data-ui-summary-header": true },
       createElement("h1", { id: "sale-summary-heading" }, "Venta confirmada"),
       createElement("p", null, "La venta quedó guardada y estos datos son de solo lectura.")),
-    createElement("section", { "aria-labelledby": "sale-identity-heading" },
+    createElement("section", { "aria-labelledby": "sale-identity-heading", "data-ui-summary-identity": true },
       createElement("h2", { id: "sale-identity-heading" }, "Identificación de la venta"),
       createElement("dl", null,
         createElement("dt", null, "Venta"), createElement("dd", null, details.saleIdentity),
         createElement("dt", null, "Fecha y hora"), createElement("dd", { "data-ui-type": "numeric" }, details.confirmedAt))),
-    createElement(AlignedData, { caption: "Artículos confirmados", columns: itemColumns, rows: details.lines }),
-    createElement(AlignedData, { caption: "Pagos confirmados", columns: paymentColumns, rows: details.payments }),
-    createElement("p", { "data-ui-summary-total": true }, createElement("span", null, "Total persistido"), createElement("strong", null, details.total)),
-    createElement(Action, { variant: "primary", onClick: onNewSale }, "Nueva venta"));
+    createElement("div", { "data-ui-summary-layout": true },
+      createElement("section", { "aria-label": "Artículos confirmados", "data-ui-summary-articles": true },
+        createElement(AlignedData, { caption: "Artículos confirmados", columns: itemColumns, rows: details.lines })),
+      createElement("aside", { "aria-label": "Resumen de pago", "data-ui-summary-rail": true },
+        createElement("section", { "aria-label": "Pagos confirmados", "data-ui-summary-payments": true },
+          createElement(AlignedData, { caption: "Pagos confirmados", columns: paymentColumns, rows: details.payments })),
+        createElement("p", { "data-ui-summary-total": true }, createElement("span", null, "Total persistido"), createElement("strong", null, details.total)),
+        createElement(Action, { variant: "primary", onClick: onNewSale }, "Nueva venta"))));
 }

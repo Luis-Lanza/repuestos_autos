@@ -72,6 +72,11 @@ test("renders a semantic Spanish read-only summary with Nueva venta as its sole 
   assert.match(html, /<main[^>]+aria-labelledby="sale-summary-heading"/);
   assert.match(html, />Venta confirmada</);
   assert.match(html, /<table/);
+  assert.match(html, /data-ui-summary-header/);
+  assert.match(html, /data-ui-summary-identity/);
+  assert.match(html, /data-ui-summary-layout/);
+  assert.match(html, /<section aria-label="Artículos confirmados" data-ui-summary-articles="true"><div data-ui-data-scroll="true"><table/);
+  assert.match(html, /<aside aria-label="Resumen de pago" data-ui-summary-rail="true"><section aria-label="Pagos confirmados" data-ui-summary-payments="true"><div data-ui-data-scroll="true"><table/);
   assert.match(html, />Pago QR<\/td><td[^>]*>Bs 67,50/);
   assert.doesNotMatch(html, /Efectivo aplicado|Efectivo recibido|Cambio/);
   assert.equal((html.match(/<button/g) ?? []).length, 1);
