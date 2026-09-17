@@ -49,7 +49,10 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.equal(within(operation).getAllByRole("listitem").length, 100);
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1\.85fr\) minmax\(260px,\s*1fr\)/s);
   assert.match(css, /data-ui-inventory-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*48rem\)[^}]*max-inline-size:\s*100%/s);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/s);
 });

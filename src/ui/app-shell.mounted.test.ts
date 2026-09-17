@@ -133,7 +133,9 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /--size-shell-sidebar:\s*208px/);
   assert.match(source, /grid-template-columns:\s*var\(--size-shell-sidebar\)\s+minmax\(0,\s*1fr\)/);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar:\s*176px/);
-  assert.match(source, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 600px\) minmax\(0, 324px\)/);
+  assert.match(source, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1\.85fr\) minmax\(260px,\s*1fr\)/);
+  assert.match(source, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(280px,\s*4fr\) minmax\(0,\s*7fr\)/);
+  assert.doesNotMatch(source, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(source, /data-ui-shell-content[^}]*overflow:\s*auto/);
   assert.match(source, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/);

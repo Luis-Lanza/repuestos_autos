@@ -354,5 +354,9 @@ test("focuses validation errors in the routine form and retains stale feedback",
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-catalog-edit-dialog/);
   assert.match(css, /data-ui-catalog-lifecycle-action="active"/);
-  assert.match(css, /max-width: 960px[\s\S]*data-ui-catalog-layout/);
+  assert.match(css, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(280px,\s*4fr\) minmax\(0,\s*7fr\)/);
+  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*42rem\)/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.doesNotMatch(css, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
 });
