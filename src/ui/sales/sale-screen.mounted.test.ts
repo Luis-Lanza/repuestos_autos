@@ -127,9 +127,29 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   assert.equal(rail?.querySelector("[data-ui-checkout-total]")?.textContent, "Total actual: Bs 171,00");
   within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("Unidades: 2");
   quantity.focus(); fireEvent.change(quantity, { target: { value: "0" } }); screen.getByText("Ingresá una cantidad entera mayor que cero."); assert.equal(document.activeElement, quantity);
-  await u.click(screen.getByRole("button", { name: "Quitar" })); screen.getByText("El carrito está vacío.");
+  await u.click(screen.getByRole("button", { name: "Quitar Filtro aceite" })); screen.getByText("El carrito está vacío.");
   await u.click(screen.getByRole("button", { name: "Volver" }));
   assert.equal(screen.getByRole("button", { name: "Revisar y cobrar" }).getAttribute("aria-expanded"), "false");
+});
+
+test("exposes each checkout row as a semantic editable table with unique actions", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+  const u = await searchFor();
+  const add = await screen.findAllByRole("button", { name: "Agregar" });
+  await u.click(add[0]); await u.click(add[1]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+
+  const cart = screen.getByRole("table", { name: "Carrito" });
+  const rows = within(cart).getAllByRole("row");
+  assert.equal(rows.length, 3);
+  assert.deepEqual(within(cart).getAllByRole("columnheader").map((header) => header.textContent), ["Producto / SKU", "Lista / mínimo", "Cantidad", "Precio final", "Subtotal", "Acciones"]);
+  for (const [row, product] of rows.slice(1).map((value, index) => [value, products[index]] as const)) {
+    assert.equal(within(row).getAllByRole("cell").length, 6);
+    assert.ok(within(row).getByText(product.name));
+    assert.ok(within(row).getByText(product.sku));
+    assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
+  }
+  assert.equal(within(rows[1]).getByRole("textbox", { name: "Precio de venta (Bs)" }).getAttribute("id"), "sale-final-price-1");
 });
 
 test("disables empty-cart confirmation without invoking the native contract", async () => {
@@ -137,7 +157,7 @@ test("disables empty-cart confirmation without invoking the native contract", as
   mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : (confirms++, success));
   render(createElement(SaleScreen));
   const u = await addFirst();
-  await u.click(screen.getByRole("button", { name: "Quitar" }));
+  await u.click(screen.getByRole("button", { name: "Quitar Filtro aceite" }));
 
   const confirm = screen.getByRole("button", { name: "Confirmar venta" }) as HTMLButtonElement;
   assert.equal(confirm.disabled, true);
@@ -191,7 +211,7 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   mockIPC((command, payload) => command === "browse_products_command" ? (searches++, browse(products)) : (confirms++, submitted = payload, pending.promise));
   render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
   fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" })); fireEvent.click(screen.getByRole("button", { name: "Confirmando…" }));
-  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar" }), screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
+  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar Filtro aceite" }), screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
   fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.change(controls[5], { target: { value: "1" } }); fireEvent.change(controls[6], { target: { value: "2" } }); fireEvent.click(controls[7]);
   assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
@@ -219,19 +239,24 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   await u.type(finalPrice, "80");
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
 
-  const cart = screen.getByRole("list", { name: "Carrito" });
+  const cart = screen.getByRole("table", { name: "Carrito" });
   assert.equal(cart.getAttribute("data-ui-sale-cart"), "true");
-  const line = within(cart).getByRole("listitem");
-  assert.equal(line.children.length, 5);
+  assert.deepEqual(within(cart).getAllByRole("columnheader").map((header) => header.textContent), ["Producto / SKU", "Lista / mínimo", "Cantidad", "Precio final", "Subtotal", "Acciones"]);
+  const line = within(cart).getAllByRole("row")[1];
+  assert.equal(within(line).getAllByRole("cell").length, 6);
+  assert.equal(within(line).getByRole("button", { name: "Quitar Filtro aceite" }).getAttribute("aria-label"), "Quitar Filtro aceite");
   assert.equal(finalPrice.getAttribute("aria-invalid"), "true");
   const errorId = finalPrice.getAttribute("aria-describedby");
   assert.ok(errorId);
   assert.equal(document.getElementById(errorId)?.textContent, "El precio de venta no puede ser menor que el precio mínimo de Bs 85,50.");
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*>\s*li\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*\{[^}]*table-layout:\s*fixed/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*:\s*is\(th,\s*td\)\s*\{[^}]*padding:/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*overflow:\s*hidden/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-rail[\s\S]*grid-column:\s*2/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*overflow:\s*auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-search\], \[data-ui-sale-list\] > li \{ grid-template-columns: minmax\(0, 1fr\);/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-aligned-data\] thead\s*\{[^}]*position:\s*absolute/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-aligned-data\] :is\(tbody, tr, td\)\s*\{ display:\s*block;\s*\}/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-aligned-data\] td\s*\{ display:\s*grid;[^}]*grid-template-columns:/s);
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
