@@ -63,6 +63,26 @@ test("renders loading, empty, and a selected Spanish master-detail hierarchy", a
   assert.match(css, /max-width: 960px[\s\S]*data-ui-catalog-layout[^}]*minmax\(0, 1fr\)/);
 });
 
+test("contains catalog product rows separately from search, pagination, and the editor", async () => {
+  const manyProducts = Array.from({ length: 100 }, (_, index) => ({ ...browseProduct, product_id: index + 1, sku: `FIL-${index + 1}` }));
+  mockIPC((command) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [] };
+    if (command === "browse_products_command") return { ...browse(manyProducts), total_pages: 5 };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const productsPanel = await screen.findByRole("region", { name: "Productos" });
+  const list = within(productsPanel).getByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(list.previousElementSibling?.tagName, "FORM");
+  assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
+  assert.equal(within(productsPanel).getAllByRole("listitem").length, 100);
+  assert.ok(screen.getByRole("region", { name: "Detalle y edición" }));
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-catalog-master[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
+  assert.doesNotMatch(css, /data-ui-catalog-master[^}]*max-block-size:\s*(?:520|208)px/s);
+  assert.match(css, /data-ui-catalog-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
+});
+
 test("validates and focuses dynamic fields, then preserves edit and lifecycle contracts", async () => {
   let resolveEdit!: (value: unknown) => void;
   let editRequest: Record<string, unknown> | undefined;

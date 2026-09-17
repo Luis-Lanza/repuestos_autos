@@ -99,7 +99,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const valid = whole && (state.operation !== "physical_count" || Boolean(state.reason.trim()));
   const sortedAlerts = [...state.alerts].sort((a, b) => a.classification === b.classification ? 0 : a.classification === "out_of_stock" ? -1 : 1);
 
-  return createElement("main", { "aria-labelledby": "inventory-heading" },
+  return createElement("main", { "aria-labelledby": "inventory-heading", "data-ui-inventory": true },
     createElement("h1", { id: "inventory-heading" }, "Inventario"),
     createElement("p", null, inventoryScreenDescription),
     createElement("div", { "data-ui-inventory-layout": true },

@@ -39,6 +39,22 @@ test("automatically loads the active first page once on mount", async () => {
   view.unmount();
 });
 
+test("contains the product result viewport between search and pagination without moving sale controls", async () => {
+  const manyProducts = Array.from({ length: 100 }, (_, index) => ({ ...products[0], product_id: index + 1, sku: `FIL-${index + 1}` }));
+  mockIPC((command) => command === "browse_products_command" ? { ...browse(manyProducts), total_pages: 5 } : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo" });
+  const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(list.getAttribute("data-ui-product-browser-list"), "true");
+  assert.equal(list.previousElementSibling?.tagName, "FORM");
+  assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
+  assert.equal(within(catalog).getAllByRole("listitem").length, 100);
+  assert.ok(screen.getByRole("region", { name: "Carrito" }));
+  assert.ok(screen.getByRole("region", { name: "Pago" }));
+  assert.match(style.textContent ?? "", /data-ui-product-browser-list[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
+  assert.match(style.textContent ?? "", /data-ui-sale-layout[^}]*grid-template-rows:\s*repeat\(2,\s*minmax\(0,\s*1fr\)/s);
+});
+
 test("shows every discovery state and ignores reverse-order search completion", async () => {
   const first = deferred<unknown>(), second = deferred<unknown>(), third = deferred<unknown>(), fourth = deferred<unknown>(); let call = 0;
   mockIPC((command) => command === "browse_products_command" ? [first, second, third, fourth][call++].promise : Promise.reject());

@@ -149,7 +149,7 @@ export function CatalogMaintenanceScreen() {
   // The category-maintenance endpoint returns only bounded category records; product records come from the paged browser.
   const visibleRecords = state.records;
 
-  return createElement("main", { "aria-labelledby": "catalog-maintenance-heading" },
+  return createElement("main", { "aria-labelledby": "catalog-maintenance-heading", "data-ui-catalog": true },
     createElement("h1", { id: "catalog-maintenance-heading" }, "Catálogo"),
     createElement("p", null, "Editá metadatos o cambiá el estado de categorías y productos."),
     createElement(CatalogSuccessNotice, { notice: state.success_notice }),

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -31,6 +32,25 @@ test("automatically loads active products once on mount", async () => {
   await screen.findByText("Filter");
   assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
   view.unmount();
+});
+
+test("contains the inventory product viewport while alerts remain a sibling panel", async () => {
+  const manyProducts = Array.from({ length: 100 }, (_, index) => ({ ...product, product_id: index + 1, sku: `FLT-${index + 1}` }));
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return { ...browse(manyProducts), total_pages: 5 };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const operation = await screen.findByRole("region", { name: "Operación de inventario" });
+  const list = within(operation).getByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(list.previousElementSibling?.tagName, "FORM");
+  assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
+  assert.equal(within(operation).getAllByRole("listitem").length, 100);
+  assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-inventory-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/s);
 });
 
 test("uses the alert stock filter for sidebar entry without a duplicate browse", async () => {
