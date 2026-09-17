@@ -326,3 +326,31 @@ test("replaces the draft with a stable persisted summary and resets through its 
   screen.getByText("14/08/2026, 10:42"); assert.ok(screen.getAllByText("Bs 85,50").length >= 3);
   assert.equal(within(screen.getByRole("table", { name: "Pagos confirmados" })).queryAllByRole("row").length, 2);
 });
+
+test("starts and renders the active first page browse after Nueva venta", async () => {
+  installUuid();
+  const resetBrowse = deferred<unknown>();
+  const browseCalls: unknown[] = [];
+  let browseCount = 0;
+  mockIPC((command, payload) => {
+    if (command === "browse_products_command") {
+      browseCalls.push(payload);
+      browseCount += 1;
+      return browseCount === 3 ? resetBrowse.promise : browse([products[0]]);
+    }
+    return success;
+  });
+
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("heading", { name: "Venta confirmada" });
+
+  await u.click(screen.getByRole("button", { name: "Nueva venta" }));
+  assert.equal(browseCalls.length, 3);
+  assert.deepEqual(browseCalls[2], { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
+  screen.getByText("Buscando productos…");
+
+  await act(() => { resetBrowse.resolve(browse([products[1]])); return resetBrowse.promise; });
+  screen.getByText("Filtro premium");
+});
