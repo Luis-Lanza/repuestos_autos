@@ -377,20 +377,15 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sale-list] { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 [data-ui-sale-list] > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); align-items: center; padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
 [data-ui-sale-list] > li > div:first-child { display: grid; min-inline-size: 0; }
-[data-ui-sale-cart] { inline-size: 100%; table-layout: fixed; }
-[data-ui-sale-cart] :is(th, td) { padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); vertical-align: middle; }
-[data-ui-sale-cart] th { text-align: start; font-size: var(--type-label-size); }
-[data-ui-sale-cart] th:nth-child(1) { inline-size: 24%; }
-[data-ui-sale-cart] th:nth-child(2) { inline-size: 20%; }
-[data-ui-sale-cart] th:nth-child(3) { inline-size: 16%; }
-[data-ui-sale-cart] th:nth-child(4) { inline-size: 18%; }
-[data-ui-sale-cart] th:nth-child(5) { inline-size: 14%; }
-[data-ui-sale-cart] th:nth-child(6) { inline-size: 8%; }
-[data-ui-sale-cart] td > [data-ui-field] { margin: 0; }
-[data-ui-sale-cart] td:first-child { display: grid; min-inline-size: 0; }
-[data-ui-sale-cart] [data-ui-sale-price-facts] { display: grid; grid-template-columns: max-content auto; gap: var(--space-1) var(--space-2); margin: 0; color: var(--color-text-muted); font-size: var(--type-caption-size); }
-[data-ui-sale-cart] [data-ui-sale-price-facts] :is(dt, dd) { margin: 0; }
-[data-ui-sale-cart] [data-ui-sale-price-facts] dt { font-weight: var(--weight-semibold); }
+[data-ui-sale-cart] { display: grid; inline-size: 100%; min-inline-size: 0; margin: 0; padding: 0; list-style: none; }
+[data-ui-sale-cart-row] { display: grid; min-inline-size: 0; gap: var(--space-2); padding-block: var(--space-3); border-block-end: 1px solid var(--color-border); }
+[data-ui-sale-cart-primary] { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; min-inline-size: 0; gap: var(--space-3); align-items: start; }
+[data-ui-sale-product] { display: grid; min-inline-size: 0; }
+[data-ui-sale-price-facts] { min-inline-size: 0; margin: 0; color: var(--color-text-muted); font-size: var(--type-caption-size); white-space: nowrap; }
+[data-ui-sale-cart-primary] [data-ui-action] { min-inline-size: max-content; }
+[data-ui-sale-cart-controls] { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 1fr) minmax(max-content, auto); min-inline-size: 0; gap: var(--space-3); align-items: end; }
+[data-ui-sale-cart-controls] [data-ui-field] { min-inline-size: 0; margin: 0; }
+[data-ui-sale-subtotal] { margin: 0; padding-block: var(--space-3); text-align: end; white-space: nowrap; }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
 [data-ui-persisted-summary] { display: grid; min-inline-size: 0; gap: var(--space-5); }
@@ -458,8 +453,11 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-sale-layout] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) max-content; }
   [data-ui-sale-layout] > :last-child { position: static; }
   [data-ui-sale-search], [data-ui-sale-list] > li { grid-template-columns: minmax(0, 1fr); }
-  [data-ui-sale-cart] { table-layout: auto; }
-  [data-ui-sale-cart] td { min-block-size: 0; }
+  [data-ui-sale-cart-primary] { grid-template-columns: minmax(0, 1fr) auto; }
+  [data-ui-sale-price-facts] { grid-column: 1; white-space: normal; }
+  [data-ui-sale-cart-primary] [data-ui-action] { grid-column: 2; grid-row: 1 / span 2; }
+  [data-ui-sale-cart-controls] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-sale-subtotal] { padding-block: 0; text-align: start; }
   [data-ui-persisted-summary] { gap: var(--space-4); overflow-x: visible; }
   [data-ui-persisted-summary] dl { grid-template-columns: minmax(0, 1fr); }
   [data-ui-history-filters] { grid-template-columns: repeat(2, minmax(0, 1fr)); }

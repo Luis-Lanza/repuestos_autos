@@ -132,24 +132,29 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   assert.equal(screen.getByRole("button", { name: "Revisar y cobrar" }).getAttribute("aria-expanded"), "false");
 });
 
-test("exposes each checkout row as a semantic editable table with unique actions", async () => {
+test("exposes each checkout row as a compact two-level item with unique actions", async () => {
   mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
   render(createElement(SaleScreen));
   const u = await searchFor();
   const add = await screen.findAllByRole("button", { name: "Agregar" });
   await u.click(add[0]); await u.click(add[1]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
 
-  const cart = screen.getByRole("table", { name: "Carrito" });
-  const rows = within(cart).getAllByRole("row");
-  assert.equal(rows.length, 3);
-  assert.deepEqual(within(cart).getAllByRole("columnheader").map((header) => header.textContent), ["Producto / SKU", "Lista / mínimo", "Cantidad", "Precio final", "Subtotal", "Acciones"]);
-  for (const [row, product] of rows.slice(1).map((value, index) => [value, products[index]] as const)) {
-    assert.equal(within(row).getAllByRole("cell").length, 6);
+  const cart = screen.getByRole("list", { name: "Carrito" });
+  assert.equal(cart.querySelector("table"), null);
+  assert.equal(cart.querySelector("[data-ui-aligned-data]"), null);
+  const rows = within(cart).getAllByRole("listitem");
+  assert.equal(rows.length, 2);
+  for (const [row, product] of rows.map((value, index) => [value, products[index]] as const)) {
+    assert.equal(row.children.length, 2);
+    assert.equal(row.firstElementChild?.getAttribute("data-ui-sale-cart-primary"), "true");
+    assert.equal(row.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
     assert.ok(within(row).getByText(product.name));
     assert.ok(within(row).getByText(product.sku));
+    assert.ok(within(row).getByText(`Lista ${product.list_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"} · Mín. ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`));
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
+    assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
   }
-  assert.equal(within(rows[1]).getByRole("textbox", { name: "Precio de venta (Bs)" }).getAttribute("id"), "sale-final-price-1");
+  assert.equal(within(rows[0]).getByRole("textbox", { name: "Precio de venta (Bs)" }).getAttribute("id"), "sale-final-price-1");
 });
 
 test("disables empty-cart confirmation without invoking the native contract", async () => {
@@ -239,24 +244,28 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   await u.type(finalPrice, "80");
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
 
-  const cart = screen.getByRole("table", { name: "Carrito" });
+  const cart = screen.getByRole("list", { name: "Carrito" });
   assert.equal(cart.getAttribute("data-ui-sale-cart"), "true");
-  assert.deepEqual(within(cart).getAllByRole("columnheader").map((header) => header.textContent), ["Producto / SKU", "Lista / mínimo", "Cantidad", "Precio final", "Subtotal", "Acciones"]);
-  const line = within(cart).getAllByRole("row")[1];
-  assert.equal(within(line).getAllByRole("cell").length, 6);
+  assert.equal(cart.querySelector("table"), null);
+  const line = within(cart).getByRole("listitem");
+  assert.equal(line.children.length, 2);
+  assert.equal(line.firstElementChild?.getAttribute("data-ui-sale-cart-primary"), "true");
+  assert.equal(line.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
   assert.equal(within(line).getByRole("button", { name: "Quitar Filtro aceite" }).getAttribute("aria-label"), "Quitar Filtro aceite");
   assert.equal(finalPrice.getAttribute("aria-invalid"), "true");
   const errorId = finalPrice.getAttribute("aria-describedby");
   assert.ok(errorId);
   assert.equal(document.getElementById(errorId)?.textContent, "El precio de venta no puede ser menor que el precio mínimo de Bs 85,50.");
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*\{[^}]*table-layout:\s*fixed/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*:\s*is\(th,\s*td\)\s*\{[^}]*padding:/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*\{[^}]*display:\s*grid[^}]*list-style:\s*none/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart-row\]\s*\{[^}]*display:\s*grid[^}]*border-block-end:/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(max-content,\s*auto\)/s);
+  assert.doesNotMatch(style.textContent ?? "", /\[data-ui-sale-cart\][^\n]*table-layout/);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*overflow:\s*hidden/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-rail[\s\S]*grid-column:\s*2/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*overflow:\s*auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-aligned-data\] thead\s*\{[^}]*position:\s*absolute/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-aligned-data\] :is\(tbody, tr, td\)\s*\{ display:\s*block;\s*\}/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-aligned-data\] td\s*\{ display:\s*grid;[^}]*grid-template-columns:/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart-primary[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart-controls[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
