@@ -99,6 +99,18 @@ Running `npm run tauri:dev` without the temporary `XDG_DATA_HOME` uses the norma
 
 If `XDG_DATA_HOME` is configured, replace `~/.local/share` with that value. Back up this directory before manually testing restore behavior.
 
+## Development demo catalog bootstrap
+
+Before loading demo data, create and verify an in-app backup from **Copia y restauración**. The development-only command is not exposed through the production UI or Tauri IPC, never deletes or replaces data, and refuses any missing, unexpected, user-populated, partial, or incomplete database without mutation.
+
+On Windows, run this from the repository root:
+
+```powershell
+cargo run --manifest-path src-tauri/Cargo.toml --bin bootstrap-demo -- --database "$env:APPDATA\com.repuestosautos.app\repuestos-autos.sqlite3"
+```
+
+The explicit `--database` path is optional; the default resolves `%APPDATA%\com.repuestosautos.app\repuestos-autos.sqlite3`. A successful first run preserves the two shipped records, reactivates `BUJ-001`, and adds 8 categories plus 98 deterministic products for exactly 10 active categories and 100 active products. A complete recognized state is safely idempotent. See [docs/bootstrap-demo-catalog.md](docs/bootstrap-demo-catalog.md) for refusal, rollback, and invariant details.
+
 ## Useful checks
 
 ```bash

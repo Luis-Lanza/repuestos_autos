@@ -57,6 +57,40 @@ pub fn production_database_config(app_data_directory: impl AsRef<Path>) -> Datab
     }
 }
 
+pub fn database_config(path: impl AsRef<Path>) -> DatabaseConfig {
+    DatabaseConfig {
+        path: path.as_ref().to_path_buf(),
+    }
+}
+
+pub fn default_application_database_config() -> std::result::Result<DatabaseConfig, String> {
+    let data_root = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        Some(PathBuf::from(data_home))
+    } else {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+    }
+    .ok_or_else(|| "cannot resolve the application data directory".to_string())?;
+    Ok(production_database_config(
+        data_root.join("com.repuestosautos.app"),
+    ))
+}
+
+pub fn open_existing_database(
+    config: &DatabaseConfig,
+) -> std::result::Result<Connection, String> {
+    if !config.path().is_file() {
+        return Err("database file does not exist".into());
+    }
+    let connection = Connection::open(config.path()).map_err(|_| "cannot open database")?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|_| "cannot enable foreign keys")?;
+    validate_restored_database(&connection).map_err(|_| "database schema or integrity is invalid")?;
+    Ok(connection)
+}
+
 pub fn open_database(
     config: &DatabaseConfig,
 ) -> std::result::Result<Connection, Box<dyn std::error::Error>> {

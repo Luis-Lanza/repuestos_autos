@@ -12,6 +12,10 @@ name = "repuestos-autos"
 path = "src/main.rs"
 required-features = ["desktop"]
 
+[[bin]]
+name = "bootstrap-demo"
+path = "src/bin/bootstrap_demo.rs"
+
 [dependencies]
 tauri = { version = "2", default-features = false, features = ["wry", "test"], optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }

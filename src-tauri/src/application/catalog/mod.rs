@@ -9,6 +9,11 @@ use crate::domain::catalog::{
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
 pub mod repository;
+pub(crate) mod bootstrap_demo;
+
+pub use bootstrap_demo::{
+    bootstrap_demo_catalog, BootstrapDemoError, BootstrapDemoOutcome, BootstrapDemoSummary,
+};
 
 use repository::{
     CatalogMaintenanceRepository, CatalogMetadataRepository, CreateProductRepository,
