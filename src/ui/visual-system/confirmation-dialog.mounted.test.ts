@@ -5,7 +5,7 @@ import { StrictMode, createElement, createRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ConfirmationDialog } from "./confirmation-dialog.ts";
+import { ConfirmationDialog, FormDialog } from "./confirmation-dialog.ts";
 
 const style = document.createElement("style");
 style.textContent = `${await readFile(new URL("../styles.css", import.meta.url), "utf8")} .fixture-none{display:none}.fixture-invisible{visibility:hidden}`;
@@ -15,6 +15,11 @@ const dialog = (extra: Partial<Parameters<typeof ConfirmationDialog>[0]> = {}) =
   open: true, purpose: "cancellation", title: "Cancelar venta #184",
   description: "Esta acción corrige el inventario.", confirmLabel: "Cancelar venta",
   onCancel: () => undefined, onConfirm: () => undefined, ...extra,
+});
+
+const formDialog = (extra: Partial<Parameters<typeof FormDialog>[0]> = {}) => createElement(FormDialog, {
+  open: true, title: "Devolución de artículos", description: "Elegí los artículos para devolver.",
+  onCancel: () => undefined, children: createElement("form", null, createElement("input", { "aria-label": "Cantidad" })), ...extra,
 });
 
 function opener(label = "Abrir") {
@@ -108,6 +113,26 @@ test("Tab and Shift+Tab recompute eligible descendants after ref replacement", (
   assert.ok(document.activeElement === second.current);
   fireEvent.keyDown(second.current!, { key: "Tab", shiftKey: true });
   assert.ok(document.activeElement === confirm);
+});
+
+test("generic form dialogs expose modal semantics, contain focus, and lock dismissal", async () => {
+  let cancels = 0;
+  const invoker = opener("Iniciar devolución de artículos");
+  const user = userEvent.setup({ document });
+  const view = render(formDialog({ onCancel: () => { cancels += 1; } }));
+  const form = screen.getByRole("dialog", { name: "Devolución de artículos" });
+  assert.equal(form.getAttribute("aria-modal"), "true");
+  assert.ok(form.getAttribute("aria-describedby"));
+  assert.ok(document.activeElement === screen.getByRole("textbox", { name: "Cantidad" }));
+  await user.keyboard("{Escape}");
+  assert.equal(cancels, 1);
+  view.rerender(formDialog({ pending: true, onCancel: () => { cancels += 1; } }));
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Cerrar" }));
+  assert.equal(cancels, 1);
+  view.rerender(formDialog({ open: false, onCancel: () => { cancels += 1; } }));
+  assert.ok(document.activeElement === invoker);
+  invoker.remove();
 });
 
 test("idle Escape and Volver cancel, while pending locks every activation", async () => {

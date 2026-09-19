@@ -439,6 +439,28 @@ test("prevents pending duplicates and validates local return quantities", () => 
   );
 });
 
+test("recovers a return modal after detail reload failure without closing on transient success", () => {
+  const submitted = flow(
+    selectedReturn(),
+    { type: "return_quantity_changed", sale_line_id: 41, value: "1" },
+    { type: "return_submit_started" },
+    { type: "return_submit_succeeded", request_id: "return-uuid" },
+  );
+  const failed = flow(submitted, {
+    type: "detail_failed",
+    message: "private detail failure",
+  });
+  const transientlyClosed = flow(submitted, { type: "return_modal_closed" });
+
+  assert.equal(failed.detail, null);
+  assert.equal(failed.return_intent?.status, "error");
+  assert.equal(failed.return_intent?.modal_open, true);
+  assert.ok(failed.return_intent?.error);
+  assert.equal(failed.return_intent?.validation, null);
+  assert.equal(transientlyClosed.return_intent?.status, "reload_requested");
+  assert.equal(flow(failed, { type: "return_modal_closed" }).return_intent, null);
+});
+
 test("keeps correction work areas exclusive and ignores stale correction completion", () => {
   const returnOpen = openedReturn(detail, "return-new");
   const blockedCancellation = flow(returnOpen, {
@@ -462,6 +484,9 @@ test("keeps correction work areas exclusive and ignores stale correction complet
 
   assert.equal(blockedCancellation.cancellation_intent, null);
   assert.equal(blockedReturn.return_intent, null);
+  assert.equal(returnOpen.return_intent?.modal_open, true);
+  assert.equal(flow(returnOpen, { type: "return_modal_closed" }).return_intent, null);
+  assert.equal(cancellationOpen.cancellation_intent?.modal_open, true);
   assert.equal(
     flow(pending, { type: "return_submit_succeeded", request_id: "return-old" }),
     pending,
@@ -547,10 +572,10 @@ test("keeps a cancellation intent stable through validation, retry, and reload",
     unconfirmed.cancellation_intent?.error,
     "Confirmá la corrección de inventario antes de continuar.",
   );
-  assert.equal(prepared.cancellation_intent?.modal_open, true);
+  assert.equal(prepared.cancellation_intent?.modal_open, false);
   assert.equal(
-    flow(prepared, { type: "cancellation_modal_closed" }).cancellation_intent?.request_id,
-    "cancellation-uuid",
+    flow(prepared, { type: "cancellation_modal_closed" }).cancellation_intent?.modal_open,
+    true,
   );
   assert.equal(flow(pending, { type: "cancellation_submit_started" }), pending);
   assert.equal(pending.detail, fullyReturned);

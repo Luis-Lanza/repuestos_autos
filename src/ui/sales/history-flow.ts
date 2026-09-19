@@ -12,6 +12,7 @@ export type ReturnIntent = {
   sale_id: number;
   request_id: string;
   lines: Record<number, string>;
+  modal_open: boolean;
   status: "open" | "pending" | "error" | "reload_requested";
   error: string | null;
   validation: CorrectionValidation | null;
@@ -62,6 +63,7 @@ export type HistoryAction =
   | { type: "return_intent_opened"; request_id: string }
   | { type: "return_line_selected"; sale_line_id: number; selected: boolean }
   | { type: "return_quantity_changed"; sale_line_id: number; value: string }
+  | { type: "return_modal_closed" }
   | { type: "return_submit_started" }
   | { type: "return_submit_failed"; request_id: string; message: string }
   | { type: "return_submit_succeeded"; request_id: string }
@@ -78,6 +80,8 @@ export type HistoryAction =
 
 const returnableLine = (detail: SalesHistoryDetail, saleLineId: number) =>
   detail.lines.find((line) => line.sale_line_id === saleLineId);
+
+const detailReloadFailure = "No se pudo cargar el detalle de venta. Recargá nuevamente.";
 
 export function canOpenReturn(state: HistoryState): boolean {
   return (
@@ -305,6 +309,22 @@ export function createHistoryFlow(
         status: "error",
         detail: null,
         message: action.message,
+        return_intent: state.return_intent && state.return_intent.status !== "pending"
+          ? {
+              ...state.return_intent,
+              status: "error",
+              error: detailReloadFailure,
+              validation: null,
+            }
+          : state.return_intent,
+        cancellation_intent: state.cancellation_intent && state.cancellation_intent.status !== "pending"
+          ? {
+              ...state.cancellation_intent,
+              status: "error",
+              error: detailReloadFailure,
+              validation: null,
+            }
+          : state.cancellation_intent,
       };
     case "return_intent_opened":
       return canOpenReturn(state)
@@ -314,6 +334,7 @@ export function createHistoryFlow(
               sale_id: state.detail!.sale_id,
               request_id: action.request_id,
               lines: {},
+              modal_open: true,
               status: "open",
               error: null,
               validation: null,
@@ -364,6 +385,10 @@ export function createHistoryFlow(
         },
       };
     }
+    case "return_modal_closed":
+      return state.return_intent && editableReturnIntent(state.return_intent)
+        ? { ...state, return_intent: null }
+        : state;
     case "return_submit_started": {
       const intent = state.return_intent;
       if (
@@ -421,7 +446,7 @@ export function createHistoryFlow(
               request_id: action.request_id,
               reason: "",
               confirmed: false,
-              modal_open: false,
+              modal_open: true,
               status: "open",
               error: null,
               validation: null,
@@ -461,12 +486,12 @@ export function createHistoryFlow(
       if (!intent || !editableCancellationIntent(intent)) return state;
       const validation = cancellationIntentValidation(state, intent);
       return { ...state, cancellation_intent: validation
-        ? { ...intent, modal_open: false, status: "error", error: validation.message, validation }
-        : { ...intent, modal_open: true, status: "open", error: null, validation: null } };
+        ? { ...intent, modal_open: true, status: "error", error: validation.message, validation }
+        : { ...intent, modal_open: false, status: "open", error: null, validation: null } };
     }
     case "cancellation_modal_closed":
       return state.cancellation_intent && editableCancellationIntent(state.cancellation_intent)
-        ? { ...state, cancellation_intent: { ...state.cancellation_intent, modal_open: false } }
+        ? { ...state, cancellation_intent: { ...state.cancellation_intent, modal_open: true } }
         : state;
     case "cancellation_intent_closed":
       return state.cancellation_intent && editableCancellationIntent(state.cancellation_intent)
@@ -474,7 +499,7 @@ export function createHistoryFlow(
         : state;
     case "cancellation_submit_started": {
       const intent = state.cancellation_intent;
-      if (!intent?.modal_open || !editableCancellationIntent(intent)) return state;
+      if (!intent || intent.modal_open || !editableCancellationIntent(intent)) return state;
       const validation = cancellationIntentValidation(state, intent);
       return {
         ...state,

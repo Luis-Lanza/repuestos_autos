@@ -206,8 +206,10 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-kind="numeric"], [data-ui-kind="money"] { font-variant-numeric: tabular-nums; }
 
 [data-ui-dialog-backdrop] { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: var(--space-6); background: rgb(41 37 43 / 55%); }
-[data-ui-confirmation-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog] { inline-size: min(520px, 100%); max-block-size: 100%; overflow: auto; padding: var(--space-6); border: 1px solid var(--color-border-strong); border-radius: var(--radius-modal); background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
-[data-ui-confirmation-dialog] > p, [data-ui-checkout-dialog] > p, [data-ui-catalog-edit-dialog] > p { color: var(--color-text-muted); }
+[data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog] { inline-size: min(520px, 100%); max-block-size: 100%; overflow: auto; padding: var(--space-6); border: 1px solid var(--color-border-strong); border-radius: var(--radius-modal); background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
+[data-ui-confirmation-dialog] > p, [data-ui-form-dialog] > p, [data-ui-checkout-dialog] > p, [data-ui-catalog-edit-dialog] > p { color: var(--color-text-muted); }
+[data-ui-form-dialog] > form { display: grid; gap: var(--space-4); min-inline-size: 0; }
+[data-ui-form-dialog] [data-ui-history-return], [data-ui-form-dialog] [data-ui-history-cancellation] { padding: 0; border: 0; background: transparent; }
 [data-ui-checkout-content] { display: grid; gap: var(--space-5); }
 [data-ui-checkout-content] > section, [data-ui-checkout-rail] { min-inline-size: 0; }
 [data-ui-checkout-content] h3 { margin-block-start: var(--space-2); }
@@ -598,6 +600,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-history-original] [data-ui-aligned-data] { table-layout: auto; }
   [data-ui-history-identity] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-history-return], [data-ui-history-cancellation] { padding: var(--space-4); overflow-x: hidden; }
+  [data-ui-form-dialog] { padding: var(--space-4); }
   [data-ui-dialog-backdrop] { padding: var(--space-4); }
   [data-ui-checkout-dialog][data-ui-dialog-layout="checkout"] {
     display: block;
@@ -623,7 +626,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-action]:not(:disabled):not([aria-busy="true"]):active { transform: none; }
 }
 @media (forced-colors: active) {
-  button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
+  button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-dialog-backdrop] { background: Canvas; }
   :where(button, input, select, textarea, a[href], [role="button"]):focus-visible,
   [data-ui-focus-visible="true"] { outline-color: Highlight; }

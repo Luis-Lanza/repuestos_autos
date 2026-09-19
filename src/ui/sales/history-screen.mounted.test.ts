@@ -110,7 +110,7 @@ test("late correction success cannot replace a newer selected sale", async () =>
   assert.deepEqual(detailCalls, [71, 72]);
 });
 
-test("runs inline return validation, lock, retry, and persisted success evidence", async () => {
+test("runs modal return validation, lock, retry, and persisted success evidence", async () => {
   const sale = { ...detail(184), lines: [
     { ...detail(184).lines[0], sale_line_id: 41, quantity: 2, remaining_returnable_quantity: 2 },
     { ...detail(184).lines[0], sale_line_id: 42, remaining_returnable_quantity: 0 },
@@ -134,21 +134,26 @@ test("runs inline return validation, lock, retry, and persisted success evidence
   render(createElement(SalesHistoryScreen));
   const user = userEvent.setup({ document });
   await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
-  await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
+  const returnOpener = await screen.findByRole("button", { name: "Iniciar devolución de artículos" });
+  await user.click(returnOpener);
+  assert.ok(screen.getByRole("dialog", { name: "Devolución de artículos" }));
+  await user.click(screen.getByRole("button", { name: "Cerrar" }));
+  await waitFor(() => assert.equal(document.activeElement, returnOpener));
+  await user.click(returnOpener);
 
   const form = screen.getByRole("form", { name: "Devolución de artículos" });
   assert.match(form.textContent ?? "", /Línea de venta 41 · Máximo disponible: 2 unidades/);
   assert.match(form.textContent ?? "", /Línea de venta 42 · Máximo disponible: 0 unidades.*Sin unidades disponibles para devolver/s);
   fireEvent.submit(form);
   const selection = screen.getByRole("checkbox", { name: "Incluir este artículo" });
-  assert.equal(document.activeElement, selection);
+  await waitFor(() => assert.equal(document.activeElement, selection));
   assert.equal(selection.getAttribute("aria-describedby"), "return-line-41-error");
 
   await user.click(selection);
   const quantity = screen.getByRole("textbox", { name: "Cantidad a devolver" });
   await user.type(quantity, "1.5");
   fireEvent.submit(form);
-  assert.equal(document.activeElement, quantity);
+  await waitFor(() => assert.equal(document.activeElement, quantity));
   assert.equal(quantity.getAttribute("aria-describedby"), "return-quantity-41-error");
   assert.equal((quantity as HTMLInputElement).value, "1.5");
   await user.clear(quantity);
@@ -181,6 +186,80 @@ test("runs inline return validation, lock, retry, and persisted success evidence
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-history-return[^}]*min-inline-size: 0/);
   assert.match(css, /max-width: 960px[\s\S]*data-ui-history-return[^}]*overflow-x: hidden/);
+});
+
+test("recovers the return modal when persisted-detail reload fails", async () => {
+  const correction = deferred<unknown>();
+  let detailCalls = 0;
+  let requestId = "";
+  mockIPC((command, payload) => {
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") {
+      detailCalls += 1;
+      return detailCalls === 1
+        ? { kind: "success", detail: detail(184) }
+        : detailCalls === 2
+          ? { kind: "error", code: "persistence_failure", message: "private detail failure" }
+          : { kind: "success", detail: detail(184) };
+    }
+    if (command === "create_sale_return_command") {
+      requestId = payload?.request?.request_id;
+      return correction.promise;
+    }
+    throw new Error(command);
+  });
+  render(createElement(SalesHistoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+  await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
+  await user.click(screen.getByRole("checkbox", { name: "Incluir este artículo" }));
+  await user.type(screen.getByRole("textbox", { name: "Cantidad a devolver" }), "1");
+  await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+
+  correction.resolve({ kind: "success", result: {
+    request_id: requestId, return_id: 9, sale_id: 184, status: "confirmed",
+    occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 184, product_id: 4, quantity: 1 }],
+  } });
+  const reload = await screen.findByRole("button", { name: "Recargar detalle de venta" });
+  assert.equal((reload as HTMLButtonElement).disabled, false);
+  assert.ok(screen.getByRole("form", { name: "Devolución de artículos" }));
+
+  await user.click(reload);
+  await waitFor(() => assert.equal(detailCalls, 3));
+  assert.ok(screen.getByRole("button", { name: "Recargar detalle de venta" }));
+  assert.ok(screen.getByRole("form", { name: "Devolución de artículos" }));
+});
+
+test("keeps the return modal actionable after a direct detail reload failure", async () => {
+  let detailCalls = 0;
+  mockIPC((command) => {
+    if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+    if (command === "sale_history_detail_command") {
+      detailCalls += 1;
+      return detailCalls === 1
+        ? { kind: "success", detail: detail(184) }
+        : { kind: "error", code: "persistence_failure", message: "private detail failure" };
+    }
+    if (command === "create_sale_return_command")
+      return { kind: "error", code: "request_conflict", message: "private return failure" };
+    throw new Error(command);
+  });
+  render(createElement(SalesHistoryScreen));
+  const user = userEvent.setup({ document });
+  await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+  await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
+  await user.click(screen.getByRole("checkbox", { name: "Incluir este artículo" }));
+  await user.type(screen.getByRole("textbox", { name: "Cantidad a devolver" }), "1");
+  await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+
+  await user.click(await screen.findByRole("button", { name: "Recargar detalle de venta" }));
+  await screen.findByText("No se pudo cargar el detalle de venta.");
+  const modal = screen.getByRole("dialog", { name: "Devolución de artículos" });
+  const reload = within(modal).getByRole("button", { name: "Recargar detalle de venta" });
+  assert.equal((reload as HTMLButtonElement).disabled, false);
+  await user.click(within(modal).getByRole("button", { name: "Cerrar" }));
+  assert.equal(screen.queryByRole("dialog", { name: "Devolución de artículos" }), null);
+  assert.equal(detailCalls, 2);
 });
 
 test("ignores mounted list completion after unmount", async () => {
@@ -296,7 +375,7 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
   assert.match(css, /max-width: 960px[\s\S]*data-ui-history-articles\] \[data-ui-data-scroll\][^}]*overflow-y: visible/);
 });
 
-test("stages cancellation in the shared destructive dialog and closes only on matching persisted evidence", async () => {
+test("stages cancellation preparation in a form modal, then uses the destructive dialog", async () => {
   const sale = {
     ...detail(184),
     lines: detail(184).lines.map((line) => ({ ...line, remaining_returnable_quantity: 0 })),
@@ -320,6 +399,7 @@ test("stages cancellation in the shared destructive dialog and closes only on ma
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
   await user.click(await screen.findByRole("button", { name: "Iniciar cancelación de venta" }));
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
+  assert.ok(screen.getByRole("dialog", { name: "Preparar cancelación de venta" }));
   await user.type(screen.getByRole("textbox", { name: "Motivo de cancelación" }), "Venta duplicada");
   await user.click(screen.getByRole("checkbox", { name: /Los pagos originales no cambian/ }));
   const continueButton = screen.getByRole("button", { name: "Continuar con la cancelación" });
@@ -330,9 +410,10 @@ test("stages cancellation in the shared destructive dialog and closes only on ma
   assert.equal(requests.length, 0);
   assert.equal(document.activeElement, within(dialog).getByRole("button", { name: "Volver" }));
   await user.click(within(dialog).getByRole("button", { name: "Volver" }));
-  assert.equal(screen.queryByRole("dialog"), null);
-  assert.equal(document.activeElement, continueButton);
-  await user.click(continueButton);
+  assert.equal(screen.queryByRole("dialog", { name: "Cancelar venta #184" }), null);
+  await waitFor(() => assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Motivo de cancelación" })));
+  assert.equal(screen.getByRole("dialog", { name: "Preparar cancelación de venta" }).querySelector("#cancellation-reason")?.value, "Venta duplicada");
+  await user.click(screen.getByRole("button", { name: "Continuar con la cancelación" }));
 
   const confirm = screen.getByRole("button", { name: "Cancelar venta" });
   await user.click(confirm);
@@ -348,7 +429,7 @@ test("stages cancellation in the shared destructive dialog and closes only on ma
     lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 0 }] } });
   refreshed[0].resolve({ kind: "success", detail: sale });
   assert.ok(await screen.findByRole("button", { name: "Recargar detalle de venta" }));
-  assert.ok(screen.getByRole("dialog", { name: "Cancelar venta #184" }));
+  assert.ok(screen.getByRole("dialog", { name: "Preparar cancelación de venta" }));
   await user.click(screen.getByRole("button", { name: "Recargar detalle de venta" }));
   refreshed[1].resolve({ kind: "success", detail: { ...sale, status: "cancelled", cancellation: {
     cancellation_id: 91, request_id: requests[0].request_id, occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada",
