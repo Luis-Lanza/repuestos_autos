@@ -303,6 +303,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
     builder.invoke_handler(tauri::generate_handler![
         search_products_command,
         browse_products_command,
+        dashboard_command,
         confirm_sale_command,
         create_sale_return_command,
         cancel_sale_command,
@@ -438,6 +439,17 @@ fn confirm_restore_command(
         return commands::backup::BackupResponse::error("storage_unavailable");
     };
     commands::backup::confirm_restore(&state, &mut commands, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn dashboard_command(
+    state: tauri::State<AppState>,
+    request: commands::dashboard::DashboardRequest,
+) -> commands::dashboard::DashboardResponse {
+    state
+        .with_read(|connection| Ok(commands::dashboard::dashboard(connection, request)))
+        .unwrap_or_else(|_| commands::dashboard::DashboardResponse::Error(commands::dashboard::persistence_failure()))
 }
 
 #[cfg(feature = "desktop")]
@@ -823,6 +835,19 @@ mod command_surface_tests {
                 "{command}"
             );
         }
+    }
+
+    #[test]
+    fn registers_read_only_dashboard_command_at_the_tauri_command_seam() {
+        let (app, window) = test_window();
+        let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();
+        assert!(get_ipc_response(&window, request_with("dashboard_command", serde_json::json!({
+            "today_from_utc": "2024-03-10T05:00:00Z",
+            "today_to_exclusive_utc": "2024-03-11T04:00:00Z",
+            "month_from_utc": "2024-03-01T05:00:00Z",
+            "month_to_exclusive_utc": "2024-04-01T04:00:00Z"
+        }))).is_ok());
+        assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
     }
 
     #[test]

@@ -10,6 +10,7 @@ import { App, NAVIGATION_ACTION, SCREEN, screenAfter } from "./app.ts";
 import { AppShell } from "./app-shell.ts";
 
 const destinations = [
+  ["Dashboard", SCREEN.DASHBOARD, NAVIGATION_ACTION.OPEN_DASHBOARD],
   ["Ventas", SCREEN.SALES, NAVIGATION_ACTION.RETURN_TO_SALES],
   ["Inventario", SCREEN.INVENTORY, NAVIGATION_ACTION.OPEN_INVENTORY],
   ["Catálogo", SCREEN.CATALOG, NAVIGATION_ACTION.OPEN_CATALOG],
@@ -19,6 +20,7 @@ const destinations = [
 ] as const;
 
 const expectedDestination = {
+  [NAVIGATION_ACTION.OPEN_DASHBOARD]: SCREEN.DASHBOARD,
   [NAVIGATION_ACTION.START_ONBOARDING]: SCREEN.ONBOARDING,
   [NAVIGATION_ACTION.RETURN_TO_SALES]: SCREEN.SALES,
   [NAVIGATION_ACTION.OPEN_INVENTORY]: SCREEN.INVENTORY,
@@ -27,11 +29,11 @@ const expectedDestination = {
   [NAVIGATION_ACTION.OPEN_SALES_HISTORY]: SCREEN.SALES_HISTORY,
 } as const;
 
-test("AppShell exposes identity and the six existing actions through persistent Spanish navigation", async () => {
+test("AppShell exposes identity and the dashboard-first Spanish navigation", async () => {
   const actions: string[] = [];
   const user = userEvent.setup({ document });
   const view = render(createElement(AppShell, {
-    screen: SCREEN.SALES,
+    screen: SCREEN.DASHBOARD,
     onNavigate: (action) => actions.push(action),
   }, createElement("main", null, "Contenido")));
 
@@ -39,7 +41,7 @@ test("AppShell exposes identity and the six existing actions through persistent 
   const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
   const buttons = within(navigation).getAllByRole("button");
   assert.deepEqual(buttons.map((button) => button.textContent), destinations.map(([label]) => label));
-  assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.textContent), ["Ventas"]);
+  assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.textContent), ["Dashboard"]);
 
   for (const [label, , action] of destinations) {
     await user.click(within(navigation).getByRole("button", { name: label }));
@@ -110,8 +112,8 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   render(createElement(App));
 
   const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
-  assert.ok(screen.getByRole("heading", { level: 1, name: "Ventas" }));
-  assert.equal(within(navigation).getByRole("button", { name: "Ventas" }).getAttribute("aria-current"), "page");
+  assert.ok(screen.getByRole("heading", { level: 1, name: "Dashboard" }));
+  assert.equal(within(navigation).getByRole("button", { name: "Dashboard" }).getAttribute("aria-current"), "page");
 
   const backup = within(navigation).getByRole("button", { name: "Copia y restauración" });
   await user.click(backup);

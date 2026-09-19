@@ -84,6 +84,32 @@ const ticket11RegistrationMarkers = [
   "confirm_restore_command",
 ];
 
+const dashboardRegistrationLineAllowlist = new Set([
+  "",
+  "dashboard_command,",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn dashboard_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::dashboard::DashboardRequest,",
+  ") -> commands::dashboard::DashboardResponse {",
+  "state",
+  ".with_read(|connection| Ok(commands::dashboard::dashboard(connection, request)))",
+  ".unwrap_or_else(|_| commands::dashboard::DashboardResponse::Error(commands::dashboard::persistence_failure()))",
+  "}",
+  "#[test]",
+  "fn registers_read_only_dashboard_command_at_the_tauri_command_seam() {",
+  "let (app, window) = test_window();",
+  "let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();",
+  "assert!(get_ipc_response(&window, request_with(\"dashboard_command\", serde_json::json!({",
+  "\"today_from_utc\": \"2024-03-10T05:00:00Z\",",
+  "\"today_to_exclusive_utc\": \"2024-03-11T04:00:00Z\",",
+  "\"month_from_utc\": \"2024-03-01T05:00:00Z\",",
+  "\"month_to_exclusive_utc\": \"2024-04-01T04:00:00Z\"",
+  "}))).is_ok());",
+  "assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);",
+]);
+
 // These are complete trimmed lines from the ticket-11 registration/test seam. Keeping
 // complete lines (rather than matching marker substrings) prevents appended production
 // or test text from riding on an otherwise permitted line.
@@ -205,6 +231,18 @@ function assertCatalogRegistrationAllowlist(libDiff: string) {
   );
 }
 
+function assertDashboardRegistrationAllowlist(libDiff: string) {
+  const changedLines = libDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /dashboard_command/);
+  assert.match(libDiff, /registers_read_only_dashboard_command_at_the_tauri_command_seam/);
+  assert.ok(
+    changedLines.every((line) => dashboardRegistrationLineAllowlist.has(line.slice(1).trim())),
+    "unexpected Dashboard command registration drift",
+  );
+}
+
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -240,6 +278,9 @@ function assertW9ProtectedDiffPolicy(
     "src/commands/catalog.test.ts",
     "src-tauri/src/application/catalog/mod.rs",
     "src-tauri/src/commands/catalog.rs",
+    "src-tauri/src/application/mod.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/infrastructure/sqlite/mod.rs",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
@@ -253,7 +294,8 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
+    if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
     else assertTicket11RegistrationAllowlist(libDiff);
   }
 }
@@ -375,6 +417,43 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
   );
 });
 
+test("W9 allows only the exact Dashboard module-registration paths", () => {
+  const dashboardRegistrationPaths = [
+    "src-tauri/src/application/mod.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/infrastructure/sqlite/mod.rs",
+  ];
+  for (const changedPath of dashboardRegistrationPaths) {
+    assert.doesNotThrow(
+      () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      changedPath,
+    );
+  }
+
+  for (const changedPath of [
+    "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/src/commands/dashboard.rs",
+    "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+    "src-tauri/tests/dashboard_reporting.rs",
+    "src-tauri/src/application",
+    "src-tauri/src/commands",
+    "src-tauri/src/infrastructure/sqlite",
+  ]) {
+    assert.throws(
+      () => assertW9ProtectedDiffPolicy(
+        [changedPath],
+        currentPackage,
+        baselinePackage,
+        currentLock,
+        baselineLock,
+        "",
+      ),
+      /unexpected protected-path drift/,
+      changedPath,
+    );
+  }
+});
+
 test("W9 parses Catalog registration diffs by actual newline and rejects unrelated drift", () => {
   const allowedCatalogDiff = [
     "+ browse_products_command,",
@@ -384,6 +463,39 @@ test("W9 parses Catalog registration diffs by actual newline and rejects unrelat
   assert.throws(
     () => assertCatalogRegistrationAllowlist(`${allowedCatalogDiff}\n+ fn unrelated_catalog_runtime_change() { native_runtime_drift(); }`),
     /unexpected Catalog command registration drift/,
+  );
+});
+
+test("W9 allows only the exact Dashboard command registration diff", () => {
+  const allowedDashboardDiff = [
+    "+ dashboard_command,",
+    '+#[cfg(feature = "desktop")]',
+    "+#[tauri::command]",
+    "+fn dashboard_command(",
+    "+    state: tauri::State<AppState>,",
+    "+    request: commands::dashboard::DashboardRequest,",
+    "+) -> commands::dashboard::DashboardResponse {",
+    "+    state",
+    "+        .with_read(|connection| Ok(commands::dashboard::dashboard(connection, request)))",
+    "+        .unwrap_or_else(|_| commands::dashboard::DashboardResponse::Error(commands::dashboard::persistence_failure()))",
+    "+}",
+    "+    #[test]",
+    "+    fn registers_read_only_dashboard_command_at_the_tauri_command_seam() {",
+    "+        let (app, window) = test_window();",
+    "+        let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();",
+    "+        assert!(get_ipc_response(&window, request_with(\"dashboard_command\", serde_json::json!({",
+    '+            "today_from_utc": "2024-03-10T05:00:00Z",',
+    '+            "today_to_exclusive_utc": "2024-03-11T04:00:00Z",',
+    '+            "month_from_utc": "2024-03-01T05:00:00Z",',
+    '+            "month_to_exclusive_utc": "2024-04-01T04:00:00Z"',
+    "+        }))).is_ok());",
+    "+        assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);",
+    "+    }",
+  ].join("\n");
+  assert.doesNotThrow(() => assertDashboardRegistrationAllowlist(allowedDashboardDiff));
+  assert.throws(
+    () => assertDashboardRegistrationAllowlist(`${allowedDashboardDiff}\n+ fn dashboard_runtime_change() { native_runtime_drift(); }`),
+    /unexpected Dashboard command registration drift/,
   );
 });
 

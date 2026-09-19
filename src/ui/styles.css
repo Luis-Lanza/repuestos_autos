@@ -328,7 +328,7 @@ img, svg, video { max-inline-size: 100%; }
   padding: var(--space-page);
 }
 [data-ui-shell-content] > main { flex: 1 1 auto; min-block-size: 0; }
-main[data-ui-sale], main[data-ui-inventory], main[data-ui-catalog] {
+main[data-ui-sale], main[data-ui-inventory], main[data-ui-catalog], main[data-ui-dashboard] {
   display: flex;
   min-block-size: 0;
   flex-direction: column;
@@ -338,6 +338,12 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   min-block-size: 0;
 }
 [data-ui-shell-navigation] button { display: grid; gap: var(--space-1); }
+[data-ui-dashboard] { display: grid; gap: var(--space-5); }
+[data-ui-dashboard] > h1, [data-ui-dashboard] > p { margin-block-end: 0; }
+[data-ui-dashboard-periods], [data-ui-dashboard-layout] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: start; }
+[data-ui-dashboard-layout] > [data-ui-panel] { min-inline-size: 0; }
+[data-ui-dashboard] [data-ui-panel] { display: grid; gap: var(--space-3); }
+[data-ui-dashboard] [data-ui-panel] h2 { margin-block-end: 0; }
 [data-ui-inventory-layout] { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(260px, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--space-5); align-items: stretch; }
 [data-ui-inventory-layout] [data-ui-product-browser] > form { inline-size: min(100%, 48rem); max-inline-size: 100%; }
 [data-ui-inventory-results], [data-ui-inventory-alerts], [data-ui-product-browser-list] { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
@@ -561,6 +567,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-shell-sidebar] { padding-inline: var(--space-4); }
   [data-ui-shell-identity] { min-block-size: 64px; }
   [data-ui-panel] { padding: var(--space-4); }
+  [data-ui-dashboard-periods], [data-ui-dashboard-layout] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-inventory-layout] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) max-content; }
   [data-ui-inventory-selection] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-product-browser] > form, [data-ui-product-browser-list] > li { grid-template-columns: minmax(0, 1fr); }

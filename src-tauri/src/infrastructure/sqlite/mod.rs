@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, Result};
 
 pub mod backup;
+pub mod dashboard_repository;
 pub mod catalog_repository;
 pub mod inventory_repository;
 pub mod post_sale_repository;
