@@ -122,7 +122,10 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
       createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.price_errors[line.product_id], control: createElement("input", { id: `sale-final-price-${line.product_id}`, ref: index === 0 ? checkoutInitialFocusRef : undefined, value: line.final_price_input, disabled: pending, onChange: (event) => draftDispatch({ type: "line_final_price_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
       createElement("p", { "data-ui-sale-subtotal": true }, createElement("span", { "data-ui-money": true }, `Subtotal: ${formatBs(draftLineSubtotalCentavos(line))}`)))));
-  const checkoutContent = createElement("div", { "data-ui-checkout-content": true },
+  const checkoutContent = createElement("div", {
+    "data-ui-checkout-content": true,
+    "data-ui-density": state.lines.length === 1 ? "sparse" : undefined,
+  },
     createElement("section", { "aria-labelledby": "checkout-cart-heading" },
       createElement("h3", { id: "checkout-cart-heading" }, "Carrito"),
       state.lines.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "El carrito está vacío.") : null,

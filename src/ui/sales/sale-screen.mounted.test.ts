@@ -116,6 +116,10 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
   const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   assert.equal(dialog.getAttribute("data-ui-dialog-layout"), "checkout");
+  const checkoutContent = dialog.querySelector("[data-ui-checkout-content]");
+  assert.equal(checkoutContent?.getAttribute("data-ui-density"), "sparse");
+  assert.match(style.textContent ?? "", /data-ui-checkout-dialog[^}]*:has\(> \[data-ui-checkout-content\]\[data-ui-density="sparse"\]\)/);
+  assert.match(style.textContent ?? "", /data-ui-checkout-content\]\[data-ui-density="sparse"\][\s\S]*data-ui-sale-cart[\s\S]*overflow-y:\s*visible/);
   const cart = within(dialog).getByRole("region", { name: "Carrito" });
   const rail = dialog.querySelector("[data-ui-checkout-rail]");
   assert.ok(rail);
@@ -140,6 +144,8 @@ test("exposes each checkout row as a compact two-level item with unique actions"
   const add = await screen.findAllByRole("button", { name: "Agregar" });
   await u.click(add[0]); await u.click(add[1]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
 
+  const denseCheckoutContent = screen.getByRole("dialog", { name: "Revisar y cobrar" }).querySelector("[data-ui-checkout-content]");
+  assert.equal(denseCheckoutContent?.getAttribute("data-ui-density"), null);
   const cart = screen.getByRole("list", { name: "Carrito" });
   assert.equal(cart.querySelector("table"), null);
   assert.equal(cart.querySelector("[data-ui-aligned-data]"), null);

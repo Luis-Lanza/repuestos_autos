@@ -30,6 +30,9 @@ test("automatically loads active products once on mount", async () => {
   });
   const view = render(createElement(InventoryScreen));
   await screen.findByText("Filter");
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*main\[data-ui-inventory\]\[data-ui-density="sparse"\][\s\S]*data-ui-product-browser-list[\s\S]*overflow-y:\s*visible/);
   assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
   view.unmount();
 });
@@ -43,6 +46,7 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   });
   render(createElement(InventoryScreen));
   const operation = await screen.findByRole("region", { name: "Operación de inventario" });
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   const list = within(operation).getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(list.previousElementSibling?.tagName, "FORM");
   assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");

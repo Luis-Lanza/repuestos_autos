@@ -340,6 +340,9 @@ test("preserves inclusive date commands and shows bounded empty and error recove
   const user = userEvent.setup({ document });
 
   assert.ok(await screen.findByText("No hay ventas en este rango."));
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-history-list\]\[data-ui-density="sparse"\][^}]*align-content:\s*start/);
   await user.clear(screen.getByLabelText("Desde"));
   await user.type(screen.getByLabelText("Desde"), "2024-03-10");
   await user.clear(screen.getByLabelText("Hasta"));

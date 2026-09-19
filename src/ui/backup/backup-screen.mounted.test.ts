@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -26,6 +27,7 @@ test("renders Spanish continuity regions and persisted backup facts", async () =
   const user = userEvent.setup({ document });
   render(createElement(BackupScreen));
   assert.ok(screen.getByRole("heading", { name: "Copia y restauración", level: 1 }));
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-backup"), "true");
   assert.ok(screen.getByRole("region", { name: "Copia de seguridad" }));
   assert.ok(screen.getByRole("region", { name: "Restauración" }));
   await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
@@ -71,6 +73,12 @@ test("gates acknowledgement, uses the exact restore dialog, contains focus, and 
   resolveRestore({ kind: "restored" });
   await waitFor(() => assert.ok(screen.getByText("Restauración completada correctamente.")));
   assert.equal(screen.queryByRole("dialog"), null);
+});
+
+test("keeps backup panels top-aligned without changing their semantic regions", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-backup\][^}]*align-content:\s*start/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-backup-layout\][^}]*align-content:\s*start/);
 });
 
 test("does not duplicate backup picker activation", async () => {

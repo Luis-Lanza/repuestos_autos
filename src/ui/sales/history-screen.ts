@@ -427,7 +427,12 @@ export function HistoryScreen({
         : null,
     );
   }
-  return createElement("main", { "aria-labelledby": "sales-history-heading", "aria-busy": state.status === "loading", "data-ui-history-list": true },
+  return createElement("main", {
+    "aria-labelledby": "sales-history-heading",
+    "aria-busy": state.status === "loading",
+    "data-ui-history-list": true,
+    "data-ui-density": state.status === "empty" ? "sparse" : undefined,
+  },
     createElement("h1", { id: "sales-history-heading" }, "Historial de ventas"),
     createElement("form", { onSubmit: submit, "data-ui-history-filters": true },
       createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { id: "history-from", value: from, onChange: (event) => setFrom(event.target.value) }) } as never),
