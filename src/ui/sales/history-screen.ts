@@ -193,7 +193,7 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail }: {
 }
 
 const isSparseHistoryList = (state: HistoryState) =>
-  state.status === "empty" || (state.status === "ready" && state.sales.length === 1);
+  state.status === "empty" || state.status === "ready";
 
 const isSparseHistoryDetail = (state: HistoryState) => {
   const detail = state.detail;
@@ -420,26 +420,30 @@ export function HistoryScreen({
               createElement("p", { "data-ui-history-total": true }, createElement("span", null, "Total original"), createElement("strong", null, original.total)),
             ),
             createElement(CorrectionHistory, { detail: state.detail }),
-            canOpenReturn(state)
-              ? createElement("button", { type: "button", onClick: () => onAction?.({ type: "return_intent_opened", request_id: crypto.randomUUID() }), style: correctionControlStyle }, "Iniciar devolución de artículos")
-              : null,
+            createElement(
+              "div",
+              { "data-ui-history-correction-actions": true },
+              canOpenReturn(state)
+                ? createElement("button", { type: "button", onClick: () => onAction?.({ type: "return_intent_opened", request_id: crypto.randomUUID() }), style: correctionControlStyle }, "Iniciar devolución de artículos")
+                : null,
+              canOpenCancellation(state)
+                ? createElement(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: () =>
+                        onAction?.({
+                          type: "cancellation_intent_opened",
+                          request_id: crypto.randomUUID(),
+                        }),
+                      style: correctionControlStyle,
+                    },
+                    "Iniciar cancelación de venta",
+                  )
+                : null,
+            ),
             state.return_intent
               ? createElement(ReturnForm, { state, onAction, onSubmit: onReturnSubmit, onReloadDetail })
-              : null,
-            canOpenCancellation(state)
-              ? createElement(
-                  "button",
-                  {
-                    type: "button",
-                    onClick: () =>
-                      onAction?.({
-                        type: "cancellation_intent_opened",
-                        request_id: crypto.randomUUID(),
-                      }),
-                    style: correctionControlStyle,
-                  },
-                  "Iniciar cancelación de venta",
-                )
               : null,
             state.cancellation_intent
               ? createElement(CancellationForm, { state, onAction, onSubmit: onCancellationSubmit, onReloadDetail })

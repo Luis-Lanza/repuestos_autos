@@ -67,7 +67,7 @@ test("renders empty and error states without manufacturing sale data", () => {
   assert.equal(failed.detail, null);
 });
 
-test("marks only sparse history boundaries and keeps correction details dense", () => {
+test("top-aligns every ready history list and keeps correction details dense", () => {
   const render = (state: Parameters<typeof createHistoryFlow>[0]) =>
     renderToStaticMarkup(createElement(HistoryScreen, {
       state,
@@ -79,12 +79,22 @@ test("marks only sparse history boundaries and keeps correction details dense", 
     createHistoryFlow(initialHistoryState, { type: "list_loaded", sales, has_more: false });
   assert.match(render(list([])), /data-ui-density="sparse"/);
   assert.match(render(list([summary])), /data-ui-density="sparse"/);
-  assert.doesNotMatch(render(list([summary, { ...summary, sale_id: 72 }])), /data-ui-density="sparse"/);
+  assert.match(render(list([summary, { ...summary, sale_id: 72 }])), /data-ui-density="sparse"/);
+  assert.match(render(list([
+    summary,
+    { ...summary, sale_id: 72 },
+    { ...summary, sale_id: 73 },
+    { ...summary, sale_id: 74 },
+    { ...summary, sale_id: 75 },
+  ])), /data-ui-density="sparse"/);
 
   const simpleDetail = { ...detail, payments: [detail.payments[0]] };
   const shown = (currentDetail: SalesHistoryDetail) =>
     createHistoryFlow(initialHistoryState, { type: "detail_loaded", detail: currentDetail });
-  assert.match(render(shown(simpleDetail)), /data-ui-density="sparse"/);
+  const simpleMarkup = render(shown(simpleDetail));
+  assert.match(simpleMarkup, /data-ui-density="sparse"/);
+  assert.match(simpleMarkup, /data-ui-history-correction-actions/);
+  assert.match(simpleMarkup, /Iniciar devolución de artículos[\s\S]*Iniciar cancelación de venta/);
   assert.doesNotMatch(render(shown(detail)), /data-ui-density="sparse"/);
   assert.doesNotMatch(render(shown({
     ...simpleDetail,

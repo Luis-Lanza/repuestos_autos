@@ -84,6 +84,8 @@ test("late correction success cannot replace a newer selected sale", async () =>
   await screen.findByText("Venta #71");
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[0]);
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
+  assert.ok(screen.getByRole("button", { name: "Iniciar devolución de artículos" }));
+  assert.ok(screen.getByRole("button", { name: "Iniciar cancelación de venta" }));
   await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   await user.click(screen.getByRole("checkbox", { name: "Incluir este artículo" }));
@@ -215,7 +217,8 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
   assert.ok(screen.getByLabelText("Desde"));
   assert.ok(screen.getByLabelText("Hasta"));
   const table = await screen.findByRole("table", { name: "Ventas del período" });
-  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
+  assert.equal(screen.getAllByRole("button", { name: "Ver detalle" }).length, 2);
   for (const heading of ["Venta", "Fecha y hora", "Estado", "Artículos", "Pagos", "Total", "Acción"])
     assert.ok(screen.getByRole("columnheader", { name: heading }));
   assert.match(table.textContent ?? "", /Venta #71.*10\/03\/2024, 05:00.*Confirmada.*1 artículo.*Efectivo.*Bs 25,00/s);
@@ -272,6 +275,9 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-history-detail[^}]*display: grid/);
   assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-history-detail\]\[data-ui-density="sparse"\][^}]*align-content: start/);
+  assert.match(css, /data-ui-history-detail\]\[data-ui-density="sparse"\][^}]*gap: var\(--space-3\)/);
+  assert.match(css, /data-ui-history-detail\]\[data-ui-density="sparse"\] :is\(\[data-ui-history-original\], \[data-ui-history-corrections\]\)[^}]*gap: var\(--space-3\)[^}]*padding: var\(--space-4\)/);
+  assert.match(css, /data-ui-history-detail\]\[data-ui-density="sparse"\] \[data-ui-history-correction-actions\][^}]*display: flex[^}]*flex-wrap: wrap/);
   assert.match(css, /data-ui-history-detail-header[^}]*display: flex[^}]*justify-content: space-between/);
   assert.match(css, /max-width: 960px[\s\S]*data-ui-history-original[^}]*overflow-x: visible/);
 });

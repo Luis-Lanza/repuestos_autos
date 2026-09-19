@@ -481,8 +481,23 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 @media (min-width: 961px) {
   [data-ui-backup] { align-content: start; }
   [data-ui-backup-layout] { align-content: start; }
-  [data-ui-history-list][data-ui-density="sparse"],
-  [data-ui-history-detail][data-ui-density="sparse"] { align-content: start; }
+  [data-ui-history-list][data-ui-density="sparse"] { align-content: start; }
+  [data-ui-history-detail][data-ui-density="sparse"] {
+    align-content: start;
+    gap: var(--space-3);
+  }
+  [data-ui-history-detail][data-ui-density="sparse"] [data-ui-history-detail-content] { gap: var(--space-3); }
+  [data-ui-history-detail][data-ui-density="sparse"] :is([data-ui-history-original], [data-ui-history-corrections]) {
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+  [data-ui-history-detail][data-ui-density="sparse"] [data-ui-history-original] h2,
+  [data-ui-history-detail][data-ui-density="sparse"] [data-ui-history-corrections] > :is(h2, p) { margin-block-end: 0; }
+  [data-ui-history-detail][data-ui-density="sparse"] [data-ui-history-correction-actions] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
   [data-ui-history-detail-header] {
     display: flex;
     flex-wrap: wrap;
