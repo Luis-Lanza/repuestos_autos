@@ -192,6 +192,20 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail }: {
     onClick: () => onReloadDetail(intent.sale_id) }, "Recargar detalle de venta") : null));
 }
 
+const isSparseHistoryList = (state: HistoryState) =>
+  state.status === "empty" || (state.status === "ready" && state.sales.length === 1);
+
+const isSparseHistoryDetail = (state: HistoryState) => {
+  const detail = state.detail;
+  return state.status === "ready" && detail !== null &&
+    detail.lines.length === 1 &&
+    detail.payments.length === 1 &&
+    detail.returns.length === 0 &&
+    detail.cancellation === null &&
+    state.return_intent === null &&
+    state.cancellation_intent === null;
+};
+
 export type HistoryScreenProps = {
   state: HistoryState;
   onReload: (from: string, to: string) => void;
@@ -376,9 +390,16 @@ export function HistoryScreen({
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); onReload(from, to); };
   if (state.view === "detail") {
     const original = state.detail ? projectHistoryDetail(state.detail) : null;
-    return createElement("main", { "aria-labelledby": "sales-history-detail-heading", "aria-busy": state.status === "loading", "data-ui-history-detail": true },
-      createElement(Action, { variant: "tertiary", onClick: onBack }, "Volver al historial"),
-      createElement("h1", { id: "sales-history-detail-heading" }, "Detalle de venta"),
+    return createElement("main", {
+      "aria-labelledby": "sales-history-detail-heading",
+      "aria-busy": state.status === "loading",
+      "data-ui-history-detail": true,
+      "data-ui-density": isSparseHistoryDetail(state) ? "sparse" : undefined,
+    },
+      createElement("div", { "data-ui-history-detail-header": true },
+        createElement("h1", { id: "sales-history-detail-heading" }, "Detalle de venta"),
+        createElement(Action, { variant: "secondary", onClick: onBack }, "Volver al historial"),
+      ),
       state.status === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando detalle de venta…") : null,
       state.status === "error" ? createElement(Feedback, { kind: "error" } as never, "No se pudo cargar el detalle de venta.") : null,
       state.detail && original
@@ -431,7 +452,7 @@ export function HistoryScreen({
     "aria-labelledby": "sales-history-heading",
     "aria-busy": state.status === "loading",
     "data-ui-history-list": true,
-    "data-ui-density": state.status === "empty" ? "sparse" : undefined,
+    "data-ui-density": isSparseHistoryList(state) ? "sparse" : undefined,
   },
     createElement("h1", { id: "sales-history-heading" }, "Historial de ventas"),
     createElement("form", { onSubmit: submit, "data-ui-history-filters": true },

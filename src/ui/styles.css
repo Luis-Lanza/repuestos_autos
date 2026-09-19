@@ -481,7 +481,16 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 @media (min-width: 961px) {
   [data-ui-backup] { align-content: start; }
   [data-ui-backup-layout] { align-content: start; }
-  [data-ui-history-list][data-ui-density="sparse"] { align-content: start; }
+  [data-ui-history-list][data-ui-density="sparse"],
+  [data-ui-history-detail][data-ui-density="sparse"] { align-content: start; }
+  [data-ui-history-detail-header] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  [data-ui-history-detail-header] h1 { margin-block-end: 0; }
   main[data-ui-inventory][data-ui-density="sparse"] > [data-ui-inventory-layout] {
     grid-template-rows: auto;
     align-items: start;

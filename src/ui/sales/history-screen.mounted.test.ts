@@ -60,6 +60,7 @@ test("keeps the newer mounted list when an older load finishes late", async () =
   fireEvent.submit(load.closest("form")!);
   lists[1].resolve({ kind: "success", sales: [summary(72)], has_more: false });
   assert.ok(await screen.findByText("Venta #72"));
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
   lists[0].resolve({ kind: "success", sales: [summary(71)], has_more: false });
   await waitFor(() => assert.ok(screen.getByText("Venta #72")));
 });
@@ -82,7 +83,9 @@ test("late correction success cannot replace a newer selected sale", async () =>
   const user = userEvent.setup({ document });
   await screen.findByText("Venta #71");
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[0]);
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
   await user.click(await screen.findByRole("button", { name: "Iniciar devolución de artículos" }));
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   await user.click(screen.getByRole("checkbox", { name: "Incluir este artículo" }));
   await user.type(screen.getByRole("textbox", { name: "Cantidad a devolver" }), "1");
   await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
@@ -212,6 +215,7 @@ test("renders the bounded Spanish history list as scannable semantic data", asyn
   assert.ok(screen.getByLabelText("Desde"));
   assert.ok(screen.getByLabelText("Hasta"));
   const table = await screen.findByRole("table", { name: "Ventas del período" });
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   for (const heading of ["Venta", "Fecha y hora", "Estado", "Artículos", "Pagos", "Total", "Acción"])
     assert.ok(screen.getByRole("columnheader", { name: heading }));
   assert.match(table.textContent ?? "", /Venta #71.*10\/03\/2024, 05:00.*Confirmada.*1 artículo.*Efectivo.*Bs 25,00/s);
@@ -248,7 +252,12 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
   await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
 
   assert.equal(screen.getByRole("heading", { level: 1 }).textContent, "Detalle de venta");
-  assert.ok(screen.getByRole("button", { name: "Volver al historial" }));
+  const detailHeading = screen.getByRole("heading", { level: 1 });
+  const backButton = screen.getByRole("button", { name: "Volver al historial" });
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
+  assert.equal(backButton.getAttribute("data-ui-action"), "secondary");
+  assert.equal(detailHeading.parentElement?.getAttribute("data-ui-history-detail-header"), "true");
+  assert.equal(backButton.parentElement, detailHeading.parentElement);
   assert.match(screen.getByRole("region", { name: "Datos originales de la venta" }).textContent ?? "", /Venta #184.*14\/08\/2026, 10:42.*Cancelada/s);
   assert.match(screen.getByRole("table", { name: "Artículos originales" }).textContent ?? "", /Producto no disponible.*SKU no disponible.*2.*Bs 85,50.*Bs 171,00/s);
   assert.match(screen.getByRole("table", { name: "Pagos originales" }).textContent ?? "", /Efectivo aplicado.*Bs 200,00.*Efectivo recibido.*Bs 250,00.*Cambio.*Bs 50,00.*Pago QR.*Bs 150,00/s);
@@ -262,6 +271,8 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
 
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-history-detail[^}]*display: grid/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-history-detail\]\[data-ui-density="sparse"\][^}]*align-content: start/);
+  assert.match(css, /data-ui-history-detail-header[^}]*display: flex[^}]*justify-content: space-between/);
   assert.match(css, /max-width: 960px[\s\S]*data-ui-history-original[^}]*overflow-x: visible/);
 });
 
@@ -286,7 +297,9 @@ test("stages cancellation in the shared destructive dialog and closes only on ma
   render(createElement(SalesHistoryScreen));
   const user = userEvent.setup({ document });
   await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
   await user.click(await screen.findByRole("button", { name: "Iniciar cancelación de venta" }));
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   await user.type(screen.getByRole("textbox", { name: "Motivo de cancelación" }), "Venta duplicada");
   await user.click(screen.getByRole("checkbox", { name: /Los pagos originales no cambian/ }));
   const continueButton = screen.getByRole("button", { name: "Continuar con la cancelación" });

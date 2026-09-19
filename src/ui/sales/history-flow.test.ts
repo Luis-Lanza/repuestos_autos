@@ -67,6 +67,41 @@ test("renders empty and error states without manufacturing sale data", () => {
   assert.equal(failed.detail, null);
 });
 
+test("marks only sparse history boundaries and keeps correction details dense", () => {
+  const render = (state: Parameters<typeof createHistoryFlow>[0]) =>
+    renderToStaticMarkup(createElement(HistoryScreen, {
+      state,
+      onReload: () => undefined,
+      onSelect: () => undefined,
+      onBack: () => undefined,
+    }));
+  const list = (sales: SalesHistorySummary[]) =>
+    createHistoryFlow(initialHistoryState, { type: "list_loaded", sales, has_more: false });
+  assert.match(render(list([])), /data-ui-density="sparse"/);
+  assert.match(render(list([summary])), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(list([summary, { ...summary, sale_id: 72 }])), /data-ui-density="sparse"/);
+
+  const simpleDetail = { ...detail, payments: [detail.payments[0]] };
+  const shown = (currentDetail: SalesHistoryDetail) =>
+    createHistoryFlow(initialHistoryState, { type: "detail_loaded", detail: currentDetail });
+  assert.match(render(shown(simpleDetail)), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown(detail)), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown({
+    ...simpleDetail,
+    lines: [...simpleDetail.lines, { ...simpleDetail.lines[0], sale_line_id: 42 }],
+  })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown({
+    ...simpleDetail,
+    returns: [{ return_id: 8, request_id: "return", occurred_at: "2024-03-11", lines: [] }],
+  })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(shown({
+    ...simpleDetail,
+    cancellation: { cancellation_id: 9, request_id: "cancel", occurred_at: "2024-03-11", reason: "Duplicate", lines: [] },
+  })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(flow(shown(simpleDetail), { type: "return_intent_opened", request_id: "active-return" })), /data-ui-density="sparse"/);
+  assert.doesNotMatch(render(flow(shown(simpleDetail), { type: "cancellation_intent_opened", request_id: "active-cancel" })), /data-ui-density="sparse"/);
+});
+
 test("opens history from Sales and returns to Sales", () => {
   const history = screenAfter(SCREEN.SALES, NAVIGATION_ACTION.OPEN_SALES_HISTORY);
   assert.equal(history, SCREEN.SALES_HISTORY);
