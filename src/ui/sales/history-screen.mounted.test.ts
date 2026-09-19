@@ -261,7 +261,15 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
   assert.equal(backButton.getAttribute("data-ui-action"), "secondary");
   assert.equal(detailHeading.parentElement?.getAttribute("data-ui-history-detail-header"), "true");
   assert.equal(backButton.parentElement, detailHeading.parentElement);
-  assert.match(screen.getByRole("region", { name: "Datos originales de la venta" }).textContent ?? "", /Venta #184.*14\/08\/2026, 10:42.*Cancelada/s);
+  const originalRegion = screen.getByRole("region", { name: "Datos originales de la venta" });
+  const summaryLayout = originalRegion.querySelector("[data-ui-history-summary-layout]");
+  assert.ok(summaryLayout);
+  assert.equal(summaryLayout?.querySelector("[data-ui-history-articles]")?.tagName, "SECTION");
+  assert.equal(summaryLayout?.querySelector("[data-ui-history-rail]")?.tagName, "ASIDE");
+  assert.equal(summaryLayout?.querySelector("[data-ui-history-payments]")?.tagName, "SECTION");
+  assert.equal(summaryLayout?.querySelector("[data-ui-history-total]")?.textContent, "Total originalBs 350,00");
+  assert.equal(originalRegion.querySelector("[data-ui-history-corrections]"), null);
+  assert.match(originalRegion.textContent ?? "", /Venta #184.*14\/08\/2026, 10:42.*Cancelada/s);
   assert.match(screen.getByRole("table", { name: "Artículos originales" }).textContent ?? "", /Producto no disponible.*SKU no disponible.*2.*Bs 85,50.*Bs 171,00/s);
   assert.match(screen.getByRole("table", { name: "Pagos originales" }).textContent ?? "", /Efectivo aplicado.*Bs 200,00.*Efectivo recibido.*Bs 250,00.*Cambio.*Bs 50,00.*Pago QR.*Bs 150,00/s);
   assert.ok(screen.getByText("Bs 350,00"));
@@ -279,7 +287,13 @@ test("renders persisted original detail as Spanish read-only semantic facts", as
   assert.match(css, /data-ui-history-detail\]\[data-ui-density="sparse"\] :is\(\[data-ui-history-original\], \[data-ui-history-corrections\]\)[^}]*gap: var\(--space-3\)[^}]*padding: var\(--space-4\)/);
   assert.match(css, /data-ui-history-detail\]\[data-ui-density="sparse"\] \[data-ui-history-correction-actions\][^}]*display: flex[^}]*flex-wrap: wrap/);
   assert.match(css, /data-ui-history-detail-header[^}]*display: flex[^}]*justify-content: space-between/);
+  assert.match(css, /data-ui-history-summary-layout[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(260px, 320px\)/);
+  assert.match(css, /data-ui-history-articles[^}]*display: flex[^}]*flex-direction: column/);
+  assert.match(css, /data-ui-history-articles\] \[data-ui-data-scroll\][^}]*overflow-y: auto/);
   assert.match(css, /max-width: 960px[\s\S]*data-ui-history-original[^}]*overflow-x: visible/);
+  assert.match(css, /max-width: 960px[\s\S]*data-ui-history-summary-layout[^}]*grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /max-width: 960px[\s\S]*data-ui-history-articles[^}]*display: block/);
+  assert.match(css, /max-width: 960px[\s\S]*data-ui-history-articles\] \[data-ui-data-scroll\][^}]*overflow-y: visible/);
 });
 
 test("stages cancellation in the shared destructive dialog and closes only on matching persisted evidence", async () => {

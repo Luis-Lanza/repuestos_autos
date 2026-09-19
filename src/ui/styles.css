@@ -453,7 +453,29 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-history-original] [data-ui-data-scroll] { overflow-x: visible; }
 [data-ui-history-identity] { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
 [data-ui-history-identity] :is(dt, dd) { margin: 0; }
-[data-ui-history-total] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); margin: 0; padding-block: var(--space-4); border-block: 2px solid var(--color-border-strong); font-size: var(--type-total-size); font-variant-numeric: tabular-nums; }
+[data-ui-history-summary-layout] {
+  display: grid;
+  min-inline-size: 0;
+  min-block-size: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: var(--space-5);
+}
+[data-ui-history-articles] { display: flex; min-block-size: 0; flex-direction: column; }
+[data-ui-history-articles] [data-ui-data-scroll] {
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+[data-ui-history-rail] {
+  display: grid;
+  min-inline-size: 0;
+  min-block-size: 0;
+  align-content: start;
+  gap: var(--space-4);
+}
+[data-ui-history-payments] { min-block-size: 0; }
+[data-ui-history-original] [data-ui-aligned-data] { table-layout: fixed; }
+[data-ui-history-total] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); margin: 0; padding: var(--space-5); border-block: 2px solid var(--color-border-strong); font-size: var(--type-total-size); font-variant-numeric: tabular-nums; }
 [data-ui-history-corrections] { display: grid; gap: var(--space-4); padding: var(--space-5); border: 1px solid var(--color-border-strong); border-inline-start: 4px solid var(--color-success-edge); border-radius: var(--radius-panel); background: var(--color-surface); }
 [data-ui-history-correction-record] { padding: var(--space-4); border: 1px solid var(--color-border); background: var(--color-surface-subtle); }
 [data-ui-history-correction-facts] { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-3); }
@@ -570,6 +592,9 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
       [data-ui-backup-summary] dl { grid-template-columns: minmax(0, 1fr); }
       [data-ui-onboarding-layout] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-history-original] { padding: var(--space-4); overflow-x: visible; }
+  [data-ui-history-summary-layout] { grid-template-columns: minmax(0, 1fr); min-block-size: auto; }
+  [data-ui-history-articles] { display: block; min-block-size: auto; }
+  [data-ui-history-articles] [data-ui-data-scroll] { overflow-y: visible; overscroll-behavior: auto; }
   [data-ui-history-original] [data-ui-aligned-data] { table-layout: auto; }
   [data-ui-history-identity] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-history-return], [data-ui-history-cancellation] { padding: var(--space-4); overflow-x: hidden; }
