@@ -243,11 +243,15 @@ fn validate_existing_identity(
         return Err(ConfirmSaleError::PersistedDataInvalid);
     };
 
+    let Some(canonical_payload_version) = confirm_sale_payload_version(canonical_payload)
+    else {
+        return Err(ConfirmSaleError::PersistedDataInvalid);
+    };
     if operation_kind != expected.operation_kind()
         || payload_version != expected.payload_version()
+        || payload_version != canonical_payload_version
         || payload_sha256.len() != 64
         || payload_sha256 != format!("{:x}", Sha256::digest(canonical_payload))
-        || !valid_confirm_sale_payload(canonical_payload)
     {
         return Err(ConfirmSaleError::PersistedDataInvalid);
     }
@@ -259,18 +263,18 @@ fn validate_existing_identity(
     Ok(())
 }
 
-fn valid_confirm_sale_payload(payload: &[u8]) -> bool {
+fn confirm_sale_payload_version(payload: &[u8]) -> Option<i64> {
     let mut offset = 0;
     let version = match next_field(payload, &mut offset) {
         Some(b"confirm_sale/v1") => 1,
         Some(b"confirm_sale/v2") => 2,
-        _ => return false,
+        _ => return None,
     };
     let Some(line_count) = next_field(payload, &mut offset).and_then(parse_usize) else {
-        return false;
+        return None;
     };
     if line_count == 0 {
-        return false;
+        return None;
     }
     for _ in 0..line_count {
         for _ in 0..4 {
@@ -278,21 +282,22 @@ fn valid_confirm_sale_payload(payload: &[u8]) -> bool {
                 .and_then(parse_i64)
                 .is_none()
             {
-                return false;
+                return None;
             }
         }
         if version == 2 && !next_positive_nullable_number(payload, &mut offset) {
-            return false;
+            return None;
         }
         if !next_nullable_number(payload, &mut offset)
             || !next_nullable_number(payload, &mut offset)
         {
-            return false;
+            return None;
         }
     }
-    next_nullable_number(payload, &mut offset)
+    (next_nullable_number(payload, &mut offset)
         && next_nullable_number(payload, &mut offset)
-        && offset == payload.len()
+        && offset == payload.len())
+    .then_some(version)
 }
 
 fn next_positive_nullable_number(payload: &[u8], offset: &mut usize) -> bool {

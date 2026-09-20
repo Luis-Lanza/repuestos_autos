@@ -1,3 +1,9 @@
+use repuestos_autos::application::sales::{
+    ApplicationConfirmSaleRequest, ApplicationRequestedLine, ConfirmSaleError, ConfirmSaleUseCase,
+};
+use repuestos_autos::domain::sales::PaymentInput;
+use repuestos_autos::domain::{MoneyCentavos, Quantity, RequestId};
+use repuestos_autos::infrastructure::sqlite::sale_repository::SqliteSaleRepository;
 use repuestos_autos::infrastructure::sqlite::{
     migration_compatibility, open_database, open_seeded_catalog, production_database_config,
     MigrationCompatibility, CURRENT_SCHEMA_VERSION,
@@ -204,6 +210,55 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
 }
+#[test]
+fn pre_v11_confirmed_sale_fails_closed_after_current_schema_migration() {
+    let directory = temporary_directory("migration-legacy-sale-idempotency");
+    let path = create_legacy_database(&directory);
+    assert_eq!(user_version(&path), 1);
+    let before = legacy_facts(&path);
+    let mut connection = open_database(&production_database_config(&directory)).unwrap();
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
+
+    let result = ConfirmSaleUseCase::new(&mut connection, &SqliteSaleRepository).confirm(
+        ApplicationConfirmSaleRequest {
+            request_id: RequestId::parse("550e8400-e29b-41d4-a716-446655440099").unwrap(),
+            lines: vec![ApplicationRequestedLine {
+                product_id: 1,
+                quantity: Quantity::new(2).unwrap(),
+                captured_unit_price: MoneyCentavos::new(2_500).unwrap(),
+                captured_revision: 0,
+                final_unit_price: None,
+                acknowledged_price: None,
+                acknowledged_revision: None,
+            }],
+            payment: PaymentInput {
+                amount_tendered: None,
+                qr_applied: Some(MoneyCentavos::new(5_000).unwrap()),
+            },
+        },
+    );
+
+    assert_eq!(result, Err(ConfirmSaleError::RequestConflict));
+    assert_eq!(legacy_facts(&path), before);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT operation_kind, payload_version, canonical_payload, payload_sha256 FROM sales WHERE id = 10",
+                [],
+                |row| Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                )),
+            )
+            .unwrap(),
+        (None, None, None, None)
+    );
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn rejects_failed_preflight_without_changing_legacy_rows_or_version() {
     let directory = temporary_directory("migration-missing-column");

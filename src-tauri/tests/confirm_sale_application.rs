@@ -439,6 +439,29 @@ fn application_rejects_an_existing_identity_mismatch_before_replay() {
 }
 
 #[test]
+fn application_rejects_a_persisted_payload_marker_version_mismatch_as_persistence_failure() {
+    let persisted = Reservation::ExistingConfirmed {
+        summary: Some(summary()),
+        operation_kind: Some("confirm_sale".into()),
+        payload_version: Some(1),
+        canonical_payload: Some(
+            b"15:confirm_sale/v21:11:11:14:25001:05:value4:25004:null4:null5:value4:30004:null"
+                .to_vec(),
+        ),
+        payload_sha256: Some(
+            "a7410d437ea5d1c5bd2cd102aa36feb297db3fd546fada8b8491873b6fa7c363".into(),
+        ),
+    };
+
+    assert_failure_rolls_back(
+        repository_double(Ok(persisted)),
+        request(vec![requested_line(1)]),
+        ConfirmSaleError::PersistedDataInvalid,
+        &["reserve"],
+    );
+}
+
+#[test]
 fn stale_catalog_price_rolls_back_the_reserved_sale_before_any_fact_is_persisted() {
     let mut repository = repository_double(Ok(Reservation::Reserved));
     repository.resolution = Err(ConfirmSaleError::StaleCatalogPrice {
