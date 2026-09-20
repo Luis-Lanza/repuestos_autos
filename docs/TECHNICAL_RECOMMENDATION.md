@@ -6,17 +6,17 @@ Build a local Windows desktop application with **Tauri 2 + React + TypeScript + 
 
 ## Implementation status
 
-The selected stack is in use for catalog onboarding and maintenance, fixed-price POS, operational inventory, read-only sales history, and backup/restore. Backup/restore has Fedora evidence; Windows task 4.1 evidence remains deferred. Returns, cancellation, and reporting remain planned requirements and have no current Rust application/command or UI implementation.
+The selected stack is in use for catalog onboarding and maintenance, negotiated-price POS, operational inventory, read-only sales history, returns, cancellations, the bounded operational Dashboard, and backup/restore. Backup/restore has Fedora evidence plus bounded Windows fixed-NTFS restore evidence; broader Windows release readiness remains separate. Broader reports by date range, product, or category remain separate from the implemented Dashboard.
 
 ## Why this fits the validated scope
 
 | Requirement | Technical fit |
 | --- | --- |
 | One Windows computer, offline operation | Tauri packages a locally installed Windows desktop application. |
-| One local source of truth | SQLite stores catalog, sales, movements, and backup data in one local database file; reporting remains planned. |
-| Reliable stock and sales | Execute implemented confirmation and adjustment logic inside database transactions; use the same approach when planned cancellation and return work is implemented. |
+| One local source of truth | SQLite stores catalog, sales, movements, and backup data in one local database file; the bounded operational Dashboard is implemented, while broader reports remain separate. |
+| Reliable stock and sales | Execute implemented confirmation, negotiated-pricing, adjustment, cancellation, and return logic inside database transactions. |
 | Dynamic category fields and global search | Model field definitions and values relationally; index base fields and searchable attribute values. |
-| USB backup/restore | The desktop shell can explicitly export and import a validated database backup file; Windows task 4.1 evidence remains deferred. |
+| USB backup/restore | The desktop shell can explicitly export and import a validated database backup file; Fedora evidence and bounded Windows fixed-NTFS restore evidence exist, while broader Windows release readiness remains separate. |
 
 Tauri's official SQL plugin supports SQLite on Windows, and its migrations execute inside a transaction. Tauri can bundle Windows installers as an MSI or NSIS setup executable. [Tauri SQL plugin](https://v2.tauri.app/plugin/sql/) · [Tauri Windows installers](https://tauri.app/distribute/windows-installer/)
 

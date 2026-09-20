@@ -12,10 +12,12 @@ This PRD remains the target product scope; its requirements are not all delivere
 
 | Area | Current status |
 | --- | --- |
-| Catalog onboarding and maintenance, negotiated-price POS, and operational inventory | Delivered; negotiated pricing remains planned. |
-| Backup and restore | Implemented and supported by Fedora evidence; Windows task 4.1 evidence remains deferred. |
+| Catalog onboarding and maintenance, negotiated-price POS, and operational inventory | Delivered, including negotiated pricing. |
+| Operational Dashboard | Delivered as bounded operational reporting; it does not provide broader reports by date range, product, or category. |
+| Backup and restore | Implemented with Fedora evidence and bounded Windows fixed-NTFS restore evidence; broader Windows release readiness remains separate. |
 | Sales history | Delivered as bounded, read-only calendar browsing with persisted sale details. |
-| Returns, cancellations, and reports | Planned requirements; no current Rust commands/application layer or UI implementation. |
+| Returns and cancellations | Implemented. |
+| Broader reports | Remain separate from the implemented Dashboard and are not delivered by it. |
 
 ## 2. Problem
 
@@ -85,7 +87,7 @@ The store maintains inventory and sales in multiple category-specific Excel file
 - Confirming a sale stores the sale, its line items, final agreed prices, list/minimum price references, total in Bs, date/time, and stock movements atomically.
 - When confirmation begins, the UI creates and retains a UUID request ID for that sale intent. Every retry or repeated click uses that same ID; retrying it returns the already-created sale rather than creating a duplicate.
 - A draft sale can be discarded without affecting stock.
-- **Planned; not currently implemented:** a confirmed sale can be cancelled only with a required reason. Cancellation remains visible in history and creates reversing stock movements; it does not delete the original sale.
+- A confirmed sale can be cancelled only with a required reason. Cancellation remains visible in history and creates reversing stock movements; it does not delete the original sale.
 
 ### 5.6 Payments
 
@@ -98,7 +100,7 @@ The store maintains inventory and sales in multiple category-specific Excel file
 
 ### 5.7 Returns
 
-**Planned; not currently implemented.**
+**Implemented.**
 
 - Register a return only against its original confirmed sale while that sale has not been cancelled.
 - For each return line, accepted quantity must be a positive whole number and must not exceed the remaining returnable quantity: original sold quantity minus quantities already returned for that same sale line.
@@ -108,16 +110,17 @@ The store maintains inventory and sales in multiple category-specific Excel file
 
 ### 5.8 Sales history and reports
 
-**Sales history is implemented. Reports remain planned.**
+**Sales history and the bounded operational Dashboard are implemented. Broader reports remain separate.**
 
 - Provide a bounded, read-only sales history filtered by an inclusive calendar-date range. The list shows persisted date/time, status, total, line count, payment count, and payment methods, newest first.
+- The operational Dashboard provides bounded operational reporting; it does not fulfill broader reports by date range, product, or category.
 - Selecting a sale loads its persisted product, quantity, final agreed unit price, available sale-time list/minimum price references, payment-breakdown, and total details without using current catalog values to fill missing historical snapshots.
 - **Planned; not currently implemented:** provide reports for a selected date range, by product, and by category.
 - Planned report values use Bs and exclude cancelled sales from effective sales totals while preserving them in audit/history views.
 
 ### 5.9 Backup and restore
 
-**Implemented with Fedora evidence; Windows task 4.1 evidence remains deferred.**
+**Implemented with Fedora evidence and bounded Windows fixed-NTFS restore evidence; broader Windows release readiness remains separate.**
 
 - Allow the operator to create a local backup to a USB drive or external disk.
 - Allow restoration from a selected backup file after explicit confirmation.

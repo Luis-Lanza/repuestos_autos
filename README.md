@@ -80,7 +80,7 @@ unset SMOKE_DATA_DIR
 While the application is running, verify this minimum path:
 
 - [ ] The window opens at the desktop layout and can be resized down to 960×640.
-- [ ] The sidebar exposes `Ventas`, `Inventario`, `Catálogo`, `Alta de productos`, `Historial de ventas`, and `Copia y restauración`.
+- [ ] The sidebar exposes the bounded operational `Dashboard`, `Ventas`, `Inventario`, `Catálogo`, `Alta de productos`, `Historial de ventas`, and `Copia y restauración`.
 - [ ] Keyboard navigation shows a visible focus indicator and activates each destination.
 - [ ] Create a category and product, then confirm that the product is discoverable from Sales and Inventory.
 - [ ] Record an inventory operation and confirm that the displayed stock changes.

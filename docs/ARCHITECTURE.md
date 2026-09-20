@@ -6,7 +6,7 @@ Use a local **modular monolith**: one Windows desktop process, one SQLite databa
 
 ## Implementation status
 
-This document describes the target v1 architecture. Catalog onboarding and maintenance, fixed-price sale confirmation, operational inventory, and read-only sales history are implemented. Backup and restore are implemented with Fedora evidence; Windows task 4.1 evidence remains deferred. Returns, cancellation, and reporting remain planned: no current Rust application/command or UI implementation exists for them.
+This document describes the target v1 architecture. Catalog onboarding and maintenance, negotiated-price sale confirmation, operational inventory, bounded operational Dashboard, read-only sales history, returns, and cancellations are implemented. Backup and restore have Fedora evidence plus bounded Windows fixed-NTFS restore evidence; broader Windows release readiness remains separate. Broader reports by date range, product, or category remain separate from the implemented Dashboard.
 
 ```text
 React UI
@@ -30,7 +30,7 @@ SQLite database ◀─────────────┘
 | React + TypeScript | Screens, form state, local display validation, search presentation | Stock, payment, or catalog-price authority |
 | Tauri command boundary | Typed request/response contract between UI and Rust | Business-rule duplication |
 | Rust application | Use cases, transaction boundaries, orchestration, authoritative catalog-price resolution, error mapping | UI state or repository-owned transaction boundaries |
-| Rust domain | Fixed sale price, derived cash payment values, stock availability, state transitions | SQLite or filesystem APIs |
+| Rust domain | Negotiated sale price, derived cash payment values, stock availability, state transitions | SQLite or filesystem APIs |
 | Infrastructure | SQLite repositories, migrations, backup/restore filesystem access, database constraints | Business decisions |
 
 ## Modules
@@ -43,8 +43,8 @@ src-tauri/src/
   application/
     catalog/                Categories, fields, products
     inventory/              Stock entry and adjustments
-    sales/                  Implemented: sale confirmation, payments, and read-only history; planned: cancellation and return
-    reporting/              Planned sales queries and aggregation
+    sales/                  Implemented: sale confirmation, payments, read-only history, cancellation, and return
+    reporting/              Implemented bounded operational Dashboard; broader reports remain separate
     backup/                 Implemented export and validated restore
     settings/               Local application settings
   domain/                   Business rules and domain types
@@ -60,7 +60,7 @@ src-tauri/src/
 | Catalog | `categories`, `attribute_definitions`, `products`, `product_attribute_values` | Category fields are defined once and values are typed/searchable per product. |
 | Stock | `inventory_movements`, `stock_balances` | Movements are immutable audit evidence; balances are a transactionally updated read model for fast availability checks. |
 | Sales | `sales`, `sale_lines`, `sale_payments` | `sales.request_id` is unique for idempotency. At confirmation, a line stores the backend-resolved catalog price as its historical sale-time snapshot. Payments store applied amount; cash also stores operator-entered tendered amount and system-derived change. Read-only history queries return bounded calendar-filtered summaries and load persisted detail on demand. |
-| Corrections (planned) | `sale_cancellations`, `returns`, `return_lines` | Reversals preserve the original sale and create compensating stock movements. |
+| Corrections | `sale_cancellations`, `returns`, `return_lines` | Reversals preserve the original sale and create compensating stock movements. |
 | Audit metadata | Relevant operational records | `created_at`, `updated_at` where applicable, required `reason` for adjustments/cancellations, and nullable `operator_id` reserved for future attribution. |
 
 Store all money as integer centavos of Bs, never floating-point values. Model money as a domain type, not a freely interchangeable integer.
@@ -91,9 +91,9 @@ All inventory quantities use positive integers because every product is sold by 
 7. Append one negative immutable inventory movement per line.
 8. Commit everything or roll back everything.
 
-### Planned critical transaction: return or cancellation
+### Critical transaction: return or cancellation
 
-`ReturnSaleUseCase` and `CancelSaleUseCase` are planned use cases. They would own their complete transactions and use the original sale lines as the source of truth for eligible quantities.
+`ReturnSaleUseCase` and `CancelSaleUseCase` own their complete transactions and use the original sale lines as the source of truth for eligible quantities.
 
 - A return is allowed only for a confirmed, non-cancelled sale. For each return line, the use case calculates `remaining_returnable = sold_quantity - sum(previously_returned_quantity)` and rejects any quantity above that amount before appending its positive stock movement.
 - If a sale with prior returns is cancelled, cancellation restores only `sold_quantity - sum(previously_returned_quantity)` for each sale line. Therefore, a return and cancellation cannot restore the same sold unit twice.
@@ -105,7 +105,7 @@ SQLite is a second line of defense, not merely storage. Enable `PRAGMA foreign_k
 
 ## Backup boundary
 
-The implemented backup service exports a database-safe snapshot selected by the operator to external storage. Restore validates the selected backup, requires confirmation, and replaces the local database only through a controlled shutdown/reopen flow. Fedora evidence exists; Windows task 4.1 evidence remains deferred.
+The implemented backup service exports a database-safe snapshot selected by the operator to external storage. Restore validates the selected backup, requires confirmation, and replaces the local database only through a controlled shutdown/reopen flow. Fedora evidence exists, along with bounded Windows fixed-NTFS restore evidence; broader Windows release readiness remains separate.
 
 ## Explicit v1 boundaries
 
