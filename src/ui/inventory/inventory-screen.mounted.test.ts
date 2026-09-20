@@ -11,6 +11,7 @@ import { InventoryScreen } from "./inventory-screen.ts";
 const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 0 };
 const browse = (products: typeof product[] = [product]) => ({ kind: "success", products, categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const success = (request_id: string) => ({ kind: "success", request_id, product_id: 1, previous_quantity: 10, quantity_delta: 3, resulting_quantity: 11, occurred_at: "2025-01-01T00:00:00Z", note: null });
+function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? ids.at(-1) }); }
 
 async function searchAndSelect() {
   const user = userEvent.setup({ document });
@@ -193,6 +194,44 @@ test("localizes failure and preserves retry", async () => {
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   assert.match((await screen.findByRole("alert")).textContent ?? "", /^No se pudo guardar la operación de inventario\. Reintentá\./);
   assert.ok(screen.getByRole("button", { name: "Reintentar" }));
+});
+
+test("retries an exact inventory envelope and replaces its identity after edits and a new operation", async () => {
+  installUuid("inventory-request-1", "inventory-request-2", "inventory-request-3");
+  const requests: Array<{ request_id: string; product_id: number; quantity: number; note: string | null }> = [];
+  let confirmations = 0;
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") {
+      const request = payload?.request as typeof requests[number];
+      requests.push(request);
+      confirmations += 1;
+      return confirmations < 3 ? { kind: "error", code: "persistence_failure", message: "Native" } : success(request.request_id);
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", { name: "Reintentar" }));
+  await waitFor(() => assert.equal(requests.length, 2));
+  assert.deepEqual(requests[1], requests[0]);
+
+  await user.type(screen.getByRole("textbox", { name: "Nota (opcional)" }), "Conteo de depósito");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByText("Operación guardada. Stock actual: 11.");
+  assert.notEqual(requests[2].request_id, requests[1].request_id);
+  assert.equal(requests[2].note, "Conteo de depósito");
+
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  await user.click(await screen.findByRole("button", { name: "Seleccionar" }));
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await waitFor(() => assert.equal(requests.length, 4));
+  assert.notEqual(requests[3].request_id, requests[2].request_id);
 });
 
 test("shows a specific neutral message for reused inventory requests", async () => {

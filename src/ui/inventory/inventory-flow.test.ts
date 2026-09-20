@@ -22,6 +22,28 @@ test("projects an explicit physical zero but not a blank count", () => {
   assert.equal(projectedBalance(createInventoryFlow(physical, { type: "physical_count_changed", value: "0" })), 0);
 });
 
+test("keeps the failed request identity when an inventory action repeats the same value", () => {
+  const product = { product_id: 1, name: "Filter", available_quantity: 8 };
+  let state = createInventoryFlow(initialInventoryState, { type: "product_selected", product });
+  state = createInventoryFlow(state, { type: "entry_quantity_changed", value: "4" });
+  state = createInventoryFlow(state, { type: "note_changed", value: "Conteo de depósito" });
+  state = createInventoryFlow(state, { type: "confirmation_started", request_id: "inventory-request-exact" });
+  state = createInventoryFlow(state, { type: "confirmation_failed", message: "Retry." });
+
+  for (const action of [
+    { type: "product_selected", product },
+    { type: "operation_changed", operation: "stock_entry" as const },
+    { type: "entry_quantity_changed", value: "4" },
+    { type: "physical_count_changed", value: "" },
+    { type: "note_changed", value: "Conteo de depósito" },
+    { type: "reason_changed", value: "" },
+  ] as const) {
+    const repeated = createInventoryFlow(state, action);
+    assert.equal(repeated, state, action.type);
+    assert.equal(repeated.request_id, "inventory-request-exact");
+  }
+});
+
 test("replaces request identity for every changed inventory payload", () => {
   const product = { product_id: 1, name: "Filter", available_quantity: 8 };
   const otherProduct = { product_id: 2, name: "Oil filter", available_quantity: 3 };

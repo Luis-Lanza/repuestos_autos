@@ -295,6 +295,35 @@ test("retains request and draft intent through failed retries", () => {
   assert.equal(newIntent.request_id, thirdRequestId);
 });
 
+test("keeps request identity for same-value sale actions", () => {
+  const withLine = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
+  let state = createSaleFlow(withLine, { type: "confirmation_started", request_id: "sale-request-exact" });
+  state = createSaleFlow(state, { type: "confirmation_failed", message: "Retry the sale." });
+
+  for (const action of [
+    { type: "add_product", product: brakePad },
+    { type: "remove_product", product_id: 99 },
+    { type: "line_quantity_changed", product_id: 1, value: "1" },
+    { type: "line_final_price_changed", product_id: 1, value: "25,00" },
+    { type: "payment_changed", field: "amount_tendered_centavos" as const, value: "" },
+  ] as const) {
+    const repeated = createSaleFlow(state, action);
+    assert.equal(repeated.request_id, "sale-request-exact", action.type);
+    state = repeated;
+  }
+});
+
+test("invalidates request identity when the final sale price changes", () => {
+  const drafted = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
+  const failed = createSaleFlow(
+    createSaleFlow(drafted, { type: "confirmation_started", request_id: "sale-request-price" }),
+    { type: "confirmation_failed", message: "Retry the sale." },
+  );
+  const changed = createSaleFlow(failed, { type: "line_final_price_changed", product_id: 1, value: "26,00" });
+  assert.equal(changed.request_id, null);
+  assert.equal(changed.lines[0].final_price_input, "26,00");
+});
+
 test("replaces request identity for every changed sale payload", () => {
   const firstRequestId = "550e8400-e29b-41d4-a716-446655440070";
   const secondRequestId = "550e8400-e29b-41d4-a716-446655440071";

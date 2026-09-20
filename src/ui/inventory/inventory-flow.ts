@@ -20,12 +20,12 @@ export type InventoryAction =
 const resetIntent = (state: InventoryState) => ({ ...state, request_id: null, confirmation: CONFIRMATION.IDLE, result: null, feedback: null, advisory_notice: null });
 export function createInventoryFlow(state: InventoryState, action: InventoryAction): InventoryState {
   switch (action.type) {
-    case "product_selected": return { ...resetIntent(state), product: action.product };
-    case "operation_changed": return { ...resetIntent(state), operation: action.operation };
-    case "entry_quantity_changed": return { ...resetIntent(state), entry_quantity: action.value };
-    case "physical_count_changed": return { ...resetIntent(state), physical_count: action.value };
-    case "note_changed": return { ...resetIntent(state), note: action.value };
-    case "reason_changed": return { ...resetIntent(state), reason: action.value };
+    case "product_selected": return state.product?.product_id === action.product.product_id ? state : { ...resetIntent(state), product: action.product };
+    case "operation_changed": return state.operation === action.operation ? state : { ...resetIntent(state), operation: action.operation };
+    case "entry_quantity_changed": return state.entry_quantity === action.value ? state : { ...resetIntent(state), entry_quantity: action.value };
+    case "physical_count_changed": return state.physical_count === action.value ? state : { ...resetIntent(state), physical_count: action.value };
+    case "note_changed": return state.note === action.value ? state : { ...resetIntent(state), note: action.value };
+    case "reason_changed": return state.reason === action.value ? state : { ...resetIntent(state), reason: action.value };
     case "confirmation_started": return { ...state, request_id: state.request_id ?? action.request_id, confirmation: CONFIRMATION.PENDING, feedback: null };
     case "confirmation_failed": return { ...state, confirmation: CONFIRMATION.ERROR, feedback: action.message };
     case "confirmation_succeeded": return { ...state, request_id: null, confirmation: CONFIRMATION.CONFIRMED, result: action.result, feedback: null, advisory_notice: state.product?.available_quantity === action.result.previous_quantity ? null : "Stock changed after the preview." };

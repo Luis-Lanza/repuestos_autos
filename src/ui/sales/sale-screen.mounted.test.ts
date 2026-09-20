@@ -192,6 +192,40 @@ test("parses cash-only, QR-only and mixed Bs values into the exact command envel
   }
 });
 
+test("retries an exact sale envelope and replaces its identity after a payment edit", async () => {
+  const NEW_SALE_UUID = "550e8400-e29b-41d4-a716-446655440062";
+  installUuid(UUID, RETRY_UUID, NEW_SALE_UUID);
+  const envelopes: unknown[] = [];
+  let confirmations = 0;
+  mockIPC((command, payload) => {
+    if (command === "browse_products_command") return browse([products[0]]);
+    envelopes.push(payload);
+    confirmations += 1;
+    return confirmations < 3 ? { kind: "error", code: "persistence_failure", message: "Native" } : { ...success, request_id: RETRY_UUID };
+  });
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("alert");
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  assert.equal(envelopes.length, 2);
+  assert.deepEqual(envelopes[1], envelopes[0]);
+
+  await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "1");
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("heading", { name: "Venta confirmada" });
+  assert.equal((envelopes[0] as { request: { request_id: string } }).request.request_id, UUID);
+  assert.equal((envelopes[2] as { request: { request_id: string; payment: { qr_applied_centavos: number } } }).request.request_id, RETRY_UUID);
+  assert.equal((envelopes[2] as { request: { payment: { qr_applied_centavos: number } } }).request.payment.qr_applied_centavos, 100);
+
+  await u.click(screen.getByRole("button", { name: "Nueva venta" }));
+  const newSaleUser = await addFirst();
+  await newSaleUser.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("heading", { name: "Venta confirmada" });
+  assert.equal((envelopes[3] as { request: { request_id: string } }).request.request_id, NEW_SALE_UUID);
+  assert.notEqual((envelopes[3] as { request: { request_id: string } }).request.request_id, (envelopes[2] as { request: { request_id: string } }).request.request_id);
+});
+
 test("rejects malformed payment before invoke, associates correction and focuses the first field", async () => {
   let confirms = 0; mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : (confirms++, success));
   render(createElement(SaleScreen)); const u = await addFirst(); const cash = screen.getByRole("textbox", { name: "Efectivo recibido" });
