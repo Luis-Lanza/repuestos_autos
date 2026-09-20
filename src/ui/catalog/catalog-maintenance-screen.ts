@@ -5,13 +5,14 @@ import { Action, Feedback } from "../visual-system/controls.ts";
 import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { createCatalogEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "./product-browser.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, type ProductBrowserState } from "./product-browser.ts";
 
 export { CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 
 type Dispatch = (action: CatalogMaintenanceAction) => void;
 type SetForm = (form: CatalogEditForm) => void;
 type CatalogLoadCommands = Pick<typeof catalogMaintenanceCommands, "detail" | "listCategories">;
+type BrowserSnapshot = Pick<ProductBrowserState, "query" | "category_id" | "stock_state" | "activity" | "page" | "request_id">;
 
 export function CatalogMaintenanceRecovery({ required, onReload }: { required: boolean; onReload: () => void }) {
   return required ? createElement(Action, { variant: "secondary", onClick: onReload }, "Recargar registros del catálogo") : null;
@@ -43,14 +44,21 @@ export function CatalogMaintenanceScreen() {
   const browseAttempt = useRef(0);
   const refreshDetailAfterRecovery = useRef(false);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, activity: "all" });
+  const browserRef = useRef(browser);
+  browserRef.current = browser;
   const mutationLocked = useRef(false);
   useEffect(() => () => { mounted.current = false; attempt.current += 1; browseAttempt.current += 1; mutationLocked.current = true; }, []);
 
-  const browseCatalogProducts = async (page = 1) => {
-    const current = ++browseAttempt.current;
-    browserDispatch({ type: "browse_started", query: browser.query, category_id: browser.category_id, stock_state: "all", activity: browser.activity, page, request_id: current });
+  const browserSnapshot = (): BrowserSnapshot => {
+    const current = browserRef.current;
+    return { query: current.query, category_id: current.category_id, stock_state: current.stock_state, activity: current.activity, page: current.page, request_id: current.request_id };
+  };
+  const browseCatalogProducts = async (snapshot: BrowserSnapshot, page = 1) => {
+    const current = Math.max(++browseAttempt.current, snapshot.request_id + 1);
+    browseAttempt.current = current;
+    browserDispatch({ type: "browse_started", query: snapshot.query, category_id: snapshot.category_id, stock_state: snapshot.stock_state, activity: snapshot.activity, page, request_id: current });
     try {
-      const result = await browseProducts({ query: browser.query, category_id: browser.category_id, activity: browser.activity, page, page_size: 20 });
+      const result = await browseProducts({ query: snapshot.query, category_id: snapshot.category_id, activity: snapshot.activity, page, page_size: 20 });
       if (!mounted.current || current !== browseAttempt.current) return false;
       browserDispatch({ type: "browse_succeeded", request_id: current, result });
       return true;
@@ -62,11 +70,12 @@ export function CatalogMaintenanceScreen() {
   };
   const load = async () => {
     const current = ++attempt.current;
+    const initialBrowseSnapshot = browserSnapshot();
     dispatch({ type: "load_started" });
     const response = await catalogMaintenanceCommands.listCategories();
     if (mounted.current && current === attempt.current) {
       dispatch(response.kind === "success" ? { type: "loaded", records: response.records } : { type: "load_failed" });
-      if (response.kind === "success") await browseCatalogProducts();
+      if (response.kind === "success" && browserRef.current.request_id === initialBrowseSnapshot.request_id) await browseCatalogProducts(initialBrowseSnapshot);
     }
   };
   const loadDetail = async (record: CatalogMaintenanceRecord) => {
@@ -85,7 +94,7 @@ export function CatalogMaintenanceScreen() {
     if (!mounted.current || current !== attempt.current) return false;
     if (response.kind !== "success") { dispatch({ type: "refresh_failed" }); return false; }
     dispatch({ type: "refresh_list_succeeded", records: response.records });
-    const browsed = await browseCatalogProducts();
+    const browsed = await browseCatalogProducts(browserSnapshot());
     if (!browsed || !mounted.current || current !== attempt.current) {
       if (mounted.current && current === attempt.current) dispatch({ type: "refresh_failed" });
       return false;
@@ -162,7 +171,13 @@ export function CatalogMaintenanceScreen() {
   const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : { ...current, [field]: value });
   const pending = state.status === "pending" || state.status === "loading" && !!state.selected;
   const interactionLocked = pending || state.recovery_required;
-  const submitBrowse = (event: FormEvent) => { event.preventDefault(); if (!interactionLocked) void browseCatalogProducts(browser.page); };
+  const submitBrowse = (event: FormEvent) => {
+    event.preventDefault();
+    if (!interactionLocked) {
+      const snapshot = browserSnapshot();
+      void browseCatalogProducts(snapshot, snapshot.page ?? 1);
+    }
+  };
   const visibleRecords = state.records;
 
   return createElement(
@@ -208,7 +223,7 @@ export function CatalogMaintenanceScreen() {
             onActivityChange: (value) => browserDispatch({ type: "activity_changed", value }),
             showActivity: true,
             onSubmit: submitBrowse,
-            onPageChange: (page) => void browseCatalogProducts(page),
+            onPageChange: (page) => void browseCatalogProducts(browserSnapshot(), page),
             onSelect: (product) => void loadDetail({ target: "product", entity_id: product.product_id, label: `${product.sku} — ${product.name}`, activity: "active", revision: product.revision }),
             allowUnavailableSelection: true,
             actionLabel: "Editar",

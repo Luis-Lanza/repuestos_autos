@@ -19,12 +19,55 @@ const productDetail = {
   attribute_definitions: [{ definition_id: 10, label: "Marca", field_type: "text" as const, required: true, options: [] }],
   attribute_values: [{ definition_id: 10, value: "Bosch" }],
 };
+const brakeProduct = { ...browseProduct, product_id: 2, sku: "BRK-001", name: "Pastilla de freno" };
 
 function baseIPC(command: string) {
   if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
   if (command === "browse_products_command") return browse();
   throw new Error(`Unexpected command: ${command}`);
 }
+
+test("applies a submitted multi-character catalog query", async () => {
+  const queries: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") {
+      const query = payload?.request?.query;
+      queries.push(query);
+      return query === "brake" ? browse([brakeProduct]) : browse([]);
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const search = await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.type(search, "brake");
+  await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
+  await waitFor(() => assert.ok(screen.getByText("Pastilla de freno")));
+  assert.equal(queries.at(-1), "brake");
+});
+
+test("does not let delayed initial browse replace a newer submitted search", async () => {
+  let resolveCategories!: (value: unknown) => void;
+  const queries: unknown[] = [];
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") return new Promise((resolve) => { resolveCategories = resolve; });
+    if (command === "browse_products_command") {
+      const query = payload?.request?.query;
+      queries.push(query);
+      return query === "brake" ? browse([brakeProduct]) : browse([]);
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  const search = await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.type(search, "brake");
+  await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
+  await waitFor(() => assert.ok(screen.getByText("Pastilla de freno")));
+  await act(async () => { resolveCategories({ kind: "success", records: [activeCategory] }); });
+  await waitFor(() => assert.equal(queries.length, 1));
+  assert.equal(queries[0], "brake");
+  assert.ok(screen.getByText("Pastilla de freno"));
+});
 
 test("keeps browsing free of the inline editor and opens a named category modal with authoritative detail", async () => {
   mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
