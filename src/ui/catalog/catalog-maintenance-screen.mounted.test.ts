@@ -109,6 +109,33 @@ test("loads product detail before editing and archives immediately with adjacent
   assert.ok(within(dialog).getByRole("button", { name: "Reactivar" }));
 });
 
+test("keeps the newest selected detail when requests resolve in reverse order", async () => {
+  const secondCategory = { ...activeCategory, entity_id: 5, label: "Pastillas", revision: 3 };
+  const firstDetail = { ...categoryDetail, name: "Filtros A" };
+  const secondDetail = { ...categoryDetail, entity_id: 5, name: "Pastillas B", revision: 3 };
+  let resolveFirst!: (value: unknown) => void;
+  let resolveSecond!: (value: unknown) => void;
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory, secondCategory] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") {
+      return payload?.request?.entity_id === activeCategory.entity_id
+        ? new Promise((resolve) => { resolveFirst = resolve; })
+        : new Promise((resolve) => { resolveSecond = resolve; });
+    }
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await waitFor(() => assert.ok(resolveFirst));
+  await userEvent.click(screen.getByRole("button", { name: "Editar Pastillas" }));
+  await waitFor(() => assert.ok(resolveSecond));
+  await act(async () => { resolveSecond(secondDetail); });
+  await act(async () => { resolveFirst(firstDetail); });
+  const dialog = await screen.findByRole("dialog", { name: "Editar Pastillas B" });
+  assert.equal((within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).value, "Pastillas B");
+});
+
 test("keeps the modal actionable without repeating a successful mutation when list refresh fails", async () => {
   let listCalls = 0;
   let maintainCalls = 0;

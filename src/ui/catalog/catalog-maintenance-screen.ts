@@ -201,7 +201,7 @@ export function CatalogMaintenanceScreen() {
           { key: `${record.target}-${record.entity_id}`, "data-ui-selected": state.selected?.target === record.target && state.selected.entity_id === record.entity_id || undefined },
           createElement(
             Action,
-            { variant: "tertiary", disabled: interactionLocked, onClick: () => void loadDetail(record), "aria-label": `Editar ${record.label}` },
+            { variant: "tertiary", disabled: state.status === "pending" || state.recovery_required, onClick: () => void loadDetail(record), "aria-label": `Editar ${record.label}` },
             createElement("span", null,
               createElement("strong", null, record.label),
               createElement("small", null, record.target === "product" ? "Producto" : "Categoría"),
