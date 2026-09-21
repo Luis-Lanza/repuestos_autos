@@ -76,4 +76,5 @@ First implementation slice only:
 - T6 RED: focused mounted suite failed 2 tests because summary remove controls were absent.
 - T6 GREEN: added a summary-scoped 44px `×` control with a unique accessible name, existing pending guard, and existing `remove_product` transition; focused suite passed 21/21.
 - T6 independent verification: focused 21/21, full frontend 238/238, test typecheck, and `git diff --check` passed.
+- T6 work-unit commit: `f0b6506` (`feat(ui): remove items from Sales summary`).
 - Compact native visual comparison remains pending on Windows.
