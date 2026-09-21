@@ -143,6 +143,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   const summaryLines = state.lines.map((line) => createElement("li", { key: line.product_id, "data-ui-sale-summary-line": true },
     createElement("strong", null, line.product_name),
     createElement("span", { "data-ui-sku": true }, line.sku),
+    createElement("button", { type: "button", "data-ui-sale-summary-remove": true, "aria-label": `Quitar ${line.product_name} del resumen de venta`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "×"),
     createElement("div", null,
       createElement("span", null, `${line.quantity} un. × ${formatBs(effectiveDraftUnitPriceCentavos(line))}`),
       createElement("span", { "data-ui-money": true }, formatBs(draftLineSubtotalCentavos(line))))));

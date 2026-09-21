@@ -67,6 +67,37 @@ test("renders the approved Sales catalog and read-only empty and active draft su
   assert.equal((within(summary).getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, false);
 });
 
+test("removes products directly from the read-only Sales summary", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+  const u = await searchFor();
+  const catalog = screen.getByRole("region", { name: "Catálogo de repuestos" });
+  const summary = screen.getByRole("region", { name: "Resumen de venta" });
+  const add = within(catalog).getAllByRole("button", { name: "Agregar" });
+  await u.click(add[0]);
+  await u.click(add[1]);
+
+  const lines = within(summary).getAllByRole("listitem");
+  const firstRemove = within(lines[0]).getByRole("button", { name: "Quitar Filtro aceite del resumen de venta" });
+  const secondRemove = within(lines[1]).getByRole("button", { name: "Quitar Filtro premium del resumen de venta" });
+  assert.equal(firstRemove.textContent, "×");
+  assert.equal(secondRemove.textContent, "×");
+  assert.equal(within(summary).queryByRole("spinbutton"), null);
+  assert.equal(within(summary).queryByRole("textbox"), null);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-summary-remove\][^}]*inline-size:\s*var\(--size-control-default\)[^}]*min-block-size:\s*var\(--size-control-default\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-summary-line\][^}]*position:\s*relative/s);
+
+  await u.click(firstRemove);
+  assert.equal(within(summary).queryByText("Filtro aceite"), null);
+  assert.ok(within(summary).getByText("Filtro premium"));
+  assert.ok(within(summary).getByText("1 línea"));
+
+  await u.click(secondRemove);
+  assert.ok(within(summary).getByText("El carrito está vacío"));
+  assert.ok(within(summary).getByText("0 líneas"));
+  assert.equal((within(summary).getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, true);
+});
+
 test("automatically loads the active first page once on mount", async () => {
   const calls: unknown[] = [];
   mockIPC((command, payload) => {
@@ -298,9 +329,10 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   mockIPC((command, payload) => command === "browse_products_command" ? (searches++, browse(products)) : (confirms++, submitted = payload, pending.promise));
   render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
   fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" })); fireEvent.click(screen.getByRole("button", { name: "Confirmando…" }));
-  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar Filtro aceite" }), screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
+  const summaryRemove = within(screen.getByRole("region", { name: "Resumen de venta" })).getByRole("button", { name: "Quitar Filtro aceite del resumen de venta" });
+  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar Filtro aceite" }), summaryRemove, screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
-  fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.change(controls[5], { target: { value: "1" } }); fireEvent.change(controls[6], { target: { value: "2" } }); fireEvent.click(controls[7]);
+  fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.click(controls[5]); fireEvent.change(controls[6], { target: { value: "1" } }); fireEvent.change(controls[7], { target: { value: "2" } }); fireEvent.click(controls[8]);
   assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
   assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");

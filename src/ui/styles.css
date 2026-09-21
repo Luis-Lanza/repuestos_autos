@@ -395,8 +395,11 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sale-summary-empty] p { max-inline-size: 18rem; color: var(--color-text-muted); }
 [data-ui-sale-summary-lines] { display: grid; gap: var(--space-2); }
 [data-ui-sale-summary-lines] > ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-[data-ui-sale-summary-line] { display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface-elevated); }
+[data-ui-sale-summary-line] { position: relative; display: grid; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface-elevated); }
+[data-ui-sale-summary-line] > :is(strong, [data-ui-sku]) { padding-inline-end: calc(var(--size-control-default) + var(--space-2)); }
 [data-ui-sale-summary-line] > div { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--color-text-muted); font-size: var(--type-caption-size); }
+[data-ui-sale-summary] [data-ui-sale-summary-remove] { position: absolute; inset-block-start: var(--space-2); inset-inline-end: var(--space-2); display: grid; inline-size: var(--size-control-default); min-block-size: var(--size-control-default); block-size: var(--size-control-default); place-items: center; padding: 0; border-color: transparent; background: transparent; color: var(--color-action); font-size: 24px; line-height: 1; }
+[data-ui-sale-summary] [data-ui-sale-summary-remove]:not(:disabled):hover { border-color: var(--color-action-hover); background: var(--color-surface-subtle); color: var(--color-action-hover); }
 [data-ui-sale-summary-totals] { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: color-mix(in srgb, var(--color-surface-subtle) 55%, var(--color-surface)); }
 [data-ui-sale-summary] p { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); margin: 0; }
 [data-ui-sale-summary-totals] [data-ui-type="total"] { padding-block-start: var(--space-2); border-block-start: 1px solid var(--color-border); }

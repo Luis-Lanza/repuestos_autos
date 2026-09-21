@@ -14,7 +14,7 @@ Apply the approved Sales/POS visual direction without changing business logic, I
 First implementation slice only:
 - Light persistent shell treatment using existing navigation markup.
 - Sales-specific catalog presentation.
-- Read-only active and empty draft summaries.
+- Read-only active and empty draft summaries, with a bounded remove-line action in the active summary.
 - Focused mounted tests for observable output and CSS contracts.
 
 ## Non-goals
@@ -27,7 +27,7 @@ First implementation slice only:
 ## Invariants
 - ProductBrowser default presentation remains unchanged outside Sales.
 - Search sequencing, stale-response guards, pagination, validation, pending locks, and confirmation behavior remain unchanged.
-- Summary is read-only; editing remains inside checkout.
+- Summary remains non-editable except for removing a draft line; quantity and price editing remain inside checkout.
 - One `h1`, semantic named panels, visible labels, live feedback, 44px targets, focus, reduced-motion, and forced-colors support remain intact.
 - Desktop/compact breakpoint remains 961px; sidebar remains 208px/176px.
 
@@ -37,11 +37,12 @@ First implementation slice only:
 - [x] T3 Run focused and full frontend verification, typecheck, and build.
 - [x] T4 Perform structural readback and review the final diff against scope.
 - [ ] T5 Validate the rendered desktop and compact result against the approved PNGs in the native app.
+- [x] T6 Add an accessible inline remove action to each active summary line and verify it.
 
 ## Acceptance criteria
 - Sales matches the approved desktop and compact composition closely within the existing React architecture.
 - Empty draft shows guidance, zero totals, and disabled checkout.
-- Active draft shows read-only line facts, units, subtotal/total, and enabled checkout.
+- Active draft shows non-editable line facts, units, subtotal/total, an accessible remove-line action, and enabled checkout.
 - Products already in the draft show a disabled `Agregado` action in Sales.
 - Other ProductBrowser callers preserve their current markup and behavior.
 - Checkout behavior and markup remain unchanged.
@@ -71,4 +72,8 @@ First implementation slice only:
 - Final structural readback: generic Catalog/Inventory search and rows preserved; Sales-only search/row rules are scoped; checkout, flows, IPC, and Rust untouched.
 - Candidate: 5 tracked files, 144 insertions, 31 deletions (175 changed lines).
 - Work-unit commit: `4ed3df2` (`feat(ui): redesign Sales catalog and summary`).
-- Native rendered visual comparison remains pending on Windows.
+- Native rendered desktop comparison: substantially aligned; requested follow-up is direct line removal from the summary. Low-contrast inventory alert cue and the intentionally deferred checkout redesign were also identified.
+- T6 RED: focused mounted suite failed 2 tests because summary remove controls were absent.
+- T6 GREEN: added a summary-scoped 44px `×` control with a unique accessible name, existing pending guard, and existing `remove_product` transition; focused suite passed 21/21.
+- T6 independent verification: focused 21/21, full frontend 238/238, test typecheck, and `git diff --check` passed.
+- Compact native visual comparison remains pending on Windows.
