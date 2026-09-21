@@ -64,4 +64,5 @@ Redesign the existing `Revisar y cobrar` modal to match the approved desktop and
 - Final candidate: 3 tracked source/test files, 143 additions and 65 deletions (208 changed lines), below the 400-line budget.
 - Structural readback confirmed Sales-scoped CSS, unchanged action/confirmation wiring, no staged changes, and no edits to generic dialogs, `sale-flow.ts`, commands, IPC, Rust, SQLite, persistence, or dependencies.
 - Existing non-blocking Vite warning: mixed static/dynamic Tauri API imports.
+- Work-unit commit: `e288e75` (`feat(ui): redesign Sales checkout modal`).
 - Native Windows visual validation remains pending.
