@@ -423,6 +423,11 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart\][^{]*\{[^}]*max-block-size:\s*none[^}]*overflow-y:\s*visible/s);
 });
 
+test("bounds Sales checkout field controls and money inputs to their grid track", () => {
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\] \[data-ui-field-control\]\s*\{[^}]*inline-size:\s*100%[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\] \[data-ui-field="money"\] \[data-ui-field-control\] > input\s*\{[^}]*inline-size:\s*0[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%[^}]*flex:\s*1 1 0/s);
+});
+
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
   installUuid(); const pending = deferred<unknown>(); mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : pending.promise);
   const view = render(createElement(SaleScreen)); await addFirst(); fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" }));

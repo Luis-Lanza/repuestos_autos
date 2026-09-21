@@ -458,6 +458,8 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-checkout] [data-ui-sale-cart-primary] [data-ui-action] { min-inline-size: max-content; }
 [data-ui-sales-checkout] [data-ui-sale-cart-controls] { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 1fr) minmax(9rem, max-content); min-inline-size: 0; row-gap: var(--space-3); column-gap: var(--space-4); align-items: end; padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); }
 [data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field] { min-inline-size: 0; margin: 0; }
+[data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field-control] { inline-size: 100%; min-inline-size: 0; max-inline-size: 100%; }
+[data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field="money"] [data-ui-field-control] > input { inline-size: 0; min-inline-size: 0; max-inline-size: 100%; flex: 1 1 0; }
 [data-ui-sales-checkout] [data-ui-sale-subtotal] { min-inline-size: 9rem; justify-self: end; margin: 0; padding-block: var(--space-3); text-align: end; white-space: nowrap; }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
