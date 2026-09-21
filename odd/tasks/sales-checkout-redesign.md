@@ -68,4 +68,5 @@ Redesign the existing `Revisar y cobrar` modal to match the approved desktop and
 - Native Windows desktop review found one blocking geometry defect: the final-price value and line subtotal overlapped in every cart row with realistic product names.
 - Overlap correction RED: focused suite failed 1/38 on the missing collision-safe grid contract. GREEN: quantity, final price, and subtotal now use independent tracks with explicit gap/minimum width; focused suite passed 38/38.
 - Overlap correction independent verification passed: focused 38/38, full frontend 239/239, test typecheck, production build, and `git diff --check`. Compact stacking and dialog-only scrolling remain intact.
+- Overlap correction commit: `1082617` (`fix(ui): prevent Sales checkout row overlap`).
 - Native Windows screenshot confirmation of the corrected geometry remains pending.
