@@ -190,8 +190,8 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   assert.equal(dialog.getAttribute("data-ui-dialog-layout"), "checkout");
   const checkoutContent = dialog.querySelector("[data-ui-checkout-content]");
   assert.equal(checkoutContent?.getAttribute("data-ui-density"), "sparse");
-  assert.match(style.textContent ?? "", /data-ui-checkout-dialog[^}]*:has\(> \[data-ui-checkout-content\]\[data-ui-density="sparse"\]\)/);
-  assert.match(style.textContent ?? "", /data-ui-checkout-content\]\[data-ui-density="sparse"\][\s\S]*data-ui-sale-cart[\s\S]*overflow-y:\s*visible/);
+  assert.match(style.textContent ?? "", /data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\[data-ui-density="sparse"\]\)/);
+  assert.match(style.textContent ?? "", /data-ui-sales-checkout\]\[data-ui-density="sparse"\][\s\S]*data-ui-sale-cart[\s\S]*overflow-y:\s*visible/);
   const cart = within(dialog).getByRole("region", { name: "Carrito" });
   const rail = dialog.querySelector("[data-ui-checkout-rail]");
   assert.ok(rail);
@@ -209,31 +209,70 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   assert.equal(screen.getByRole("button", { name: "Revisar y cobrar" }).getAttribute("aria-expanded"), "false");
 });
 
-test("exposes each checkout row as a compact two-level item with unique actions", async () => {
+test("exposes Sales-owned checkout cards and settlement in stable logical order", async () => {
   mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
   render(createElement(SaleScreen));
   const u = await searchFor();
   const add = await screen.findAllByRole("button", { name: "Agregar" });
   await u.click(add[0]); await u.click(add[1]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" }));
 
-  const denseCheckoutContent = screen.getByRole("dialog", { name: "Revisar y cobrar" }).querySelector("[data-ui-checkout-content]");
-  assert.equal(denseCheckoutContent?.getAttribute("data-ui-density"), null);
-  const cart = screen.getByRole("list", { name: "Carrito" });
+  const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  const checkout = dialog.querySelector("[data-ui-sales-checkout]");
+  assert.ok(checkout);
+  assert.equal(checkout?.getAttribute("data-ui-checkout-content"), "true");
+  assert.equal(checkout?.getAttribute("data-ui-density"), null);
+  assert.equal(checkout?.firstElementChild?.getAttribute("data-ui-sales-checkout-cart"), "true");
+  assert.equal(checkout?.lastElementChild?.getAttribute("data-ui-sales-checkout-settlement"), "true");
+
+  const cart = within(dialog).getByRole("list", { name: "Carrito" });
   assert.equal(cart.querySelector("table"), null);
   assert.equal(cart.querySelector("[data-ui-aligned-data]"), null);
   const rows = within(cart).getAllByRole("listitem");
   assert.equal(rows.length, 2);
   for (const [row, product] of rows.map((value, index) => [value, products[index]] as const)) {
+    assert.equal(row.getAttribute("data-ui-sales-checkout-item"), "true");
     assert.equal(row.children.length, 2);
     assert.equal(row.firstElementChild?.getAttribute("data-ui-sale-cart-primary"), "true");
     assert.equal(row.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
     assert.ok(within(row).getByText(product.name));
     assert.ok(within(row).getByText(product.sku));
-    assert.ok(within(row).getByText(`Lista ${product.list_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"} · Mín. ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`));
+    assert.equal(row.querySelector("[data-ui-sales-list-price]")?.textContent, `Precio lista: ${product.list_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
+    assert.equal(row.querySelector("[data-ui-sales-minimum-price]")?.textContent, `Precio mín.: ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
+    assert.ok(within(row).getByRole("textbox", { name: "Precio de venta (Bs)" }));
+    assert.ok(within(row).getByText(/^Subtotal: Bs /));
   }
   assert.equal(within(rows[0]).getByRole("textbox", { name: "Precio de venta (Bs)" }).getAttribute("id"), "sale-final-price-1");
+
+  const settlement = dialog.querySelector("[data-ui-sales-checkout-settlement]")!;
+  const orderedControls = Array.from(settlement.querySelectorAll("input, button"));
+  assert.deepEqual(orderedControls, [
+    within(settlement).getByRole("textbox", { name: "Efectivo recibido" }),
+    within(settlement).getByRole("textbox", { name: "Pago QR" }),
+    within(settlement).getByRole("button", { name: "Descartar borrador" }),
+  ]);
+  assert.equal(settlement.firstElementChild?.getAttribute("data-ui-checkout-total"), "true");
+  assert.deepEqual(Array.from(dialog.querySelectorAll("[data-ui-dialog-actions] button")).map((button) => button.textContent), ["Volver", "Confirmar venta"]);
+});
+
+test("preserves Sales checkout dismissal, focus return, and backdrop no-op", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  const trigger = screen.getByRole("button", { name: "Revisar y cobrar" });
+  assert.equal(document.activeElement, screen.getByRole("textbox", { name: "Precio de venta (Bs)" }));
+
+  await u.click(dialog.parentElement!);
+  assert.ok(screen.getByRole("dialog", { name: "Revisar y cobrar" }));
+  await u.keyboard("{Escape}");
+  assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
+  assert.equal(document.activeElement, trigger);
+
+  await u.click(trigger);
+  await u.click(screen.getByRole("button", { name: "Volver" }));
+  assert.equal(document.activeElement, trigger);
 });
 
 test("disables empty-cart confirmation without invoking the native contract", async () => {
@@ -370,16 +409,23 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   const errorId = finalPrice.getAttribute("aria-describedby");
   assert.ok(errorId);
   assert.equal(document.getElementById(errorId)?.textContent, "El precio de venta no puede ser menor que el precio mínimo de Bs 85,50.");
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart\]\s*\{[^}]*display:\s*grid[^}]*list-style:\s*none/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart-row\]\s*\{[^}]*display:\s*grid[^}]*border-block-end:/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(max-content,\s*auto\)/s);
-  assert.doesNotMatch(style.textContent ?? "", /\[data-ui-sale-cart\][^\n]*table-layout/);
-  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*overflow:\s*hidden/s);
-  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-rail[\s\S]*grid-column:\s*2/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog\]\[data-ui-dialog-layout="checkout"\][\s\S]*overflow:\s*auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart-primary[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-cart-controls[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart\]\s*\{[^}]*display:\s*grid[^}]*list-style:\s*none/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-row\]\s*\{[^}]*display:\s*grid[^}]*border:\s*1px solid/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(9rem,\s*max-content\)[^}]*column-gap:\s*var\(--space-4\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-subtotal\]\s*\{[^}]*min-inline-size:\s*9rem[^}]*justify-self:\s*end[^}]*text-align:\s*end[^}]*white-space:\s*nowrap/s);
+  assert.doesNotMatch(style.textContent ?? "", /^\[data-ui-checkout-content\]/m);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*max-block-size:\s*calc\(100vh - 48px\)[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*320px\)[\s\S]*overflow:\s*hidden/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-sales-checkout-settlement[\s\S]*grid-column:\s*2/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(520px,\s*100%\)[\s\S]*overflow:\s*auto[\s\S]*padding:\s*var\(--space-4\)/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-controls[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart\][^{]*\{[^}]*max-block-size:\s*none[^}]*overflow-y:\s*visible/s);
+});
+
+test("bounds Sales checkout field controls and money inputs to their grid track", () => {
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\] \[data-ui-field-control\]\s*\{[^}]*inline-size:\s*100%[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\] \[data-ui-field="money"\] \[data-ui-field-control\] > input\s*\{[^}]*inline-size:\s*0[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%[^}]*flex:\s*1 1 0/s);
 });
 
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {

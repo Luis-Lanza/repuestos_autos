@@ -110,13 +110,16 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setCheckoutOpen(false); setPersistedDetails(null); void browsePage("", null, 1); setPaymentErrors({}); dispatch({ type: "discard" }); } });
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
+  const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
   const pending = state.confirmation === "pending";
   const addProduct = (product: ProductBrowseResult) => draftDispatch({ type: "add_product", product });
-  const cartItems = state.lines.map((line, index) => createElement("li", { key: line.product_id, "data-ui-sale-cart-row": true },
+  const cartItems = state.lines.map((line, index) => createElement("li", { key: line.product_id, "data-ui-sale-cart-row": true, "data-ui-sales-checkout-item": true },
     createElement("div", { "data-ui-sale-cart-primary": true },
       createElement("div", { "data-ui-sale-product": true },
         createElement("strong", null, line.product_name), createElement("span", { "data-ui-sku": true }, line.sku)),
-      createElement("p", { "data-ui-sale-price-facts": true }, `Lista ${formatBs(line.list_price_centavos)} · Mín. ${formatBs(line.minimum_price_centavos)}`),
+      createElement("div", { "data-ui-sale-price-facts": true },
+        createElement("span", { "data-ui-sales-list-price": true }, `Precio lista: ${formatBs(line.list_price_centavos)}`),
+        createElement("span", { "data-ui-sales-minimum-price": true }, `Precio mín.: ${formatBs(line.minimum_price_centavos)}`)),
       createElement(Action, { variant: "tertiary", "aria-label": `Quitar ${line.product_name}`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar")),
     createElement("div", { "data-ui-sale-cart-controls": true },
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
@@ -124,19 +127,20 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       createElement("p", { "data-ui-sale-subtotal": true }, createElement("span", { "data-ui-money": true }, `Subtotal: ${formatBs(draftLineSubtotalCentavos(line))}`)))));
   const checkoutContent = createElement("div", {
     "data-ui-checkout-content": true,
+    "data-ui-sales-checkout": true,
     "data-ui-density": state.lines.length === 1 ? "sparse" : undefined,
   },
-    createElement("section", { "aria-labelledby": "checkout-cart-heading" },
+    createElement("section", { "aria-labelledby": "checkout-cart-heading", "data-ui-sales-checkout-cart": true },
       createElement("h3", { id: "checkout-cart-heading" }, "Carrito"),
       state.lines.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "El carrito está vacío.") : null,
       createElement("ul", { "aria-label": "Carrito", "data-ui-sale-cart": true }, cartItems)),
 
-    createElement("div", { "data-ui-checkout-rail": true },
+    createElement("div", { "data-ui-checkout-rail": true, "data-ui-sales-checkout-settlement": true },
+      createElement("p", { "data-ui-checkout-total": true, "data-ui-type": "total" }, `Total actual: ${total}`),
       createElement("section", { "aria-labelledby": "checkout-payment-heading" },
         createElement("h3", { id: "checkout-payment-heading" }, "Pago"),
         createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, amount_tendered_centavos: undefined })); dispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }); } }) } as never),
         createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
-      createElement("p", { "data-ui-checkout-total": true, "data-ui-type": "total" }, `Total actual: ${total}`),
       state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador"))));
@@ -147,7 +151,6 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     createElement("div", null,
       createElement("span", null, `${line.quantity} un. × ${formatBs(effectiveDraftUnitPriceCentavos(line))}`),
       createElement("span", { "data-ui-money": true }, formatBs(draftLineSubtotalCentavos(line))))));
-  const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
   return createElement("main", { ref: draftRef, "aria-labelledby": "sale-heading", "aria-busy": pending || undefined, "data-ui-sale": true },
     createElement("header", { "data-ui-sale-header": true },
       createElement("h1", { id: "sale-heading" }, "Ventas"),
