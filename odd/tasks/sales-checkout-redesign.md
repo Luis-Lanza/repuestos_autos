@@ -72,4 +72,5 @@ Redesign the existing `Revisar y cobrar` modal to match the approved desktop and
 - Second native Windows capture showed improvement but retained contact/overlap on the longest monetary row (`117,50Subtotal`).
 - Money-control containment RED: focused suite failed 1/39 because the Sales checkout control/input was not bounded to its grid track. GREEN: scoped flex containment passed 39/39 without changing the three-column layout.
 - Independent containment verification passed: focused 39/39, full frontend 240/240, test typecheck, production build, and `git diff --check`; generic dialogs, compact behavior, breakpoints, and business logic remain unchanged.
+- Money-control containment commit: `25aae73` (`fix(ui): contain Sales checkout money controls`).
 - Final native Windows capture remains pending.
