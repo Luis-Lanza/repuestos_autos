@@ -4,7 +4,7 @@ import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sal
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
-import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
+import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
 import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
 
@@ -140,15 +140,36 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador"))));
+  const summaryLines = state.lines.map((line) => createElement("li", { key: line.product_id, "data-ui-sale-summary-line": true },
+    createElement("strong", null, line.product_name),
+    createElement("span", { "data-ui-sku": true }, line.sku),
+    createElement("button", { type: "button", "data-ui-sale-summary-remove": true, "aria-label": `Quitar ${line.product_name} del resumen de venta`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "×"),
+    createElement("div", null,
+      createElement("span", null, `${line.quantity} un. × ${formatBs(effectiveDraftUnitPriceCentavos(line))}`),
+      createElement("span", { "data-ui-money": true }, formatBs(draftLineSubtotalCentavos(line))))));
+  const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
   return createElement("main", { ref: draftRef, "aria-labelledby": "sale-heading", "aria-busy": pending || undefined, "data-ui-sale": true },
-    createElement("h1", { id: "sale-heading" }, "Ventas"),
+    createElement("header", { "data-ui-sale-header": true },
+      createElement("h1", { id: "sale-heading" }, "Ventas"),
+      createElement("p", null, "Búsqueda y despacho inmediato de repuestos en mostrador")),
     createElement("div", { "data-ui-sale-layout": true },
-      createElement(Panel, { label: "Catálogo" } as never,
-        createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
+      createElement(Panel, { label: "Catálogo de repuestos" } as never,
+        createElement("p", { "data-ui-panel-subtitle": true }, "Búsqueda y despacho inmediato de repuestos en mostrador"),
+        createElement(ProductBrowser, { state: browser, presentation: "sales", loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Resumen de venta" } as never,
         createElement("div", { "data-ui-sale-summary": true },
-          createElement("p", { "data-ui-quantity": true }, `Unidades: ${totalUnits}`),
-          createElement("p", { "data-ui-type": "total" }, `Total: ${total}`),
+          createElement("div", { "data-ui-sale-summary-heading": true },
+            createElement("span", null, "Comprobante en preparación"),
+            createElement("span", { "data-ui-type": "mono" }, lineCount)),
+          state.lines.length ? createElement("div", { "data-ui-sale-summary-lines": true },
+            createElement("span", { "data-ui-type": "overline" }, "Líneas seleccionadas"),
+            createElement("ul", { "aria-label": "Líneas seleccionadas" }, summaryLines)) : createElement("div", { "data-ui-sale-summary-empty": true },
+              createElement("strong", null, "El carrito está vacío"),
+              createElement("p", null, "Agregá productos desde el catálogo para iniciar una venta.")),
+          createElement("div", { "data-ui-sale-summary-totals": true },
+            createElement("p", { "data-ui-quantity": true }, `Cantidad de unidades: ${totalUnits}`),
+            createElement("p", { "data-ui-money": true }, `Subtotal: ${total}`),
+            createElement("p", { "data-ui-type": "total" }, `Total: ${total}`)),
           createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: () => setCheckoutOpen(true) } , "Revisar y cobrar")))),
     createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!pending && !confirming.current) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
 }

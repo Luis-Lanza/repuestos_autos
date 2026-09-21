@@ -68,6 +68,7 @@ export interface ProductBrowserProps {
   allowUnavailableSelection?: boolean;
   disabledProductIds?: ReadonlySet<number>;
   disabled?: boolean;
+  presentation?: "sales";
 }
 export function ProductBrowser(props: ProductBrowserProps) {
   const { state } = props;
@@ -76,7 +77,8 @@ export function ProductBrowser(props: ProductBrowserProps) {
     : state.status === "loading" ? createElement(Feedback, { kind: "loading", "aria-label": props.loadingMessage ?? "Cargando productos…" } as never, props.loadingMessage ?? "Cargando productos…")
     : state.status === "error" ? createElement(Feedback, { kind: "error" } as never, state.error ?? "No se pudo cargar el catálogo.")
       : state.status === "empty" ? createElement(Feedback, { kind: "empty" } as never, `No encontramos productos para “${state.query}”.`) : null;
-  return createElement("div", { "data-ui-product-browser": true },
+  const salesPresentation = props.presentation === "sales";
+  return createElement("div", { "data-ui-product-browser": salesPresentation ? "sales" : true },
     createElement("form", { onSubmit: props.onSubmit, "aria-busy": state.status === "loading", "data-ui-sale-search": true },
       createElement(Field, { kind: "search", label: props.searchLabel ?? "Buscar en el catálogo", control: createElement("input", { value: state.query, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onQueryChange(event.target.value); } }) } as never),
       createElement(Field, { kind: "select", label: "Categoría", control: createElement("select", { value: state.category_id ?? "", disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onCategoryChange(event.target.value ? Number(event.target.value) : null); } }, createElement("option", { value: "" }, "Todas las categorías"), (page?.categories ?? []).map((category) => createElement("option", { key: category.category_id, value: category.category_id }, category.name))) } as never),
@@ -84,10 +86,32 @@ export function ProductBrowser(props: ProductBrowserProps) {
       props.onStockStateChange ? createElement(Field, { kind: "select", label: "Estado del stock", control: createElement("select", { value: state.stock_state, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onStockStateChange?.(event.target.value as ProductStockState); } }, createElement("option", { value: "all" }, "Todo el stock"), createElement("option", { value: "available" }, "Disponible"), createElement("option", { value: "low_stock" }, "Stock bajo"), createElement("option", { value: "out_of_stock" }, "Sin stock"), createElement("option", { value: "alerts" }, "Alertas")) } as never) : null,
       createElement(Action, { variant: "secondary", type: "submit", disabled: props.disabled }, "Buscar")),
     feedback,
-    page && state.status !== "error" && page.products.length ? createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true }, page.products.map((product) => createElement("li", { key: product.product_id },
-      createElement("div", null, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
-      createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
-      createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
-      props.onSelect ? createElement(Action, { variant: "secondary", disabled: props.disabled || props.disabledProductIds?.has(product.product_id) || !props.allowUnavailableSelection && product.available_quantity < 1, onClick: () => props.onSelect?.(product) }, props.actionLabel ?? "Seleccionar") : null))) : null,
+    salesPresentation && page && state.status === "results" ? createElement("div", { role: "status", "data-ui-sales-catalog-status": true },
+      createElement("span", null, `Resultados del catálogo: ${page.total} ${page.total === 1 ? "repuesto" : "repuestos"}`),
+      createElement("span", null, "Filtro: Stock activo")) : null,
+    page && state.status !== "error" && page.products.length ? createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true }, page.products.map((product) => {
+      const selected = props.disabledProductIds?.has(product.product_id) ?? false;
+      const action = props.onSelect ? createElement(Action, {
+        variant: "secondary",
+        disabled: props.disabled || selected || !props.allowUnavailableSelection && product.available_quantity < 1,
+        onClick: () => props.onSelect?.(product),
+      }, salesPresentation && selected ? "Agregado" : props.actionLabel ?? "Seleccionar") : null;
+      return salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
+        createElement("div", { "data-ui-product-identity": true },
+          createElement("strong", null, product.name),
+          createElement("div", { "data-ui-product-facts": true },
+            createElement("span", { "data-ui-sku": true }, product.sku),
+            createElement("span", { "data-ui-product-category": true }, product.category_name),
+            createElement(Badge, { kind: stockKind(product), text: stockText(product) }))),
+        createElement("div", { "data-ui-product-action": true },
+          createElement("span", { "data-ui-unit-price": true },
+            createElement("span", { "data-ui-unit-price-caption": true }, "Precio unitario"),
+            createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos))),
+          action)) : createElement("li", { key: product.product_id },
+            createElement("div", null, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
+            createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
+            createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
+            action);
+    })) : null,
     page && page.total_pages > 1 ? createElement("nav", { "aria-label": "Páginas de productos", "data-ui-product-browser-pages": true }, createElement("span", null, `Página ${page.page} de ${page.total_pages}`), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page <= 1, onClick: () => props.onPageChange(page.page - 1) }, "Anterior"), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page >= page.total_pages, onClick: () => props.onPageChange(page.page + 1) }, "Siguiente")) : null);
 }

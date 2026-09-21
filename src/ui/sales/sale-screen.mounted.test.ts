@@ -27,6 +27,77 @@ async function searchFor(value = "filtro") { const u = user(); await u.type(scre
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); return u; }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
 
+test("renders the approved Sales catalog and read-only empty and active draft summaries", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  assert.equal(screen.getAllByText("Búsqueda y despacho inmediato de repuestos en mostrador").length, 2);
+  assert.equal(catalog.querySelector("[data-ui-product-browser]")?.getAttribute("data-ui-product-browser"), "sales");
+  assert.equal(within(catalog).getByRole("status").textContent, "Resultados del catálogo: 3 repuestosFiltro: Stock activo");
+  const firstProduct = within(catalog).getAllByRole("listitem")[0];
+  assert.equal(firstProduct.querySelector("[data-ui-product-facts]")?.textContent, "FIL-1FiltrosDisponible: 8");
+  assert.equal(firstProduct.querySelector("[data-ui-unit-price-caption]")?.textContent, "Precio unitario");
+
+  const summary = screen.getByRole("region", { name: "Resumen de venta" });
+  assert.ok(within(summary).getByText("Comprobante en preparación"));
+  assert.ok(within(summary).getByText("0 líneas"));
+  assert.ok(within(summary).getByText("El carrito está vacío"));
+  assert.ok(within(summary).getByText("Agregá productos desde el catálogo para iniciar una venta."));
+  assert.ok(within(summary).getByText("Cantidad de unidades: 0"));
+  assert.ok(within(summary).getByText("Subtotal: Bs 0,00"));
+  assert.ok(within(summary).getByText("Total: Bs 0,00"));
+  assert.equal((within(summary).getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, true);
+
+  const u = user();
+  await u.click(within(catalog).getAllByRole("button", { name: "Agregar" })[0]);
+  const added = within(catalog).getByRole("button", { name: "Agregado" }) as HTMLButtonElement;
+  assert.equal(added.disabled, true);
+  assert.ok(within(summary).getByText("1 línea"));
+  const line = within(summary).getByRole("listitem");
+  assert.ok(within(line).getByText("Filtro aceite"));
+  assert.ok(within(line).getByText("FIL-1"));
+  assert.ok(within(line).getByText("1 un. × Bs 85,50"));
+  assert.ok(within(line).getByText("Bs 85,50"));
+  assert.ok(within(summary).getByText("Cantidad de unidades: 1"));
+  assert.ok(within(summary).getByText("Subtotal: Bs 85,50"));
+  assert.ok(within(summary).getByText("Total: Bs 85,50"));
+  assert.equal(within(summary).queryByRole("spinbutton"), null);
+  assert.equal(within(summary).queryByRole("textbox"), null);
+  assert.equal((within(summary).getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, false);
+});
+
+test("removes products directly from the read-only Sales summary", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
+  render(createElement(SaleScreen));
+  const u = await searchFor();
+  const catalog = screen.getByRole("region", { name: "Catálogo de repuestos" });
+  const summary = screen.getByRole("region", { name: "Resumen de venta" });
+  const add = within(catalog).getAllByRole("button", { name: "Agregar" });
+  await u.click(add[0]);
+  await u.click(add[1]);
+
+  const lines = within(summary).getAllByRole("listitem");
+  const firstRemove = within(lines[0]).getByRole("button", { name: "Quitar Filtro aceite del resumen de venta" });
+  const secondRemove = within(lines[1]).getByRole("button", { name: "Quitar Filtro premium del resumen de venta" });
+  assert.equal(firstRemove.textContent, "×");
+  assert.equal(secondRemove.textContent, "×");
+  assert.equal(within(summary).queryByRole("spinbutton"), null);
+  assert.equal(within(summary).queryByRole("textbox"), null);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-summary-remove\][^}]*inline-size:\s*var\(--size-control-default\)[^}]*min-block-size:\s*var\(--size-control-default\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sale-summary-line\][^}]*position:\s*relative/s);
+
+  await u.click(firstRemove);
+  assert.equal(within(summary).queryByText("Filtro aceite"), null);
+  assert.ok(within(summary).getByText("Filtro premium"));
+  assert.ok(within(summary).getByText("1 línea"));
+
+  await u.click(secondRemove);
+  assert.ok(within(summary).getByText("El carrito está vacío"));
+  assert.ok(within(summary).getByText("0 líneas"));
+  assert.equal((within(summary).getByRole("button", { name: "Revisar y cobrar" }) as HTMLButtonElement).disabled, true);
+});
+
 test("automatically loads the active first page once on mount", async () => {
   const calls: unknown[] = [];
   mockIPC((command, payload) => {
@@ -43,10 +114,11 @@ test("contains the product result viewport between search and pagination without
   const manyProducts = Array.from({ length: 100 }, (_, index) => ({ ...products[0], product_id: index + 1, sku: `FIL-${index + 1}` }));
   mockIPC((command) => command === "browse_products_command" ? { ...browse(manyProducts), total_pages: 5 } : Promise.reject(new Error("unexpected command")));
   render(createElement(SaleScreen));
-  const catalog = await screen.findByRole("region", { name: "Catálogo" });
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
   const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(list.getAttribute("data-ui-product-browser-list"), "true");
-  assert.equal(list.previousElementSibling?.tagName, "FORM");
+  assert.equal(list.previousElementSibling?.getAttribute("data-ui-sales-catalog-status"), "true");
+  assert.equal(list.previousElementSibling?.previousElementSibling?.tagName, "FORM");
   assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
   assert.equal(within(catalog).getAllByRole("listitem").length, 100);
   assert.ok(screen.getByRole("region", { name: "Resumen de venta" }));
@@ -65,7 +137,7 @@ test("shows every discovery state and ignores reverse-order search completion", 
   screen.getByText("Buscando productos…");
   const heading = screen.getByRole("heading", { level: 1, name: "Ventas" });
   assert.equal(heading.textContent, "Ventas"); assert.equal(heading.getAttribute("aria-label"), null); assert.equal(screen.getAllByRole("heading", { level: 1 }).length, 1);
-  assert.deepEqual(screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent), ["Catálogo", "Resumen de venta"]);
+  assert.deepEqual(screen.getAllByRole("heading", { level: 2 }).map((node) => node.textContent), ["Catálogo de repuestos", "Resumen de venta"]);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sale-layout[\s\S]*grid-template-columns: minmax\(0, 1fr\)/);
   const u = await searchFor("viejo"); screen.getByText("Buscando productos…");
   await u.clear(screen.getByRole("searchbox")); await u.type(screen.getByRole("searchbox"), "nuevo{Enter}");
@@ -128,9 +200,9 @@ test("renders stock actions and manages whole quantities, subtotals, total, remo
   assert.equal(dialog.querySelector("[data-ui-dialog-actions]")?.getAttribute("data-ui-dialog-actions"), "true");
   screen.getByRole("heading", { name: "Carrito" }); screen.getAllByText("FIL-1"); screen.getAllByText("Bs 85,50"); screen.getByText("Total: Bs 85,50");
   const quantity = screen.getByRole("spinbutton", { name: "Cantidad de Filtro aceite" }); fireEvent.change(quantity, { target: { value: "2" } });
-  screen.getByText("Subtotal: Bs 171,00"); screen.getByText("Total: Bs 171,00");
+  within(dialog).getByText("Subtotal: Bs 171,00"); screen.getByText("Total: Bs 171,00");
   assert.equal(rail?.querySelector("[data-ui-checkout-total]")?.textContent, "Total actual: Bs 171,00");
-  within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("Unidades: 2");
+  within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("Cantidad de unidades: 2");
   quantity.focus(); fireEvent.change(quantity, { target: { value: "0" } }); screen.getByText("Ingresá una cantidad entera mayor que cero."); assert.equal(document.activeElement, quantity);
   await u.click(screen.getByRole("button", { name: "Quitar Filtro aceite" })); screen.getByText("El carrito está vacío.");
   await u.click(screen.getByRole("button", { name: "Volver" }));
@@ -257,9 +329,10 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   mockIPC((command, payload) => command === "browse_products_command" ? (searches++, browse(products)) : (confirms++, submitted = payload, pending.promise));
   render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
   fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" })); fireEvent.click(screen.getByRole("button", { name: "Confirmando…" }));
-  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar Filtro aceite" }), screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
+  const summaryRemove = within(screen.getByRole("region", { name: "Resumen de venta" })).getByRole("button", { name: "Quitar Filtro aceite del resumen de venta" });
+  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar Filtro aceite" }), summaryRemove, screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
-  fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.change(controls[5], { target: { value: "1" } }); fireEvent.change(controls[6], { target: { value: "2" } }); fireEvent.click(controls[7]);
+  fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.click(controls[5]); fireEvent.change(controls[6], { target: { value: "1" } }); fireEvent.change(controls[7], { target: { value: "2" } }); fireEvent.click(controls[8]);
   assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
   assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
