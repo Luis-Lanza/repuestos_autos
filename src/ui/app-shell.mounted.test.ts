@@ -136,6 +136,8 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /grid-template-columns:\s*var\(--size-shell-sidebar\)\s+minmax\(0,\s*1fr\)/);
   assert.match(source, /data-ui-shell-sidebar[^}]*color:\s*var\(--color-text\)[^}]*background:\s*var\(--color-surface\)[^}]*border-inline-end:\s*1px solid var\(--color-border\)/s);
   assert.match(source, /data-ui-shell-navigation[^}]*button\[aria-current="page"\][^}]*color:\s*var\(--color-text-inverse\)[^}]*background:\s*var\(--color-action\)/s);
+  assert.match(source, /\[data-ui-inventory-cue\]\s*\{[^}]*color:\s*var\(--color-danger\)/s);
+  assert.match(source, /\[data-ui-shell-navigation\] button\[aria-current="page"\] \[data-ui-inventory-cue\]\s*\{[^}]*color:\s*inherit/s);
   assert.match(source, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar:\s*176px/);
   assert.match(source, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0, 1\.85fr\) minmax\(260px,\s*1fr\)/);
   assert.match(source, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(280px,\s*4fr\) minmax\(0,\s*7fr\)/);

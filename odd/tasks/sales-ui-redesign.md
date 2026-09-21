@@ -38,6 +38,7 @@ First implementation slice only:
 - [x] T4 Perform structural readback and review the final diff against scope.
 - [ ] T5 Validate the rendered desktop and compact result against the approved PNGs in the native app.
 - [x] T6 Add an accessible inline remove action to each active summary line and verify it.
+- [x] T7 Restore readable inventory-alert cue contrast in both inactive and active navigation states.
 
 ## Acceptance criteria
 - Sales matches the approved desktop and compact composition closely within the existing React architecture.
@@ -46,6 +47,7 @@ First implementation slice only:
 - Products already in the draft show a disabled `Agregado` action in Sales.
 - Other ProductBrowser callers preserve their current markup and behavior.
 - Checkout behavior and markup remain unchanged.
+- The inventory alert cue remains readable on the light sidebar and on the active navigation surface.
 
 ## Progress
 - 2026-09-21: User authorized beginning the redesign with the first Sales slice.
@@ -77,4 +79,8 @@ First implementation slice only:
 - T6 GREEN: added a summary-scoped 44px `×` control with a unique accessible name, existing pending guard, and existing `remove_product` transition; focused suite passed 21/21.
 - T6 independent verification: focused 21/21, full frontend 238/238, test typecheck, and `git diff --check` passed.
 - T6 work-unit commit: `f0b6506` (`feat(ui): remove items from Sales summary`).
+- T7 RED: app-shell mounted suite failed 1/6 because the inactive cue still used inverse text.
+- T7 GREEN: the inactive cue now uses `--color-danger` and the active Inventory cue inherits inverse navigation text; focused suite passed 6/6.
+- T7 independent verification: focused 6/6, full frontend 238/238, test typecheck, production build, and `git diff --check` passed. The existing mixed static/dynamic Tauri `core.js` import warning remains non-blocking.
+- T7 implementation is awaiting native visual confirmation.
 - Compact native visual comparison remains pending on Windows.
