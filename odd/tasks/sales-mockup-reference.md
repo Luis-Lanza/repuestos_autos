@@ -32,6 +32,7 @@ Track the approved Sales visual references in the repository so implementation a
 - T3: completed by delegated writer; four HTML visual references and the shared `DESIGN.md` copied byte-for-byte into `reference-source/`.
 - T4: independently verified: exactly five source documentation files, README restrictions and authority link are present, and no ZIP artifacts were added.
 - 2026-09-21: User authorized commit and push to the feature branch for Windows validation.
+- Work-unit commit: `0344b88` (`docs(design): track approved Sales mockups`).
 
 ## Acceptance criteria
 - Four approved PNGs have clear, stable names under `docs/design/sales-pos/`.

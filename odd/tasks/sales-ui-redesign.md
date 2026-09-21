@@ -70,4 +70,5 @@ First implementation slice only:
 - Final `git diff --check`: passed.
 - Final structural readback: generic Catalog/Inventory search and rows preserved; Sales-only search/row rules are scoped; checkout, flows, IPC, and Rust untouched.
 - Candidate: 5 tracked files, 144 insertions, 31 deletions (175 changed lines).
-- Native rendered visual comparison remains pending.
+- Work-unit commit: `4ed3df2` (`feat(ui): redesign Sales catalog and summary`).
+- Native rendered visual comparison remains pending on Windows.
