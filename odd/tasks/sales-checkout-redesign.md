@@ -65,4 +65,7 @@ Redesign the existing `Revisar y cobrar` modal to match the approved desktop and
 - Structural readback confirmed Sales-scoped CSS, unchanged action/confirmation wiring, no staged changes, and no edits to generic dialogs, `sale-flow.ts`, commands, IPC, Rust, SQLite, persistence, or dependencies.
 - Existing non-blocking Vite warning: mixed static/dynamic Tauri API imports.
 - Work-unit commit: `e288e75` (`feat(ui): redesign Sales checkout modal`).
-- Native Windows visual validation remains pending.
+- Native Windows desktop review found one blocking geometry defect: the final-price value and line subtotal overlapped in every cart row with realistic product names.
+- Overlap correction RED: focused suite failed 1/38 on the missing collision-safe grid contract. GREEN: quantity, final price, and subtotal now use independent tracks with explicit gap/minimum width; focused suite passed 38/38.
+- Overlap correction independent verification passed: focused 38/38, full frontend 239/239, test typecheck, production build, and `git diff --check`. Compact stacking and dialog-only scrolling remain intact.
+- Native Windows screenshot confirmation of the corrected geometry remains pending.

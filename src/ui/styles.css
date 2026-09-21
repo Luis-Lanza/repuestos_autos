@@ -456,9 +456,9 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-checkout] [data-ui-sale-price-facts] { display: flex; min-inline-size: 0; flex-wrap: wrap; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-sales-checkout] [data-ui-sales-minimum-price] { padding-inline: var(--space-2); border-radius: var(--radius-control); background: var(--color-surface-subtle); }
 [data-ui-sales-checkout] [data-ui-sale-cart-primary] [data-ui-action] { min-inline-size: max-content; }
-[data-ui-sales-checkout] [data-ui-sale-cart-controls] { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 1fr) minmax(max-content, auto); min-inline-size: 0; gap: var(--space-3); align-items: end; padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); }
+[data-ui-sales-checkout] [data-ui-sale-cart-controls] { display: grid; grid-template-columns: minmax(7rem, 1fr) minmax(10rem, 1fr) minmax(9rem, max-content); min-inline-size: 0; row-gap: var(--space-3); column-gap: var(--space-4); align-items: end; padding-block-start: var(--space-3); border-block-start: 1px solid var(--color-border); }
 [data-ui-sales-checkout] [data-ui-sale-cart-controls] [data-ui-field] { min-inline-size: 0; margin: 0; }
-[data-ui-sales-checkout] [data-ui-sale-subtotal] { margin: 0; padding-block: var(--space-3); text-align: end; white-space: nowrap; }
+[data-ui-sales-checkout] [data-ui-sale-subtotal] { min-inline-size: 9rem; justify-self: end; margin: 0; padding-block: var(--space-3); text-align: end; white-space: nowrap; }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
 [data-ui-persisted-summary] {
@@ -640,7 +640,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-sales-checkout] [data-ui-sale-cart-primary] [data-ui-action] { grid-column: 2; grid-row: 1 / span 2; }
   [data-ui-sales-checkout] [data-ui-sale-cart-controls] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-sales-checkout] [data-ui-sale-cart] { max-block-size: none; overflow-y: visible; }
-  [data-ui-sales-checkout] [data-ui-sale-subtotal] { padding-block: 0; text-align: start; }
+  [data-ui-sales-checkout] [data-ui-sale-subtotal] { min-inline-size: 0; justify-self: start; padding-block: 0; text-align: start; }
   [data-ui-persisted-summary] {
     block-size: auto;
     min-block-size: auto;

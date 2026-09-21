@@ -412,7 +412,8 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart\]\s*\{[^}]*display:\s*grid[^}]*list-style:\s*none/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-row\]\s*\{[^}]*display:\s*grid[^}]*border:\s*1px solid/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(max-content,\s*auto\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(9rem,\s*max-content\)[^}]*column-gap:\s*var\(--space-4\)/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-subtotal\]\s*\{[^}]*min-inline-size:\s*9rem[^}]*justify-self:\s*end[^}]*text-align:\s*end[^}]*white-space:\s*nowrap/s);
   assert.doesNotMatch(style.textContent ?? "", /^\[data-ui-checkout-content\]/m);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(1040px,\s*100%\)[\s\S]*max-block-size:\s*calc\(100vh - 48px\)[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*320px\)[\s\S]*overflow:\s*hidden/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-sales-checkout-settlement[\s\S]*grid-column:\s*2/s);
