@@ -40,7 +40,7 @@ Redesign the existing `Revisar y cobrar` modal to match the approved desktop and
 - [x] T1 Add focused mounted expectations for the approved Sales checkout structure and preserved interaction contracts.
 - [x] T2 Implement the Sales-owned checkout markup and scoped desktop/compact styling.
 - [x] T3 Run independent focused/full verification, typecheck, build, diff check, and structural scope review.
-- [ ] T4 Validate the rendered modal against desktop and compact references in the native Windows app.
+- [x] T4 Validate the rendered modal against desktop and compact references in the native Windows app.
 
 ## Acceptance criteria
 - Desktop modal presents an independently scrolling cart and a visually grouped 280–320px settlement rail.
@@ -73,4 +73,5 @@ Redesign the existing `Revisar y cobrar` modal to match the approved desktop and
 - Money-control containment RED: focused suite failed 1/39 because the Sales checkout control/input was not bounded to its grid track. GREEN: scoped flex containment passed 39/39 without changing the three-column layout.
 - Independent containment verification passed: focused 39/39, full frontend 240/240, test typecheck, production build, and `git diff --check`; generic dialogs, compact behavior, breakpoints, and business logic remain unchanged.
 - Money-control containment commit: `25aae73` (`fix(ui): contain Sales checkout money controls`).
-- Final native Windows capture remains pending.
+- Native Windows validation approved after the containment fix: price/subtotal separation and compact rendering are correct.
+- Sales checkout redesign slice closed and ready for PR.
