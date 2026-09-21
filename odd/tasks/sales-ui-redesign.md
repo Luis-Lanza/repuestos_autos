@@ -36,7 +36,7 @@ First implementation slice only:
 - [x] T2 Implement the Sales-scoped shell/catalog/summary visual slice.
 - [x] T3 Run focused and full frontend verification, typecheck, and build.
 - [x] T4 Perform structural readback and review the final diff against scope.
-- [ ] T5 Validate the rendered desktop and compact result against the approved PNGs in the native app.
+- [x] T5 Validate the rendered desktop and compact result against the approved PNGs in the native app.
 - [x] T6 Add an accessible inline remove action to each active summary line and verify it.
 - [x] T7 Restore readable inventory-alert cue contrast in both inactive and active navigation states.
 
@@ -82,5 +82,6 @@ First implementation slice only:
 - T7 RED: app-shell mounted suite failed 1/6 because the inactive cue still used inverse text.
 - T7 GREEN: the inactive cue now uses `--color-danger` and the active Inventory cue inherits inverse navigation text; focused suite passed 6/6.
 - T7 independent verification: focused 6/6, full frontend 238/238, test typecheck, production build, and `git diff --check` passed. The existing mixed static/dynamic Tauri `core.js` import warning remains non-blocking.
-- T7 work-unit commit: `3e0c98b` (`fix(ui): restore inventory cue contrast`). Native visual confirmation remains pending.
-- Compact native visual comparison remains pending on Windows.
+- T7 work-unit commit: `3e0c98b` (`fix(ui): restore inventory cue contrast`).
+- Native Windows validation approved: desktop and compact Sales layouts, empty and active summaries, direct line removal, and inactive/active inventory cue contrast all render and behave correctly.
+- First Sales redesign slice closed; checkout redesign remains a separate future slice.
