@@ -82,5 +82,5 @@ First implementation slice only:
 - T7 RED: app-shell mounted suite failed 1/6 because the inactive cue still used inverse text.
 - T7 GREEN: the inactive cue now uses `--color-danger` and the active Inventory cue inherits inverse navigation text; focused suite passed 6/6.
 - T7 independent verification: focused 6/6, full frontend 238/238, test typecheck, production build, and `git diff --check` passed. The existing mixed static/dynamic Tauri `core.js` import warning remains non-blocking.
-- T7 implementation is awaiting native visual confirmation.
+- T7 work-unit commit: `3e0c98b` (`fix(ui): restore inventory cue contrast`). Native visual confirmation remains pending.
 - Compact native visual comparison remains pending on Windows.
