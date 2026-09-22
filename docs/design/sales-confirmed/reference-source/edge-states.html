@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+
+<html lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Hoja de Variantes — Estados Límite y Reglas de Persistencia (Frame E) — Repuestos Autos</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "border-default": "#E4DDD2",
+            "border-strong": "#8D8177",
+            "surface": "#FFFFFF",
+            "surface-subtle": "#F8F3EA",
+            "surface-container": "#F2EDE4",
+            "surface-container-low": "#FAF6F0",
+            "surface-container-high": "#ECE8DF",
+            "surface-canvas": "#F4EFE6",
+            "text-base": "#29252B",
+            "text-muted": "#625A63",
+            "primary": "#3D3042",
+            "primary-hover": "#2B222F",
+            "tertiary": "#142312",
+            "tertiary-fixed": "#D5E8CC",
+            "warning-edge": "#994626",
+            "warning-bg": "#FDF2EC",
+            "focus-copper": "#C56845"
+          },
+          fontFamily: {
+            "segoe": ["Segoe UI", "sans-serif"],
+            "mono-sku": ["Cascadia Mono", "Consolas", "Courier New", "monospace"]
+          }
+        }
+      }
+    };
+  </script>
+<style>
+    @layer base {
+      html, body {
+        margin: 0;
+        padding: 0;
+        background-color: #F4EFE6;
+      }
+    }
+    :focus-visible {
+      outline: 3px solid #C56845 !important;
+      outline-offset: 2px !important;
+    }
+  </style>
+</head>
+<body class="bg-surface-canvas font-segoe text-text-base antialiased min-h-screen">
+<div class="flex min-h-screen">
+<!-- 1. Sidebar desktop estándar de 208px con padding 24px (p-6) -->
+<aside class="fixed left-0 top-0 h-full w-[208px] bg-surface border-r border-border-default z-30 flex flex-col justify-between p-6 select-none box-border">
+<div class="flex flex-col gap-6">
+<!-- Marca -->
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center text-white shrink-0">
+<span class="material-symbols-outlined text-[20px]">directions_car</span>
+</div>
+<span class="font-semibold text-[17px] text-text-base leading-tight">Repuestos Autos</span>
+</div>
+<!-- Navegación -->
+<nav aria-label="Navegación principal" class="flex flex-col gap-1.5"><a class="flex items-center gap-3 min-h-[44px] px-3 text-text-muted hover:bg-surface-container rounded transition-colors text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">grid_view</span>
+<span class="">Dashboard</span>
+</a>
+<a aria-current="page" class="flex items-center gap-3 min-h-[44px] px-3 bg-primary text-white font-semibold rounded text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">point_of_sale</span>
+<span class="">Ventas</span>
+</a>
+<a class="flex items-center gap-3 min-h-[44px] px-3 text-text-muted hover:bg-surface-container rounded transition-colors text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">inventory_2</span>
+<span class="">Inventario</span>
+</a>
+<a class="flex items-center gap-3 min-h-[44px] px-3 text-text-muted hover:bg-surface-container rounded transition-colors text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">auto_stories</span>
+<span class="">Catálogo</span>
+</a>
+<a class="flex items-center gap-3 min-h-[44px] px-3 text-text-muted hover:bg-surface-container rounded transition-colors text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">add_box</span>
+<span class="">Alta de productos</span>
+</a>
+<a class="flex items-center gap-3 min-h-[44px] px-3 text-text-muted hover:bg-surface-container rounded transition-colors text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">receipt_long</span>
+<span class="">Historial de ventas</span>
+</a>
+<a class="flex items-center gap-3 min-h-[44px] px-3 text-text-muted hover:bg-surface-container rounded transition-colors text-[14px]" href="#">
+<span class="material-symbols-outlined text-[20px]">settings_backup_restore</span>
+<span class="">Copia y restauración</span>
+</a></nav>
+</div>
+</aside>
+<!-- Canvas de fondo con padding 24px (p-6), sin topbar adicional -->
+<main class="ml-[208px] flex-1 p-6 flex justify-center items-start">
+<!-- Comprobante central: inline-size min(1040px, 100%), padding 24px, bg #FFFFFF, border 1px solid #E4DDD2, border-radius 10px, shadow -->
+<article class="w-full max-w-[1040px] bg-surface border border-border-default rounded-[10px] p-6 shadow-[0_12px_32px_rgba(41,37,43,0.18)] flex flex-col gap-6">
+<!-- Encabezado con H1 accesible y check -->
+<header class="flex flex-col gap-2 pb-5 border-b border-border-default"><div class="flex items-center gap-2 mb-1"><span class="text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded bg-primary text-white font-mono-sku">SPECIFICATION SHEET — FRAME E</span><span class="text-[11px] font-semibold text-text-muted bg-surface-container px-2 py-1 rounded border border-border-default">Documento Técnico de Referencia</span></div><div class="flex items-center gap-3"><div aria-hidden="true" class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center shrink-0 border border-border-default"><span class="material-symbols-outlined text-primary text-[24px]">assignment_turned_in</span></div><h1 class="text-[24px] font-bold text-text-base leading-tight tracking-tight m-0 focus:outline-none" tabindex="-1">Hoja de Variantes — Estados Límite y Reglas de Persistencia (Frame E)</h1></div><p class="text-[14px] text-text-muted m-0 leading-normal">Matriz canónica de especificación técnica para arquitecturas de persistencia de venta y visualización de estados en solo lectura.</p></header>
+<!-- Matriz de Demostración de Variantes de Estados Límite (Edge Cases canónicos) -->
+<section aria-label="Variantes de demostración de arquitectura de datos" class="flex flex-col gap-5"><!-- VARIANTE 1: Pago mixto (Efectivo + QR) -->
+<div class="border border-border-default rounded-lg p-5 bg-surface flex flex-col gap-4">
+<div class="flex items-center justify-between flex-wrap gap-2 border-b border-border-default pb-2">
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-surface-container text-text-muted font-mono-sku">Variante 1</span>
+<h2 class="text-[16px] font-semibold text-text-base m-0">1. Pago mixto (Efectivo + QR)</h2>
+</div>
+<span class="text-[12px] font-medium text-text-muted">Venta #00488</span>
+</div>
+<!-- Artículos confirmados con detalle completo -->
+<div class="flex flex-col gap-2">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Artículos confirmados</span>
+<div class="bg-surface-container-low rounded p-3 flex flex-col gap-3 border border-border-default">
+<div class="flex items-start justify-between gap-4 pb-2 border-b border-border-default/60">
+<div class="flex flex-col gap-1">
+<span class="text-[14px] font-semibold text-text-base">Filtro de Combustible Blindado Diesel Alta Retención</span>
+<div class="flex flex-wrap items-center gap-3 text-[12px] text-text-muted font-mono-sku">
+<span>ID artículo: 88210</span>
+<span>•</span>
+<span>SKU: FLT-DSL-8821</span>
+<span>•</span>
+<span>Cant: 1 ud.</span>
+<span>•</span>
+<span>Precio unit.: Bs 200,00</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="text-[11px] uppercase tracking-wider text-text-muted">Subtotal</span>
+<span class="text-[14px] font-semibold tabular-nums text-text-base">Bs 200,00</span>
+</div>
+</div>
+<div class="flex items-start justify-between gap-4">
+<div class="flex flex-col gap-1">
+<span class="text-[14px] font-semibold text-text-base">Sensor de Presión de Riel Common Rail - Precisión Reforzada</span>
+<div class="flex flex-wrap items-center gap-3 text-[12px] text-text-muted font-mono-sku">
+<span>ID artículo: 40192</span>
+<span>•</span>
+<span>SKU: SNR-RAIL-4019</span>
+<span>•</span>
+<span>Cant: 1 ud.</span>
+<span>•</span>
+<span>Precio unit.: Bs 242,50</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="text-[11px] uppercase tracking-wider text-text-muted">Subtotal</span>
+<span class="text-[14px] font-semibold tabular-nums text-text-base">Bs 242,50</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Pagos confirmados y total persistido -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+<div class="bg-surface-container rounded p-4 flex flex-col gap-2 border border-border-default">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Pagos confirmados</span>
+<dl class="m-0 flex flex-col gap-1.5 text-[14px]">
+<div class="flex justify-between">
+<dt class="text-text-muted">Efectivo aplicado:</dt>
+<dd class="tabular-nums font-medium text-text-base m-0">Bs 200,00</dd>
+</div>
+<div class="flex justify-between">
+<dt class="text-text-muted">Efectivo recibido:</dt>
+<dd class="tabular-nums font-medium text-text-base m-0">Bs 250,00</dd>
+</div>
+<div class="flex justify-between border-t border-border-default pt-1 text-text-base">
+<dt class="font-semibold">Cambio:</dt>
+<dd class="tabular-nums font-semibold m-0">Bs 50,00</dd>
+</div>
+<div class="flex justify-between border-t border-border-default pt-1">
+<dt class="text-text-muted">Pago QR:</dt>
+<dd class="tabular-nums font-medium text-text-base m-0">Bs 242,50</dd>
+</div>
+</dl>
+</div>
+<div class="bg-surface-subtle border border-border-default rounded p-4 flex flex-col justify-center items-start">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Total persistido</span>
+<div class="text-[28px] font-bold tabular-nums text-text-base tracking-tight mt-1">Bs 442,50</div>
+</div>
+</div>
+</div>
+<!-- VARIANTE 2: QR-only -->
+<div class="border border-border-default rounded-lg p-5 bg-surface flex flex-col gap-4">
+<div class="flex items-center justify-between flex-wrap gap-2 border-b border-border-default pb-2">
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-surface-container text-text-muted font-mono-sku">Variante 2</span>
+<h2 class="text-[16px] font-semibold text-text-base m-0">2. QR-only (únicamente Pago QR, sin filas de efectivo ni cambio)</h2>
+</div>
+<span class="text-[12px] font-medium text-text-muted">Venta #00489</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="bg-surface-container rounded p-4 flex flex-col gap-2 border border-border-default">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Pagos confirmados</span>
+<dl class="m-0 flex flex-col gap-1.5 text-[14px]">
+<div class="flex justify-between items-center py-1">
+<dt class="text-text-muted">Pago QR:</dt>
+<dd class="tabular-nums font-bold text-text-base m-0 text-[16px]">Bs 28.450,00</dd>
+</div>
+</dl>
+<p class="m-0 text-[11px] text-text-muted italic border-t border-border-default pt-2">Regla de persistencia: Sin líneas de efectivo recibido, efectivo aplicado ni cambio.</p>
+</div>
+<div class="bg-surface-subtle border border-border-default rounded p-4 flex flex-col justify-center items-start">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Total persistido</span>
+<div class="text-[28px] font-bold tabular-nums text-text-base tracking-tight mt-1">Bs 28.450,00</div>
+</div>
+</div>
+</div>
+<!-- VARIANTE 3: Efectivo con Cambio: Bs 0,00 explícito -->
+<div class="border border-border-default rounded-lg p-5 bg-surface flex flex-col gap-4">
+<div class="flex items-center justify-between flex-wrap gap-2 border-b border-border-default pb-2">
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-surface-container text-text-muted font-mono-sku">Variante 3</span>
+<h2 class="text-[16px] font-semibold text-text-base m-0">3. Efectivo con Cambio: Bs 0,00 explícito</h2>
+</div>
+<span class="text-[12px] font-medium text-text-muted">Venta #00490</span>
+</div>
+<!-- Artículos confirmados para Variante 3 con hechos completos de línea -->
+<div class="flex flex-col gap-2">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Artículos confirmados</span>
+<div class="bg-surface-container-low rounded p-3 flex flex-col gap-2 border border-border-default">
+<div class="flex items-start justify-between gap-4">
+<div class="flex flex-col gap-1">
+<span class="text-[14px] font-semibold text-text-base">Kit Distribución Dentada Motor 2.0L Reforzado</span>
+<div class="flex flex-wrap items-center gap-3 text-[12px] text-text-muted font-mono-sku">
+<span>ID artículo: 31054</span>
+<span>•</span>
+<span>SKU: DIST-KIT-3105</span>
+<span>•</span>
+<span>Cant: 2 uds.</span>
+<span>•</span>
+<span>Precio unit.: Bs 600,00</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="text-[11px] uppercase tracking-wider text-text-muted">Subtotal</span>
+<span class="text-[14px] font-semibold tabular-nums text-text-base">Bs 1.200,00</span>
+</div>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="bg-surface-container rounded p-4 flex flex-col gap-2 border border-border-default">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Pagos confirmados</span>
+<dl class="m-0 flex flex-col gap-1.5 text-[14px]">
+<div class="flex justify-between">
+<dt class="text-text-muted">Efectivo aplicado:</dt>
+<dd class="tabular-nums font-medium text-text-base m-0">Bs 1.200,00</dd>
+</div>
+<div class="flex justify-between">
+<dt class="text-text-muted">Efectivo recibido:</dt>
+<dd class="tabular-nums font-medium text-text-base m-0">Bs 1.200,00</dd>
+</div>
+<div class="flex justify-between border-t border-border-default pt-1 font-semibold text-text-base">
+<dt>Cambio:</dt>
+<dd class="tabular-nums m-0 font-bold text-text-base">Bs 0,00</dd>
+</div>
+</dl>
+</div>
+<div class="bg-surface-subtle border border-border-default rounded p-4 flex flex-col justify-center items-start">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Total persistido</span>
+<div class="text-[28px] font-bold tabular-nums text-text-base tracking-tight mt-1">Bs 1.200,00</div>
+</div>
+</div>
+</div>
+<!-- VARIANTE 4: Fecha no disponible (sin FALLBACK) -->
+<div class="border border-border-default rounded-lg p-5 bg-surface flex flex-col gap-4">
+<div class="flex items-center justify-between flex-wrap gap-2 border-b border-border-default pb-2">
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-surface-container text-text-muted font-mono-sku">Variante 4</span>
+<h2 class="text-[16px] font-semibold text-text-base m-0">4. Fecha no disponible</h2>
+</div>
+<span class="text-[12px] font-medium text-text-muted">Registro de solo lectura</span>
+</div>
+<div class="bg-surface-container-low rounded p-4 border border-border-default flex flex-col gap-3">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Identidad de venta</span>
+<dl class="m-0 grid grid-cols-1 sm:grid-cols-2 gap-4">
+<div class="flex flex-col">
+<dt class="text-[13px] text-text-muted">Venta:</dt>
+<dd class="text-[18px] font-semibold text-text-base m-0">Venta #00491</dd>
+</div>
+<div class="flex flex-col">
+<dt class="text-[13px] text-text-muted">Fecha y hora:</dt>
+<dd class="text-[15px] font-medium text-text-base m-0">Fecha no disponible</dd>
+</div>
+</dl>
+</div>
+</div>
+<!-- VARIANTE 5: Propuesta 'Sin datos de pago' rotulada explícitamente -->
+<div class="border border-warning-edge/40 bg-warning-bg/30 rounded-lg p-5 flex flex-col gap-4">
+<div class="flex items-center justify-between flex-wrap gap-2 border-b border-warning-edge/20 pb-2">
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-warning-edge text-white font-mono-sku">Variante 5</span>
+<h2 class="text-[16px] font-semibold text-text-base m-0">5. Propuesta de diseño — Pendiente de aprobación de producto</h2>
+</div>
+<span class="text-[12px] font-semibold uppercase tracking-wide text-warning-edge bg-white px-2.5 py-1 rounded border border-warning-edge/30">Propuesta de diseño — Pendiente de aprobación de producto</span>
+</div>
+<div class="flex flex-col sm:flex-row gap-4">
+<div class="flex flex-col justify-center min-w-[180px] bg-surface rounded p-4 border border-border-default">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Identidad de venta</span>
+<span class="text-[18px] font-semibold text-text-base mt-1">Venta #00492</span>
+</div>
+<div class="flex-1 bg-surface rounded p-4 border border-border-default flex flex-col justify-center gap-1.5">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Pagos confirmados</span>
+<div class="text-[15px] font-semibold text-text-base">Sin datos de pago</div>
+</div>
+</div>
+</div></section>
+<!-- Botón semántico "Nueva venta" (>= 48px, fondo #3D3042) -->
+<footer class="pt-2"><button class="w-full min-h-[48px] bg-primary hover:bg-primary-hover active:bg-primary text-white font-semibold text-[15px] rounded flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm" type="button">
+<span class="material-symbols-outlined text-[20px]">add_circle</span>
+<span class="">Nueva venta</span>
+</button>
+<aside aria-label="Contratos de accesibilidad y notas técnicas de plataforma" class="mt-6 p-4 rounded bg-surface-subtle border border-border-default text-text-muted text-[13px] leading-relaxed flex flex-col gap-2"><span class="font-bold uppercase tracking-wider text-[11px] text-text-base">Contratos de Accesibilidad y Hoja de Especificación Técnica</span><ul class="m-0 p-0 list-none flex flex-col gap-1"><li class="">• Documento catalogado formalmente como <strong>Hoja de Variantes — Estados Límite y Reglas de Persistencia (Frame E)</strong>.</li><li class="">• Foco inicial automático en el encabezado <span class="font-mono-sku text-[12px] text-text-base">'Hoja de Variantes' (h1)</span> al montar el comprobante.</li><li class="">• Anillo de foco visual uniforme de 3px solid con color cobre <span class="font-mono-sku text-[12px] text-text-base">#C56845</span> y offset de 2px para todos los elementos interactivos.</li><li class="">• Supresión estricta de badges 'FALLBACK'; el texto factual 'Fecha no disponible' se muestra de forma limpia y directa.</li><li class="">• Variante 5 marcada formalmente como 'Propuesta de diseño — Pendiente de aprobación de producto'.</li></ul><p class="m-0 pt-2 border-t border-border-default text-[12px] italic text-text-base"><strong>Nota de plataforma:</strong> Tailwind CDN, Google Fonts, iconos Material y scripts interactivos son herramientas exclusivas del prototipo y no deben copiarse a producción; el frontend real debe usar styles.css y fuentes del sistema.</p></aside></footer>
+</article>
+</main>
+</div>
+</body></html>

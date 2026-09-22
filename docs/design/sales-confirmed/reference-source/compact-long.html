@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+
+<html lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="web_dashboard" name="shell-type"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<style>
+    @layer base {
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background-color: #F4EFE6;
+      }
+    }
+    :focus-visible {
+      outline: 3px solid #C56845 !important;
+      outline-offset: 2px !important;
+    }
+    .tnum {
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-canvas": "#F4EFE6",
+            "border-default": "#E4DDD2",
+            "text-base": "#29252B",
+            "text-muted": "#625A63",
+            "primary-container": "#3D3042",
+            "copper-focus": "#C56845",
+            "success-green": "#2E6B34",
+            "success-bg": "#EBF4EC"
+          },
+          fontFamily: {
+            "body-default": ["Segoe UI", "sans-serif"],
+            "mono-sku": ["Cascadia Mono", "monospace"]
+          }
+        }
+      }
+    };
+  </script>
+</head>
+<body class="bg-surface-canvas font-body-default text-text-base antialiased min-h-screen">
+<!-- Shell: Sidebar compacto estándar de 176px con padding 16px, SIN cajero, operador o terminal -->
+<aside class="fixed left-0 top-0 h-full w-[176px] p-4 bg-white z-50 flex flex-col border-r border-border-default">
+<div class="flex flex-col gap-6">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded bg-[#271B2C] flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-white text-[18px]">directions_car</span>
+</div>
+<div class="flex flex-col min-w-0">
+<span class="font-semibold text-[15px] leading-tight text-text-base truncate">Repuestos Autos</span>
+</div>
+</div>
+<!-- Navegación con 'Ventas' activa (#3D3042, texto blanco) -->
+<nav class="flex flex-col gap-1 text-[13px] font-semibold"><a class="flex items-center gap-2 px-2.5 py-2 rounded text-text-muted hover:bg-[#F2EDE4] hover:text-text-base transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">dashboard</span><span class="truncate">Dashboard</span></a><a aria-current="page" class="flex items-center gap-2 px-2.5 py-2 rounded bg-primary-container text-white transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">point_of_sale</span><span class="truncate">Ventas</span></a><a class="flex items-center gap-2 px-2.5 py-2 rounded text-text-muted hover:bg-[#F2EDE4] hover:text-text-base transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">inventory_2</span><span class="truncate">Inventario</span></a><a class="flex items-center gap-2 px-2.5 py-2 rounded text-text-muted hover:bg-[#F2EDE4] hover:text-text-base transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">menu_book</span><span class="truncate">Catálogo</span></a><a class="flex items-center gap-2 px-2.5 py-2 rounded text-text-muted hover:bg-[#F2EDE4] hover:text-text-base transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">add_box</span><span class="truncate">Alta de productos</span></a><a class="flex items-center gap-2 px-2.5 py-2 rounded text-text-muted hover:bg-[#F2EDE4] hover:text-text-base transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">receipt_long</span><span class="truncate">Historial de ventas</span></a><a class="flex items-center gap-2 px-2.5 py-2 rounded text-text-muted hover:bg-[#F2EDE4] hover:text-text-base transition-colors" href="#"><span class="material-symbols-outlined text-[18px]">settings_backup_restore</span><span class="truncate">Copia y restauración</span></a></nav>
+</div>
+</aside>
+<!-- Área principal con scroll normal de documento, padding 20px, sin topbar adicional -->
+<div class="pl-[176px] w-full min-h-screen">
+<main class="w-full p-[20px] flex justify-center">
+<!-- Superficie del comprobante: única columna, centrada, padding 16px, bg #FFFFFF, border 1px #E4DDD2, radius 10px, shadow 0 12px 32px rgba(41,37,43,0.18) -->
+<section aria-labelledby="main-heading" class="w-full max-w-[760px] bg-white border border-border-default rounded-[10px] p-4 flex flex-col gap-6" style="box-shadow: 0 12px 32px rgba(41, 37, 43, 0.18);">
+<!-- 3. Encabezado de comprobante -->
+<header class="flex flex-col gap-3 pb-4 border-b border-border-default">
+<div class="flex items-center gap-3">
+<span aria-hidden="true" class="w-9 h-9 rounded-full bg-success-bg text-success-green flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</span>
+<h1 class="text-[22px] font-bold text-text-base tracking-tight m-0 focus:outline-none" id="main-heading" tabindex="-1">
+              Venta confirmada
+            </h1>
+</div>
+<p class="text-[14px] text-text-muted m-0 leading-normal">
+            La venta quedó guardada y estos datos son de solo lectura.
+          </p>
+<!-- 4. Identidad de venta -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+<div class="bg-[#FAF7F2] border border-border-default rounded-md px-3 py-2 flex flex-col justify-center">
+<span class="text-[12px] text-text-muted">Venta</span>
+<span class="text-[15px] font-semibold text-text-base tnum">Venta #00285</span>
+</div>
+<div class="bg-[#FAF7F2] border border-border-default rounded-md px-3 py-2 flex flex-col justify-center">
+<span class="text-[12px] text-text-muted">Fecha y hora</span>
+<span class="text-[15px] font-semibold text-text-base tnum">14/10/2026, 17:15</span>
+</div>
+</div>
+</header>
+<!-- 5. Registros apilados en una sola columna: Artículos confirmados -->
+<div class="flex flex-col gap-3">
+<div class="flex items-center justify-between pb-1">
+<h2 class="text-[17px] font-bold text-text-base m-0">Artículos confirmados</h2>
+<span class="text-[12px] text-text-muted font-medium">13 artículos</span>
+</div>
+<div class="flex flex-col border border-border-default rounded-md divide-y divide-border-default bg-[#FCFBF8]" role="list"><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Amortiguador Delantero Hidráulico Reforzado - Monroe Gas-Magnum</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">9012</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-SUS-9012-HD</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 840,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">2 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 420,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Kit Completo de Embrague y Prensa - Valeo Premium Heavy Duty</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">4401</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-TRN-4401-VAL</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 1.250,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">1 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 1.250,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Disco de Freno Ventilado Delantero - Brembo High Carbon</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">3318</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-FRN-3318-BRM</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 760,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">2 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 380,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Juego de Pastillas de Freno Cerámicas - Bosch QuietCast</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">8821</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-FRN-8821-BOS</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 370,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">2 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 185,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Bomba de Agua con Junta Termosellada - Gates PowerGrip</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">5102</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-MOT-5102-GAT</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 340,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">1 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 340,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Correa de Distribución Dentada de Alta Tensión - Continental ContiTech</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">6019</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-MOT-6019-CON</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 165,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">1 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 165,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Termostato de Circuito de Refrigeración con Carcasa de Aluminio - Wahler</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">7214</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-REF-7214-WAH</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 130,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">1 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 130,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Filtro de Aceite Sintético de Flujo Completo - Mann Filter W 712/75</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">1049</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-FLT-1049-MAN</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 225,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">3 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 75,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Filtro de Combustible Diésel Multicapa - Mahle Original</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">2088</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-FLT-2088-MAH</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 220,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">2 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 110,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Bujía de Encendido Iridio Laser Platinum - NGK Laser Iridium</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">7102</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-ELC-7102-NGK</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 390,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">6 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 65,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Aceite Sintético para Motor 5W-30 4L - Mobil 1 ESP Formula</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">9930</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-LUB-9930-MOB</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 620,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">2 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 310,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Líquido de Frenos Sintético DOT 4 Plus 1000ml - Bosch Brake Fluid</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">1140</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-LUB-1140-BOS</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 110,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">2 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 55,00</span></span></div></article><article class="p-3.5 flex flex-col gap-2" role="listitem"><div class="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div class="flex flex-col min-w-0 flex-1"><h3 class="text-[14px] font-semibold text-text-base leading-snug break-words">Juego de Escobillas Limpiaparabrisas Aerotwin - Bosch 24/18</h3><div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[12px] text-text-muted"><span class="">ID artículo: <strong class="text-text-base font-medium">4920</strong></span><span class="">SKU: <span class="font-mono-sku bg-white px-1.5 py-0.5 border border-border-default rounded text-[11px] text-text-base" style="word-break: break-all; overflow-wrap: anywhere; font-family: 'Cascadia Mono', monospace;">SKU-ACC-4920-AER</span></span></div></div><div class="text-right sm:shrink-0"><span class="text-[11px] text-text-muted block">Subtotal</span><span class="text-[15px] font-semibold text-text-base tnum">Bs 145,00</span></div></div><div class="flex flex-wrap items-center justify-between text-[12px] text-text-muted pt-1 border-t border-[#ECE6DC]"><span class="">Cantidad: <strong class="text-text-base font-semibold tnum">1 un.</strong></span><span class="">Precio unitario: <span class="text-text-base font-medium tnum">Bs 145,00</span></span></div></article></div>
+</div>
+<!-- 6. Desglose de pagos: Pagos confirmados -->
+<div class="flex flex-col gap-3 pt-2">
+<h2 class="text-[17px] font-bold text-text-base m-0">Pagos confirmados</h2>
+<div class="flex flex-col gap-2.5">
+<!-- Efectivo -->
+<div class="bg-[#FAF7F2] border border-border-default rounded-md p-3 flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-[#994626]">payments</span>
+<span class="text-[14px] font-medium text-text-base">Efectivo aplicado</span>
+</div>
+<span class="text-[15px] font-semibold text-text-base tnum">Bs 3.000,00</span>
+</div>
+<div class="flex items-center justify-between text-[12px] text-text-muted pt-2 border-t border-border-default/60">
+<span class="">Efectivo recibido: <strong class="text-text-base font-medium tnum">Bs 3.000,00</strong></span>
+<span class="">Cambio: <strong class="text-text-base font-medium tnum">Bs 0,00</strong></span>
+</div>
+</div>
+<!-- QR -->
+<div class="bg-[#FAF7F2] border border-border-default rounded-md p-3 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[20px] text-[#271B2C]">qr_code_2</span>
+<span class="text-[14px] font-medium text-text-base">Pago QR</span>
+</div>
+<span class="text-[15px] font-semibold text-text-base tnum">Bs 2.565,00</span>
+</div>
+</div>
+</div>
+<!-- 7. Total persistido -->
+<div class="bg-[#F2EDE4] border border-border-default rounded-md p-4 flex items-center justify-between mt-1">
+<span class="text-[14px] font-semibold text-text-muted uppercase tracking-wider">Total persistido</span>
+<span class="text-[24px] font-bold text-text-base tnum">Bs 5.565,00</span>
+</div>
+<!-- 8. Acción única: Botón primario 'Nueva venta' (≥ 48px, bg #3D3042, sin recargas) -->
+<div class="pt-2">
+<button class="w-full min-h-[48px] bg-primary-container text-white hover:bg-[#312535] active:bg-[#271b2c] rounded-md font-semibold text-[15px] flex items-center justify-center gap-2 transition-colors cursor-pointer" type="button">
+<span class="material-symbols-outlined text-[20px]">add_circle</span>
+<span class="">Nueva venta</span>
+</button>
+</div><div class="pt-4 border-t border-border-default text-[12px] text-text-muted leading-normal flex flex-col gap-2"><p class="font-medium text-text-base m-0">Notas técnicas de accesibilidad y plataforma:</p><ul class="list-disc pl-5 flex flex-col gap-1 m-0"><li class="">Foco inicial situado programáticamente en 'Venta confirmada' (h1).</li><li class="">Foco posterior al accionar 'Nueva venta' transferido a 'Buscar en el catálogo'.</li><li class="">Outline cobre visible de 3px (#C56845, offset 2px) para navegación por teclado.</li><li class="">Áreas de interacción con target mínimo de 44px (botón 'Nueva venta' cuenta con 48px).</li><li class="">Soporte de preferencias de usuario: reduced motion y forced colors (alto contraste).</li><li class="">Nota de arquitectura: Tailwind CDN, Google Fonts, iconos Material y scripts interactivos son herramientas del prototipo y no deben copiarse a producción; el frontend real debe usar styles.css y fuentes del sistema.</li></ul></div>
+</section>
+</main>
+</div>
+</body></html>
