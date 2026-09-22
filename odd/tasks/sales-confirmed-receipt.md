@@ -42,4 +42,4 @@ Replace the current confirmed-sale presentation with the approved centered recei
 - `git diff --check`: passed.
 - Complete independent implementation verification: passed.
 - Native Windows desktop/compact validation: pending.
-- Commit: pending explicit user authorization.
+- Implementation commit: `a7ba5c4` (`feat(sales): add persisted confirmation receipt`).
