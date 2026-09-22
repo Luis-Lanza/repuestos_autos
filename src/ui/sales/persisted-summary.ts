@@ -1,8 +1,7 @@
-import { createElement } from "react";
+import { createElement, type Ref } from "react";
 
 import type { PersistedSaleSummary } from "../../commands/confirm-sale.ts";
 import { Action } from "../visual-system/controls.ts";
-import { AlignedData } from "../visual-system/structure.ts";
 import { formatBs } from "./sale-flow.ts";
 
 export type PersistedSummaryDetails = {
@@ -55,27 +54,54 @@ const itemColumns = [
   { label: "Precio unitario", align: "end", kind: "money" },
   { label: "Subtotal", align: "end", kind: "money" },
 ] as const;
-const paymentColumns = [
-  { label: "Dato de pago", align: "start", kind: "text" },
-  { label: "Importe", align: "end", kind: "money" },
-] as const;
+export type PersistedSaleSummaryViewProps = {
+  details: PersistedSummaryDetails;
+  headingRef?: Ref<HTMLHeadingElement>;
+  onNewSale: () => void;
+};
 
-export function PersistedSaleSummaryView({ details, onNewSale }: { details: PersistedSummaryDetails; onNewSale: () => void }) {
-  return createElement("main", { "aria-labelledby": "sale-summary-heading", "data-ui-persisted-summary": true },
-    createElement("header", { "data-ui-summary-header": true },
-      createElement("h1", { id: "sale-summary-heading" }, "Venta confirmada"),
-      createElement("p", null, "La venta quedó guardada y estos datos son de solo lectura.")),
-    createElement("section", { "aria-labelledby": "sale-identity-heading", "data-ui-summary-identity": true },
-      createElement("h2", { id: "sale-identity-heading" }, "Identificación de la venta"),
-      createElement("dl", null,
-        createElement("dt", null, "Venta"), createElement("dd", null, details.saleIdentity),
-        createElement("dt", null, "Fecha y hora"), createElement("dd", { "data-ui-type": "numeric" }, details.confirmedAt))),
-    createElement("div", { "data-ui-summary-layout": true },
-      createElement("section", { "aria-label": "Artículos confirmados", "data-ui-summary-articles": true },
-        createElement(AlignedData, { caption: "Artículos confirmados", columns: itemColumns, rows: details.lines })),
-      createElement("aside", { "aria-label": "Resumen de pago", "data-ui-summary-rail": true },
-        createElement("section", { "aria-label": "Pagos confirmados", "data-ui-summary-payments": true },
-          createElement(AlignedData, { caption: "Pagos confirmados", columns: paymentColumns, rows: details.payments })),
-        createElement("p", { "data-ui-summary-total": true }, createElement("span", null, "Total persistido"), createElement("strong", null, details.total)),
-        createElement(Action, { variant: "primary", onClick: onNewSale }, "Nueva venta"))));
+function renderItemTable(details: PersistedSummaryDetails) {
+  const rows = details.lines.map((line, rowIndex) => createElement("tr", { key: rowIndex },
+    line.map((value, columnIndex) => {
+      const column = itemColumns[columnIndex];
+      return createElement("td", {
+        key: column.label,
+        "data-label": column.label,
+        "data-ui-align": column.align,
+        "data-ui-kind": column.kind,
+      }, value);
+    })));
+
+  return createElement("table", { className: "sale-summary-items" },
+    createElement("caption", null, "Artículos confirmados"),
+    createElement("thead", null, createElement("tr", null,
+      itemColumns.map((column) => createElement("th", { key: column.label, scope: "col", "data-ui-align": column.align, "data-ui-kind": column.kind }, column.label)))),
+    createElement("tbody", null, rows));
+}
+
+export function PersistedSaleSummaryView({ details, headingRef, onNewSale }: PersistedSaleSummaryViewProps) {
+  return createElement("main", { className: "sale-summary-page", "aria-labelledby": "sale-summary-heading", "data-ui-persisted-summary": true },
+    createElement("article", { className: "sale-summary-receipt" },
+      createElement("header", { className: "sale-summary-header", "data-ui-summary-header": true },
+        createElement("span", { className: "sale-summary-success-icon", "aria-hidden": true, "data-ui-summary-success-icon": true }, "✓"),
+        createElement("h1", { id: "sale-summary-heading", tabIndex: -1, ref: headingRef }, "Venta confirmada"),
+        createElement("p", null, "La venta quedó guardada y estos datos son de solo lectura.")),
+      createElement("section", { className: "sale-summary-identity", "aria-labelledby": "sale-identity-heading", "data-ui-summary-identity": true },
+        createElement("h2", { id: "sale-identity-heading" }, "Identificación de la venta"),
+        createElement("dl", null,
+          createElement("dt", null, "Venta"), createElement("dd", null, details.saleIdentity),
+          createElement("dt", null, "Fecha y hora"), createElement("dd", { "data-ui-type": "numeric" }, details.confirmedAt))),
+      createElement("div", { className: "sale-summary-layout", "data-ui-summary-layout": true },
+        createElement("section", { className: "sale-summary-articles", "aria-label": "Artículos confirmados", "data-ui-summary-articles": true },
+          renderItemTable(details)),
+        createElement("aside", { className: "sale-summary-rail", "aria-label": "Resumen de pago", "data-ui-summary-rail": true },
+          createElement("section", { className: "sale-summary-payments", "aria-labelledby": "sale-payments-heading", "data-ui-summary-payments": true },
+            createElement("h2", { id: "sale-payments-heading" }, "Pagos confirmados"),
+            details.payments.length === 0
+              ? createElement("p", { className: "sale-summary-payments-empty" }, "Sin datos de pago")
+              : createElement("dl", null, details.payments.map(([label, amount], index) => createElement("div", { key: index },
+                createElement("dt", null, label), createElement("dd", { "data-ui-kind": "money" }, amount))))),
+          createElement("p", { className: "sale-summary-total", "data-ui-summary-total": true },
+            createElement("span", null, "Total persistido"), createElement("strong", null, details.total)),
+          createElement(Action, { variant: "primary", onClick: onNewSale }, "Nueva venta")))));
 }

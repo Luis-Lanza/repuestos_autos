@@ -463,49 +463,113 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sales-checkout] [data-ui-sale-subtotal] { min-inline-size: 9rem; justify-self: end; margin: 0; padding-block: var(--space-3); text-align: end; white-space: nowrap; }
 [data-ui-sale-actions] { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
-[data-ui-persisted-summary] {
-  display: grid;
+.sale-summary-page {
+  display: flex;
   min-inline-size: 0;
   min-block-size: 0;
-  block-size: 100%;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: var(--space-5);
+  block-size: auto;
+  flex: 0 0 auto;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: visible;
+}
+.sale-summary-receipt {
+  display: grid;
+  inline-size: min(1040px, 100%);
+  min-inline-size: 0;
+  block-size: auto;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-modal);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--elevation-modal);
+}
+[data-ui-summary-header] {
+  display: grid;
+  min-inline-size: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  padding-block-end: var(--space-5);
+  border-block-end: 1px solid var(--color-border);
+}
+[data-ui-summary-header] h1 { align-self: center; margin: 0; }
+[data-ui-summary-header] p { grid-column: 2; margin: 0; color: var(--color-text-muted); }
+.sale-summary-success-icon {
+  display: grid;
+  inline-size: var(--space-8);
+  block-size: var(--space-8);
+  place-items: center;
+  border: 1px solid var(--color-success-edge);
+  border-radius: 50%;
+  color: var(--color-success);
+  background: var(--color-success-surface);
+  font-weight: var(--weight-semibold);
+}
+[data-ui-summary-identity] {
+  min-inline-size: 0;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-surface-subtle) 55%, var(--color-surface));
+}
+[data-ui-summary-identity] h2 { margin-block-end: var(--space-2); font-size: var(--type-label-size); line-height: var(--type-label-line); }
+[data-ui-persisted-summary] dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
+[data-ui-persisted-summary] :is(dt, dd) { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
+[data-ui-summary-layout] {
+  display: grid;
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  gap: var(--space-6);
+  align-items: start;
+}
+[data-ui-summary-articles] { min-inline-size: 0; }
+.sale-summary-items {
+  inline-size: 100%;
+  min-inline-size: 0;
+  table-layout: fixed;
+  border: 1px solid var(--color-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: var(--radius-panel);
   overflow: hidden;
 }
-[data-ui-summary-header], [data-ui-summary-identity], [data-ui-summary-articles], [data-ui-summary-payments] {
+.sale-summary-items caption { padding-block-end: var(--space-3); color: var(--color-text); text-align: start; font-size: var(--type-h2-size); line-height: var(--type-h2-line); font-weight: var(--weight-emphasis); }
+.sale-summary-items :is(th, td) { min-inline-size: 0; padding: var(--space-3); border-block-end: 1px solid var(--color-border); overflow-wrap: anywhere; text-overflow: clip; white-space: normal; vertical-align: middle; }
+.sale-summary-items th { background: color-mix(in srgb, var(--color-surface-subtle) 55%, var(--color-surface)); }
+.sale-summary-items tbody tr:last-child td { border-block-end: 0; }
+.sale-summary-items :is(th, td):nth-child(1) { inline-size: 10%; }
+.sale-summary-items :is(th, td):nth-child(2) { inline-size: 28%; }
+.sale-summary-items :is(th, td):nth-child(3) { inline-size: 18%; }
+.sale-summary-items :is(th, td):nth-child(4) { inline-size: 10%; }
+.sale-summary-items :is(th, td):nth-child(5), .sale-summary-items :is(th, td):nth-child(6) { inline-size: 17%; }
+.sale-summary-items [data-ui-kind="sku"] { font-family: var(--font-mono); }
+.sale-summary-items [data-ui-kind="money"] { contain: inline-size; font-variant-numeric: tabular-nums; }
+[data-ui-summary-rail] {
+  position: sticky;
+  inset-block-start: 0;
+  display: grid;
   min-inline-size: 0;
+  align-self: start;
+  align-content: start;
+  gap: var(--space-4);
   padding: var(--space-5);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-panel);
   background: var(--color-surface);
 }
-[data-ui-summary-header] { border-inline-start: 4px solid var(--color-success-edge); background: var(--color-success-surface); }
-[data-ui-persisted-summary] dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
-[data-ui-persisted-summary] :is(dt, dd) { margin: 0; }
-[data-ui-summary-layout] {
-  display: grid;
-  min-inline-size: 0;
-  min-block-size: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-  gap: var(--space-5);
-}
-[data-ui-summary-articles] { display: flex; min-block-size: 0; flex-direction: column; }
-[data-ui-summary-articles] [data-ui-data-scroll] {
-  min-block-size: 0;
-  overflow-x: visible;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-[data-ui-summary-rail] {
-  display: grid;
-  min-inline-size: 0;
-  min-block-size: 0;
-  align-content: start;
-  gap: var(--space-4);
-}
-[data-ui-summary-payments] { min-block-size: 0; }
-[data-ui-persisted-summary] [data-ui-aligned-data] { table-layout: fixed; }
-[data-ui-summary-total] { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); margin: 0; padding: var(--space-5); border-block: 2px solid var(--color-border-strong); font-size: var(--type-total-size); font-variant-numeric: tabular-nums; }
+[data-ui-summary-payments] { min-inline-size: 0; }
+[data-ui-summary-payments] h2 { padding-block-end: var(--space-3); border-block-end: 1px solid var(--color-border); }
+[data-ui-summary-payments] dl { grid-template-columns: minmax(0, 1fr) max-content; }
+[data-ui-summary-payments] dl > div { display: contents; }
+[data-ui-summary-payments] dd { text-align: end; font-variant-numeric: tabular-nums; }
+.sale-summary-payments-empty { margin: 0; color: var(--color-text-muted); }
+[data-ui-summary-total] { display: grid; gap: var(--space-1); margin: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: color-mix(in srgb, var(--color-surface-subtle) 55%, var(--color-surface)); font-variant-numeric: tabular-nums; }
+[data-ui-summary-total] > span { font-size: var(--type-overline-size); line-height: var(--type-overline-line); font-weight: var(--weight-semibold); letter-spacing: .08em; text-transform: uppercase; }
+[data-ui-summary-total] > strong { font-size: var(--type-total-size); line-height: var(--type-total-line); font-weight: var(--weight-emphasis); overflow-wrap: anywhere; }
+[data-ui-summary-rail] > [data-ui-action="primary"] { inline-size: 100%; min-block-size: 48px; }
+[data-ui-persisted-summary] h1:focus-visible { outline: 3px solid #c56845; outline-offset: 2px; }
+[data-ui-persisted-summary] [data-ui-action]:focus-visible { outline: 3px solid #c56845; outline-offset: 2px; }
 
 [data-ui-history-list] { display: grid; gap: var(--space-4); }
 [data-ui-history-filters] { display: grid; grid-template-columns: repeat(2, minmax(10rem, 1fr)) auto; gap: var(--space-3); align-items: end; }
@@ -643,17 +707,20 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-sales-checkout] [data-ui-sale-cart-controls] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-sales-checkout] [data-ui-sale-cart] { max-block-size: none; overflow-y: visible; }
   [data-ui-sales-checkout] [data-ui-sale-subtotal] { min-inline-size: 0; justify-self: start; padding-block: 0; text-align: start; }
-  [data-ui-persisted-summary] {
-    block-size: auto;
-    min-block-size: auto;
-    gap: var(--space-4);
-    overflow: visible;
-  }
-  [data-ui-summary-layout] { grid-template-columns: minmax(0, 1fr); min-block-size: auto; }
-  [data-ui-summary-identity], [data-ui-summary-articles], [data-ui-summary-payments], [data-ui-summary-total] { padding: var(--space-4); }
-  [data-ui-summary-articles] { display: block; min-block-size: auto; }
-  [data-ui-summary-articles] [data-ui-data-scroll] { overflow-y: visible; overscroll-behavior: auto; }
+  .sale-summary-receipt { gap: var(--space-4); padding: var(--space-4); }
+  [data-ui-summary-header] { padding-block-end: var(--space-4); }
+  [data-ui-summary-header] p { grid-column: 1 / -1; }
+  [data-ui-summary-identity] { padding: var(--space-4); }
+  [data-ui-summary-layout] { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+  [data-ui-summary-rail] { position: static; padding: 0; border: 0; background: transparent; }
   [data-ui-persisted-summary] dl { grid-template-columns: minmax(0, 1fr); }
+  .sale-summary-items { inline-size: 100%; table-layout: auto; border: 0; overflow: visible; }
+  .sale-summary-items thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+  .sale-summary-items :is(tbody, tr, td) { display: block; inline-size: 100%; }
+  .sale-summary-items tr { margin-block-end: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-panel); background: var(--color-surface); }
+  .sale-summary-items td { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); padding: var(--space-1) 0; border: 0; overflow-wrap: anywhere; text-align: start; }
+  .sale-summary-items td::before { content: attr(data-label); color: var(--color-text-muted); font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--weight-semibold); }
+  .sale-summary-items [data-ui-kind="money"] { contain: none; }
   [data-ui-history-filters] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   [data-ui-history-filters] > button { grid-column: 1 / -1; }
   [data-ui-history-list] [data-ui-aligned-data] { table-layout: auto; }
@@ -697,6 +764,8 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 @media (forced-colors: active) {
   button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-sales-checkout-item], [data-ui-sales-checkout-settlement], [data-ui-sales-checkout] [data-ui-checkout-total] { border-color: CanvasText; forced-color-adjust: auto; }
+  .sale-summary-receipt, [data-ui-summary-identity], [data-ui-summary-rail], .sale-summary-items, .sale-summary-items :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
+  [data-ui-persisted-summary] h1:focus-visible { outline-color: Highlight; }
   [data-ui-dialog-backdrop] { background: Canvas; }
   :where(button, input, select, textarea, a[href], [role="button"]):focus-visible,
   [data-ui-focus-visible="true"] { outline-color: Highlight; }
