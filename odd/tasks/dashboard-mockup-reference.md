@@ -27,4 +27,4 @@ Generate exact viewport screenshots from the corrected Dashboard A/C HTML protot
 - Independent Round-1 A/C approval: passed.
 - Four preserved artifacts match approved sources byte-for-byte.
 - Repository boundary, exact-file-set, and `git diff --check` verification: passed.
-- Commit: pending explicit user authorization.
+- Work-unit commit: `ea8e3fe` (`docs(dashboard): preserve approved redesign references`).

@@ -40,4 +40,4 @@ Implement the approved operationally balanced Dashboard using the A/C references
 - Full frontend suite: 246/246 passed.
 - `npm run typecheck:tests`, `npm run build`, and `git diff --check`: passed.
 - Native Windows desktop/compact validation: pending.
-- Commit: pending explicit user authorization.
+- Implementation commit: `b6f8580` (`feat(dashboard): redesign operational overview`).

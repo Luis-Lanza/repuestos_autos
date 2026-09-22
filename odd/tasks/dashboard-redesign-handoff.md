@@ -32,4 +32,4 @@ Use an operationally balanced hierarchy:
 - Established handoff pattern in `docs/design/sales-confirmed-figma-handoff.md`.
 - Independent repository-backed handoff verification: passed.
 - `git diff --check`: passed.
-- Commit: pending explicit user authorization.
+- Work-unit commit: `ea8e3fe` (`docs(dashboard): preserve approved redesign references`).
