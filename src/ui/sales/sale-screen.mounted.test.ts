@@ -148,6 +148,18 @@ test("shows every discovery state and ignores reverse-order search completion", 
   await act(() => { fourth.resolve(browse(products)); return fourth.promise; }); assert.equal(document.body.textContent, "")
 });
 
+test("focuses the confirmed-sale heading after the current successful confirmation mounts", async () => {
+  installUuid();
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : success);
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+
+  const heading = await screen.findByRole("heading", { name: "Venta confirmada" });
+  assert.equal(document.activeElement, heading);
+});
+
 test("refreshes the inventory summary after a confirmed sale", async () => {
   installUuid();
   let refreshed = 0;
@@ -428,6 +440,26 @@ test("bounds Sales checkout field controls and money inputs to their grid track"
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\] \[data-ui-field="money"\] \[data-ui-field-control\] > input\s*\{[^}]*inline-size:\s*0[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%[^}]*flex:\s*1 1 0/s);
 });
 
+test("styles the confirmed receipt as a naturally growing Sales page at desktop and compact widths", () => {
+  const css = style.textContent ?? "";
+  assert.match(css, /:root\s*\{[^}]*--size-shell-sidebar:\s*208px/s);
+  assert.match(css, /\[data-ui-shell-content\]\s*\{[^}]*overflow:\s*auto/s);
+  assert.match(css, /\.sale-summary-page\s*\{[^}]*display:\s*flex[^}]*block-size:\s*auto[^}]*overflow:\s*visible/s);
+  assert.match(css, /\.sale-summary-page\s*\{[^}]*justify-content:\s*center/s);
+  assert.match(css, /\.sale-summary-receipt\s*\{[^}]*inline-size:\s*min\(1040px,\s*100%\)[^}]*padding:\s*var\(--space-6\)[^}]*border-radius:\s*var\(--radius-modal\)[^}]*box-shadow:\s*var\(--elevation-modal\)/s);
+  assert.match(css, /\[data-ui-summary-layout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*320px\)/s);
+  assert.match(css, /\[data-ui-summary-rail\]\s*\{[^}]*align-self:\s*start/s);
+  assert.match(css, /\.sale-summary-items\s*\{[^}]*table-layout:\s*fixed/s);
+  assert.match(css, /\.sale-summary-items[^}]*:is\([^}]*td[^}]*\)\s*\{[^}]*overflow-wrap:\s*anywhere[^}]*text-overflow:\s*clip[^}]*white-space:\s*normal/s);
+  assert.match(css, /\.sale-summary-items[^}]*data-ui-kind="money"[^}]*\{[^}]*contain:\s*inline-size[^}]*font-variant-numeric:\s*tabular-nums/s);
+  assert.match(css, /\[data-ui-persisted-summary\] h1:focus-visible\s*\{[^}]*outline:\s*3px solid #c56845[^}]*outline-offset:\s*2px/s);
+  assert.match(css, /\[data-ui-summary-rail\] > \[data-ui-action="primary"\]\s*\{[^}]*min-block-size:\s*48px/s);
+  assert.doesNotMatch(css, /\[data-ui-summary-articles\] \[data-ui-data-scroll\]/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*:root\s*\{[^}]*--size-shell-sidebar:\s*176px[\s\S]*\.sale-summary-receipt\s*\{[^}]*padding:\s*var\(--space-4\)[\s\S]*\[data-ui-summary-layout\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)[\s\S]*\[data-ui-summary-rail\]\s*\{[^}]*position:\s*static[\s\S]*\.sale-summary-items\s*\{[^}]*inline-size:\s*100%[^}]*table-layout:\s*auto/s);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\.sale-summary-items :is\(tbody, tr, td\)\s*\{[^}]*display:\s*block[\s\S]*\.sale-summary-items td\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /@media \(forced-colors: active\)[\s\S]*\.sale-summary-receipt[^}]*border-color:\s*CanvasText/s);
+});
+
 test("discards late confirmation after unmount and keeps the existing success handoff", async () => {
   installUuid(); const pending = deferred<unknown>(); mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : pending.promise);
   const view = render(createElement(SaleScreen)); await addFirst(); fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" }));
@@ -459,8 +491,14 @@ test("replaces the draft with a stable persisted summary and resets through its 
   assert.ok(summaryLayout);
   assert.equal(summaryLayout?.firstElementChild?.getAttribute("data-ui-summary-articles"), "true");
   assert.equal(summaryLayout?.lastElementChild?.getAttribute("data-ui-summary-rail"), "true");
-  assert.equal(summaryLayout?.querySelector("[data-ui-summary-articles] table")?.getAttribute("data-ui-aligned-data"), "true");
-  assert.equal(summaryLayout?.querySelector("[data-ui-summary-payments] table")?.getAttribute("data-ui-aligned-data"), "true");
+  const confirmedItems = within(persistedSummary).getByRole("table", { name: "Artículos confirmados" });
+  assert.deepEqual(within(confirmedItems).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent)), [
+    ["1", "Filtro histórico", "HIST-1", "2", "Bs 40,00", "Bs 80,00"],
+    ["99", "Producto no disponible", "SKU no disponible", "1", "Bs 20,50", "Bs 20,50"],
+  ]);
+  const confirmedPayments = within(persistedSummary).getByRole("region", { name: "Pagos confirmados" });
+  assert.deepEqual(within(confirmedPayments).getAllByRole("term").map((term) => term.textContent), ["Efectivo aplicado", "Efectivo recibido", "Cambio", "Pago QR"]);
+  assert.deepEqual(within(confirmedPayments).getAllByRole("definition").map((definition) => definition.textContent), ["Bs 60,00", "Bs 70,00", "Bs 10,00", "Bs 40,50"]);
   assert.equal(summaryLayout?.querySelector("[data-ui-summary-rail] button")?.textContent, "Nueva venta");
   screen.getByText("Venta #9"); screen.getByText("14/08/2026, 10:42"); screen.getByText("Filtro histórico"); screen.getByText("SKU no disponible");
   for (const fact of ["Bs 40,00", "Bs 80,00", "Bs 60,00", "Bs 70,00", "Bs 10,00", "Bs 40,50", "Bs 100,50"]) screen.getByText(fact);
@@ -474,17 +512,13 @@ test("replaces the draft with a stable persisted summary and resets through its 
   confirmed.lines.forEach((line) => Object.assign(line, { product_id: 0, sku: "MUT", product_name: "Resultado mutado", quantity: 0, unit_price_centavos: 0, line_total_centavos: 0 }));
   confirmed.payments.forEach((payment) => Object.assign(payment, { amount_applied_centavos: 0, amount_tendered_centavos: 0, change_given_centavos: 0 })); confirmed.total_centavos = 0;
   view.rerender(createElement(SaleScreen)); assert.equal(screen.getByRole("main").textContent, beforeMutation);
-  assert.match(style.textContent ?? "", /\[data-ui-persisted-summary\][\s\S]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\)[\s\S]*overflow:\s*hidden/);
-  assert.match(style.textContent ?? "", /\[data-ui-summary-layout\][\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(260px,\s*320px\)/);
-  assert.match(style.textContent ?? "", /\[data-ui-summary-articles\][\s\S]*overflow-y:\s*auto[\s\S]*overscroll-behavior:\s*contain/);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-persisted-summary[\s\S]*block-size:\s*auto[\s\S]*overflow:\s*visible/);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-summary-layout[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-summary-articles[\s\S]*overflow-y:\s*visible/);
   await u.click(screen.getByRole("button", { name: "Nueva venta" }));
   response = { ...success, sale_id: 10, confirmed_at: "2026-08-14 10:42:00", lines: [{ product_id: 1, sku: "FIL-1", product_name: "Filtro aceite", quantity: 1, unit_price_centavos: 8_550, line_total_centavos: 8_550 }], payments: [{ method: "qr" as const, amount_applied_centavos: 8_550 }], total_centavos: 8_550 };
   await addFirst(); await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByText("Venta #10");
   screen.getByText("14/08/2026, 10:42"); assert.ok(screen.getAllByText("Bs 85,50").length >= 3);
-  assert.equal(within(screen.getByRole("table", { name: "Pagos confirmados" })).queryAllByRole("row").length, 2);
+  const nextSalePayments = screen.getByRole("region", { name: "Pagos confirmados" });
+  assert.deepEqual(within(nextSalePayments).getAllByRole("term").map((term) => term.textContent), ["Pago QR"]);
+  assert.deepEqual(within(nextSalePayments).getAllByRole("definition").map((definition) => definition.textContent), ["Bs 85,50"]);
 });
 
 test("starts and renders the active first page browse after Nueva venta", async () => {
@@ -507,6 +541,8 @@ test("starts and renders the active first page browse after Nueva venta", async 
   await screen.findByRole("heading", { name: "Venta confirmada" });
 
   await u.click(screen.getByRole("button", { name: "Nueva venta" }));
+  const searchInput = screen.getByRole("searchbox", { name: "Buscar en el catálogo" });
+  assert.equal(document.activeElement, searchInput);
   assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
   assert.equal(browseCalls.length, 3);
   assert.deepEqual(browseCalls[2], { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });

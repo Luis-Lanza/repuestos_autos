@@ -75,11 +75,68 @@ test("renders a semantic Spanish read-only summary with Nueva venta as its sole 
   assert.match(html, /data-ui-summary-header/);
   assert.match(html, /data-ui-summary-identity/);
   assert.match(html, /data-ui-summary-layout/);
-  assert.match(html, /<section aria-label="Artículos confirmados" data-ui-summary-articles="true"><div data-ui-data-scroll="true"><table/);
-  assert.match(html, /<aside aria-label="Resumen de pago" data-ui-summary-rail="true"><section aria-label="Pagos confirmados" data-ui-summary-payments="true"><div data-ui-data-scroll="true"><table/);
-  assert.match(html, />Pago QR<\/td><td[^>]*>Bs 67,50/);
+  assert.match(html, /data-ui-summary-articles/);
+  assert.match(html, /data-ui-summary-payments/);
+  assert.match(html, />Pago QR<\/(?:td|dt)>.*Bs 67,50/s);
   assert.doesNotMatch(html, /Efectivo aplicado|Efectivo recibido|Cambio/);
   assert.equal((html.match(/<button/g) ?? []).length, 1);
   assert.match(html, />Nueva venta<\/button>/);
   assert.doesNotMatch(html, /<input|<select|<textarea|Editar|Imprimir|Compartir|Reembolsar|Recibo/);
+});
+
+test("renders the confirmed result as an ordered receipt page with a parent-owned heading focus seam", () => {
+  const html = renderToStaticMarkup(PersistedSaleSummaryView({
+    details: projectPersistedSaleSummary(summary),
+    headingRef: { current: null },
+    onNewSale() {},
+  }));
+
+  assert.match(html, /^<main class="sale-summary-page"[^>]*><article class="sale-summary-receipt"/);
+  assert.equal((html.match(/<h1\b/g) ?? []).length, 1);
+  assert.match(html, /<h1 id="sale-summary-heading" tabindex="-1">Venta confirmada<\/h1>/);
+  assert.match(html, /<span[^>]+data-ui-summary-success-icon="true"[^>]*>✓<\/span>/);
+
+  const orderedFacts = [
+    "data-ui-summary-header", "data-ui-summary-identity", "data-ui-summary-articles",
+    "data-ui-summary-payments", "data-ui-summary-total", "Nueva venta",
+  ];
+  let previousIndex = -1;
+  for (const fact of orderedFacts) {
+    const index = html.indexOf(fact);
+    assert.ok(index > previousIndex, `${fact} must follow the preceding receipt section`);
+    previousIndex = index;
+  }
+
+  assert.equal((html.match(/<(?:button|a|input|select|textarea)\b/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /role="dialog"|aria-modal|data-ui-data-scroll|request_id|550e8400|status|outcome/i);
+});
+
+test("renders the approved truthful fallback when persisted payment facts are empty", () => {
+  const html = renderToStaticMarkup(PersistedSaleSummaryView({
+    details: projectPersistedSaleSummary({ ...summary, payments: [] }),
+    onNewSale() {},
+  }));
+
+  assert.equal((html.match(/Sin datos de pago/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /Efectivo aplicado|Efectivo recibido|Cambio|Pago QR/);
+});
+
+test("preserves complete authoritative line, date-fallback, cash, and zero-change facts", () => {
+  const productName = "Kit completo de distribución reforzado para motor 2.0 con tensor hidráulico";
+  const sku = "SKU-DISTRIBUTION-ULTRA-LONG-00000042";
+  const html = renderToStaticMarkup(PersistedSaleSummaryView({
+    details: projectPersistedSaleSummary({
+      ...summary,
+      confirmed_at: "sin fecha",
+      lines: [{ product_id: 777, product_name: productName, sku, quantity: 12, unit_price_centavos: 123_456, line_total_centavos: 1_481_472 }],
+      payments: [{ method: "cash", amount_applied_centavos: 1_481_472, amount_tendered_centavos: 1_481_472, change_given_centavos: 0 }],
+      total_centavos: 1_481_472,
+    }),
+    onNewSale() {},
+  }));
+
+  for (const fact of ["777", productName, sku, "12", "Bs 1234,56", "Bs 14814,72", "Fecha no disponible", "Efectivo aplicado", "Efectivo recibido", "Cambio", "Bs 0,00"]) {
+    assert.ok(html.includes(fact), `missing authoritative fact: ${fact}`);
+  }
+  assert.doesNotMatch(html, /Pago QR/);
 });
