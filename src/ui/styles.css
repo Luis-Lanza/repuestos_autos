@@ -355,7 +355,7 @@ img, svg, video { max-inline-size: 100%; }
   padding: var(--space-page);
 }
 [data-ui-shell-content] > main { flex: 1 1 auto; min-block-size: 0; }
-main[data-ui-sale], main[data-ui-inventory], main[data-ui-catalog], main[data-ui-dashboard] {
+main[data-ui-sale], main[data-ui-inventory], main[data-ui-catalog] {
   display: flex;
   min-block-size: 0;
   flex-direction: column;
@@ -365,12 +365,83 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   min-block-size: 0;
 }
 [data-ui-shell-navigation] button { display: grid; gap: var(--space-1); }
-[data-ui-dashboard] { display: grid; gap: var(--space-5); }
-[data-ui-dashboard] > h1, [data-ui-dashboard] > p { margin-block-end: 0; }
-[data-ui-dashboard-periods], [data-ui-dashboard-layout] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: start; }
-[data-ui-dashboard-layout] > [data-ui-panel] { min-inline-size: 0; }
-[data-ui-dashboard] [data-ui-panel] { display: grid; gap: var(--space-3); }
-[data-ui-dashboard] [data-ui-panel] h2 { margin-block-end: 0; }
+[data-ui-dashboard] {
+  display: grid;
+  min-inline-size: 0;
+  align-content: start;
+  gap: var(--space-6);
+}
+[data-ui-dashboard] > *,
+[data-ui-dashboard] [data-ui-panel],
+[data-ui-dashboard] [data-ui-data-scroll],
+[data-ui-dashboard] [data-ui-aligned-data] :is(th, td) {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+[data-ui-dashboard-header] { display: grid; gap: var(--space-1); }
+[data-ui-dashboard-header] :is(h1, p) { margin: 0; }
+[data-ui-dashboard-header] p { color: var(--color-text-muted); }
+[data-ui-dashboard-periods] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+[data-ui-dashboard] [data-ui-panel] { display: grid; align-content: start; gap: var(--space-4); }
+[data-ui-dashboard] [data-ui-panel] h2 { margin: 0; }
+[data-ui-dashboard-metrics] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+[data-ui-dashboard-metric] {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+[data-ui-dashboard-metric] :is(dt, dd) { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
+[data-ui-dashboard-metric] dt { color: var(--color-text-muted); font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--weight-semibold); }
+[data-ui-dashboard-metric] dd { font-size: 22px; line-height: 28px; font-weight: var(--weight-emphasis); font-variant-numeric: tabular-nums; }
+[data-ui-dashboard-stock-alerts] > [data-ui-panel] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-inline-start: 5px solid var(--color-warning-edge);
+}
+[data-ui-dashboard-stock-alerts] > [data-ui-panel] > :is([data-ui-data-scroll], [data-ui-dashboard-state]) { grid-column: 1 / -1; }
+[data-ui-dashboard-stock-alerts] [data-ui-action] {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  color: var(--color-text-inverse);
+  background: var(--color-action);
+  border-color: var(--color-action);
+}
+[data-ui-dashboard-stock-alerts] [data-ui-action]:not(:disabled):not([aria-busy="true"]):hover {
+  color: var(--color-text-inverse);
+  background: var(--color-action-hover);
+  border-color: var(--color-action-hover);
+}
+[data-ui-dashboard-supporting] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: start;
+}
+[data-ui-dashboard-supporting] > * { min-inline-size: 0; }
+[data-ui-dashboard-recent-sales] { grid-column: 1 / -1; }
+[data-ui-dashboard] [data-ui-data-scroll] { max-inline-size: 100%; overflow-x: visible; }
+[data-ui-dashboard] [data-ui-aligned-data] { inline-size: 100%; table-layout: fixed; }
+[data-ui-dashboard] [data-ui-aligned-data] :is(th, td) { padding: var(--space-3); white-space: normal; text-overflow: clip; }
+[data-ui-dashboard] [data-ui-aligned-data] th { background: color-mix(in srgb, var(--color-surface-subtle) 70%, var(--color-surface)); color: var(--color-text-muted); }
+[data-ui-dashboard] [data-ui-aligned-data] tbody tr:last-child td { border-block-end: 0; }
+[data-ui-dashboard] [data-ui-aligned-data] [data-ui-kind="sku"] { font-family: var(--font-mono); }
+[data-ui-dashboard] [data-ui-aligned-data] :is([data-ui-kind="numeric"], [data-ui-kind="money"]) { font-variant-numeric: tabular-nums; }
+[data-ui-dashboard] [data-ui-badge] { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+[data-ui-dashboard] [data-ui-dashboard-state] { margin: 0; }
 [data-ui-inventory-layout] { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(260px, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--space-5); align-items: stretch; }
 [data-ui-inventory-layout] [data-ui-product-browser] > form { inline-size: min(100%, 48rem); max-inline-size: 100%; }
 [data-ui-inventory-results], [data-ui-inventory-alerts], [data-ui-product-browser-list] { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
@@ -689,7 +760,23 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-shell-sidebar] { padding-inline: var(--space-4); }
   [data-ui-shell-identity] { min-block-size: 64px; }
   [data-ui-panel] { padding: var(--space-4); }
-  [data-ui-dashboard-periods], [data-ui-dashboard-layout] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-dashboard] { gap: var(--space-5); }
+  [data-ui-dashboard-periods], [data-ui-dashboard-supporting] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-dashboard-recent-sales] { grid-column: auto; }
+  [data-ui-dashboard-stock-alerts] > [data-ui-panel] { grid-template-columns: minmax(0, 1fr); }
+  [data-ui-dashboard-stock-alerts] > [data-ui-panel] > :is(h2, [data-ui-data-scroll], [data-ui-dashboard-state], [data-ui-action]) { grid-column: 1; }
+  [data-ui-dashboard-stock-alerts] [data-ui-action] { grid-row: auto; inline-size: 100%; min-block-size: var(--size-control-default); }
+  [data-ui-dashboard] [data-ui-data-scroll] { overflow-x: visible; }
+  [data-ui-dashboard] [data-ui-aligned-data] { table-layout: auto; }
+  [data-ui-dashboard] [data-ui-aligned-data] tr {
+    margin-block-end: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+  }
+  [data-ui-dashboard] [data-ui-aligned-data] td { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); padding: var(--space-1) 0; overflow-wrap: anywhere; }
+  [data-ui-dashboard] [data-ui-aligned-data] td::before { content: attr(data-label); color: var(--color-text-muted); font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--weight-semibold); }
   [data-ui-inventory-layout] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) max-content; }
   [data-ui-inventory-selection] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-product-browser] > form, [data-ui-product-browser-list] > li { grid-template-columns: minmax(0, 1fr); }
@@ -765,6 +852,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   button, input, select, textarea, [role="button"], [data-ui-status], [data-ui-panel], [data-ui-confirmation-dialog], [data-ui-form-dialog], [data-ui-checkout-dialog], [data-ui-catalog-edit-dialog], [data-ui-aligned-data] :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-sales-checkout-item], [data-ui-sales-checkout-settlement], [data-ui-sales-checkout] [data-ui-checkout-total] { border-color: CanvasText; forced-color-adjust: auto; }
   .sale-summary-receipt, [data-ui-summary-identity], [data-ui-summary-rail], .sale-summary-items, .sale-summary-items :is(th, td) { border-color: CanvasText; forced-color-adjust: auto; }
+  [data-ui-dashboard-metric], [data-ui-dashboard] [data-ui-aligned-data] tr { border-color: CanvasText; forced-color-adjust: auto; }
   [data-ui-persisted-summary] h1:focus-visible { outline-color: Highlight; }
   [data-ui-dialog-backdrop] { background: Canvas; }
   :where(button, input, select, textarea, a[href], [role="button"]):focus-visible,
