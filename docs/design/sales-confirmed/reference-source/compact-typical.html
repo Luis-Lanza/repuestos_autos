@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="es"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Repuestos Autos - Venta confirmada</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@100..900&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cascadia+Mono:wght@400..700&amp;display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<style>
+    @layer base {
+      html, body {
+        margin: 0;
+        padding: 0;
+        background-color: #F4EFE6;
+      }
+    }
+    /* Accesibilidad: Outline cobre #C56845 3px offset 2px */
+    a:focus-visible,
+    button:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 3px solid #C56845 !important;
+      outline-offset: 2px !important;
+    }
+  </style>
+</head>
+<body class="bg-[#F4EFE6] font-['Segoe_UI'] text-[#29252B] antialiased">
+<div class="flex min-h-screen">
+<!-- 1. Shell: Sidebar compacto estándar de 176px con padding 16px, sin topbar, sin cajero/operador/terminal -->
+<aside aria-label="Navegación principal" class="w-[176px] shrink-0 p-4 bg-[#FFFCF7] border-r border-[#E4DDD2] flex flex-col justify-between">
+<div class="flex flex-col gap-5">
+<!-- Logo / Marca -->
+<div class="flex items-center gap-2">
+<div aria-hidden="true" class="w-8 h-8 rounded bg-[#271B2C] flex items-center justify-center shrink-0 text-white">
+<span class="material-symbols-outlined text-[18px]">directions_car</span>
+</div>
+<span class="font-semibold text-[15px] leading-tight text-[#29252B]">Repuestos Autos</span>
+</div>
+<!-- Navegación: "Ventas" activa (#3D3042, texto blanco). Otros inactivos -->
+<nav class="flex flex-col gap-1">
+<a class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-medium text-[#625A63] hover:bg-[#EEE7DC] hover:text-[#29252B] transition-colors" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">dashboard</span>
+<span class="">Dashboard</span>
+</a>
+<a aria-current="page" class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-semibold bg-[#3D3042] text-white shadow-sm" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">point_of_sale</span>
+<span class="">Ventas</span>
+</a>
+<a class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-medium text-[#625A63] hover:bg-[#EEE7DC] hover:text-[#29252B] transition-colors" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">inventory_2</span>
+<span class="">Inventario</span>
+</a>
+<a class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-medium text-[#625A63] hover:bg-[#EEE7DC] hover:text-[#29252B] transition-colors" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">menu_book</span>
+<span class="">Catálogo</span>
+</a>
+<a class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-medium text-[#625A63] hover:bg-[#EEE7DC] hover:text-[#29252B] transition-colors" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">add_box</span>
+<span class="">Alta de productos</span>
+</a>
+<a class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-medium text-[#625A63] hover:bg-[#EEE7DC] hover:text-[#29252B] transition-colors" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">receipt_long</span>
+<span class="">Historial de ventas</span>
+</a>
+<a class="flex items-center gap-2 px-2.5 py-2 rounded text-[13px] font-medium text-[#625A63] hover:bg-[#EEE7DC] hover:text-[#29252B] transition-colors" href="#">
+<span aria-hidden="true" class="material-symbols-outlined text-[18px]">settings_backup_restore</span>
+<span class="">Copia y restauración</span>
+</a>
+</nav>
+</div>
+</aside>
+<!-- Canvas de fondo: #F4EFE6 con padding 20px, scroll normal del documento -->
+<main class="flex-1 p-[20px] bg-[#F4EFE6] min-h-screen flex justify-center items-start">
+<!-- 2. Superficie del comprobante: max-w-[640px], padding 16px, bg #FFFFFF, border 1px solid #E4DDD2, border-radius 10px, shadow 0 12px 32px rgba(41, 37, 43, 0.18), sin modal ni backdrop -->
+<article class="w-full max-w-[640px] bg-[#FFFFFF] border border-[#E4DDD2] rounded-[10px] p-4 flex flex-col gap-4 shadow-[0_12px_32px_rgba(41,37,43,0.18)]">
+<!-- 3. Encabezado de comprobante -->
+<header class="flex flex-col items-center text-center gap-1.5 pt-1">
+<!-- Indicador accesible de éxito -->
+<div aria-hidden="true" class="w-12 h-12 rounded-full bg-[#142312]/10 flex items-center justify-center text-[#142312] mb-1">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1, 'wght' 600;">check_circle</span>
+</div>
+<h1 class="text-[22px] leading-[28px] font-bold text-[#29252B] tracking-tight m-0 focus:outline-none" id="heading-venta-confirmada" tabindex="-1">
+            Venta confirmada
+          </h1>
+<p class="text-[14px] text-[#625A63] leading-snug m-0 max-w-[460px]">
+            La venta quedó guardada y estos datos son de solo lectura.
+          </p>
+</header>
+<!-- 4. Identidad de venta (sin referencias fiscales ni contables) -->
+<section aria-label="Identidad de la venta" class="bg-[#EEE7DC] rounded-lg px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+<div class="flex items-center gap-2">
+<span aria-hidden="true" class="material-symbols-outlined text-[#625A63] text-[18px]">receipt</span>
+<span class="text-[13px] font-semibold text-[#29252B]">Venta #00284</span>
+</div>
+<div class="flex items-center gap-1.5 text-[#625A63] text-[13px]">
+<span aria-hidden="true" class="material-symbols-outlined text-[16px]">schedule</span>
+<time datetime="2026-10-14T16:42">Fecha y hora: 14/10/2026, 16:42</time>
+</div>
+</section>
+<!-- 5. Registros apilados: Artículos confirmados -->
+<section aria-labelledby="heading-articulos-confirmados" class="flex flex-col gap-2.5">
+<div class="flex items-center justify-between">
+<h2 class="text-[16px] leading-[22px] font-semibold text-[#29252B] m-0" id="heading-articulos-confirmados">
+              Artículos confirmados
+            </h2>
+<span class="font-['Cascadia_Mono'] text-[12px] text-[#625A63] bg-[#E7E2D9] px-2 py-0.5 rounded">3 artículos</span>
+</div>
+<ul class="flex flex-col gap-2.5 p-0 m-0 list-none" role="list">
+<!-- Item 1 -->
+<li class="bg-[#FFFCF7] border border-[#E4DDD2] rounded-lg p-3 flex flex-col gap-2">
+<div class="flex flex-wrap items-start justify-between gap-2">
+<h3 class="text-[15px] font-semibold text-[#29252B] m-0 flex-1 min-w-[220px]">
+                  Pastillas de Freno Delanteras - Bosch
+                </h3>
+<span class="text-[15px] font-bold text-[#29252B] tabular-nums whitespace-nowrap">
+                  Bs 290,00
+                </span>
+</div>
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[#625A63]">
+<span class=""><span class="text-[#817982]">ID artículo:</span> <span class="font-['Cascadia_Mono']">8821</span></span>
+<span class="text-[#8D8177]">•</span>
+<span class=""><span class="text-[#817982]">SKU:</span> <span class="font-['Cascadia_Mono'] text-[#29252B]">SKU-FRN-8821</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E4DDD2]/60 text-[13px] text-[#625A63] bg-[#F8F3EA]/70 px-2.5 py-1.5 rounded">
+<span class="">Cantidad: <strong class="font-semibold text-[#29252B]">2 un.</strong></span>
+<span class="">Precio unitario: <span class="font-['Cascadia_Mono'] tabular-nums text-[#29252B]">Bs 145,00</span></span>
+<span class="">Subtotal: <strong class="font-semibold text-[#29252B] tabular-nums">Bs 290,00</strong></span>
+</div>
+</li>
+<!-- Item 2 -->
+<li class="bg-[#FFFCF7] border border-[#E4DDD2] rounded-lg p-3 flex flex-col gap-2">
+<div class="flex flex-wrap items-start justify-between gap-2">
+<h3 class="text-[15px] font-semibold text-[#29252B] m-0 flex-1 min-w-[220px]">
+                  Filtro de Aceite Sintético - Mann
+                </h3>
+<span class="text-[15px] font-bold text-[#29252B] tabular-nums whitespace-nowrap">
+                  Bs 62,50
+                </span>
+</div>
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[#625A63]">
+<span class=""><span class="text-[#817982]">ID artículo:</span> <span class="font-['Cascadia_Mono']">1049</span></span>
+<span class="text-[#8D8177]">•</span>
+<span class=""><span class="text-[#817982]">SKU:</span> <span class="font-['Cascadia_Mono'] text-[#29252B]">SKU-FLT-1049</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E4DDD2]/60 text-[13px] text-[#625A63] bg-[#F8F3EA]/70 px-2.5 py-1.5 rounded">
+<span class="">Cantidad: <strong class="font-semibold text-[#29252B]">1 un.</strong></span>
+<span class="">Precio unitario: <span class="font-['Cascadia_Mono'] tabular-nums text-[#29252B]">Bs 62,50</span></span>
+<span class="">Subtotal: <strong class="font-semibold text-[#29252B] tabular-nums">Bs 62,50</strong></span>
+</div>
+</li>
+<!-- Item 3 -->
+<li class="bg-[#FFFCF7] border border-[#E4DDD2] rounded-lg p-3 flex flex-col gap-2">
+<div class="flex flex-wrap items-start justify-between gap-2">
+<h3 class="text-[15px] font-semibold text-[#29252B] m-0 flex-1 min-w-[220px]">
+                  Bujía de Iridio Platinum - NGK
+                </h3>
+<span class="text-[15px] font-bold text-[#29252B] tabular-nums whitespace-nowrap">
+                  Bs 90,00
+                </span>
+</div>
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[#625A63]">
+<span class=""><span class="text-[#817982]">ID artículo:</span> <span class="font-['Cascadia_Mono']">7102</span></span>
+<span class="text-[#8D8177]">•</span>
+<span class=""><span class="text-[#817982]">SKU:</span> <span class="font-['Cascadia_Mono'] text-[#29252B]">SKU-ELC-7102</span></span>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#E4DDD2]/60 text-[13px] text-[#625A63] bg-[#F8F3EA]/70 px-2.5 py-1.5 rounded">
+<span class="">Cantidad: <strong class="font-semibold text-[#29252B]">2 un.</strong></span>
+<span class="">Precio unitario: <span class="font-['Cascadia_Mono'] tabular-nums text-[#29252B]">Bs 45,00</span></span>
+<span class="">Subtotal: <strong class="font-semibold text-[#29252B] tabular-nums">Bs 90,00</strong></span>
+</div>
+</li>
+</ul>
+</section>
+<!-- 6. Desglose de pagos (sin referencias fiscales ni contables) -->
+<section aria-labelledby="heading-pagos-confirmados" class="bg-[#FFFCF7] border border-[#E4DDD2] rounded-lg p-3 flex flex-col gap-2">
+<h2 class="text-[15px] font-semibold text-[#29252B] m-0" id="heading-pagos-confirmados">
+            Pagos confirmados
+          </h2>
+<dl class="flex flex-col gap-1.5 m-0 text-[14px]">
+<div class="flex items-center justify-between py-0.5">
+<dt class="text-[#625A63] flex items-center gap-1.5">
+<span aria-hidden="true" class="material-symbols-outlined text-[16px] text-[#817982]">payments</span>
+<span class="">Efectivo aplicado</span>
+</dt>
+<dd class="tabular-nums font-semibold text-[#29252B] m-0">Bs 200,00</dd>
+</div>
+<div class="flex items-center justify-between py-1 pl-6 text-[13px] text-[#625A63] bg-[#F8F3EA] rounded px-2.5">
+<dt>Efectivo recibido</dt>
+<dd class="font-['Cascadia_Mono'] tabular-nums m-0 text-[#29252B]">Bs 250,00</dd>
+</div>
+<div class="flex items-center justify-between py-1 pl-6 text-[13px] text-[#625A63] bg-[#F8F3EA] rounded px-2.5">
+<dt>Cambio</dt>
+<dd class="font-['Cascadia_Mono'] tabular-nums font-bold text-[#142312] m-0">Bs 50,00</dd>
+</div>
+<div class="flex items-center justify-between py-0.5 pt-1">
+<dt class="text-[#625A63] flex items-center gap-1.5">
+<span aria-hidden="true" class="material-symbols-outlined text-[16px] text-[#817982]">qr_code_2</span>
+<span class="">Pago QR</span>
+</dt>
+<dd class="tabular-nums font-semibold text-[#29252B] m-0">Bs 242,50</dd>
+</div>
+</dl>
+</section>
+<!-- 7. Total persistido -->
+<section aria-label="Total persistido" class="bg-[#EEE7DC] rounded-lg px-3.5 py-3 flex items-center justify-between">
+<span class="text-[13px] uppercase tracking-wider font-semibold text-[#625A63]">
+            Total persistido
+          </span>
+<span class="text-[22px] leading-none font-bold text-[#29252B] tabular-nums">
+            Bs 442,50
+          </span>
+</section>
+<!-- 8. Acción única: Botón primario Nueva venta (altura ≥ 48px, bg #3D3042, sin F2 ni reload()) -->
+<div>
+<button aria-label="Nueva venta" class="w-full min-h-[48px] h-12 bg-[#3D3042] hover:bg-[#271B2C] active:bg-[#1D1C16] text-white font-semibold text-[15px] rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm" type="button">
+<span aria-hidden="true" class="material-symbols-outlined text-[20px]">add_shopping_cart</span>
+<span class="">Nueva venta</span>
+</button>
+</div>
+<footer class="mt-2 pt-3 border-t border-[#E4DDD2] text-[12px] text-[#625A63] flex flex-col gap-1.5 leading-normal"><div class="flex items-center gap-1.5 font-semibold text-[#29252B]"><span aria-hidden="true" class="material-symbols-outlined text-[16px]">info</span><span class="">Notas técnicas y accesibilidad</span></div><ul class="list-none p-0 m-0 flex flex-col gap-1 text-[12px]"><li class="">• Foco inicial automático en 'Venta confirmada' (h1 tabindex="-1").</li><li class="">• Tras pulsar 'Nueva venta', el foco se redirige al campo 'Buscar en el catálogo'.</li><li class="">• Indicador de foco visible cobre sólido de 3px (#C56845, offset 2px).</li><li class="">• Áreas de interacción táctil con altura mínima ≥ 44px (botón primario de 48px).</li><li class="">• Compatibilidad completa con prefers-reduced-motion y forced-colors.</li></ul><p class="m-0 pt-1 text-[11px] text-[#817982] leading-tight">Nota técnica de prototipo: Tailwind CDN, Google Fonts, iconos Material y scripts interactivos son herramientas exclusivas de este prototipo visual y no deben copiarse a producción; el frontend real debe usar styles.css y fuentes del sistema.</p></footer></article>
+</main>
+</div>
+<script>
+    // Foco accesible al encabezado al cargar la pantalla
+    window.addEventListener('DOMContentLoaded', () => {
+      const heading = document.getElementById('heading-venta-confirmada');
+      if (heading) {
+        heading.focus();
+      }
+    });
+  </script>
+
+
+</body></html>

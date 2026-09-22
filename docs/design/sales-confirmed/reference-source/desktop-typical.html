@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+
+<html lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="web_dashboard" name="shell-type"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<style>
+    @layer base {
+      html, body { margin: 0; padding: 0; }
+      body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    }
+    .font-mono-code {
+      font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+    }
+  </style>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "border-default": "#E4DDD2",
+            "text-base": "#29252B",
+            "text-muted": "#625A63",
+            "surface": "#FFFFFF",
+            "primary-container": "#3D3042",
+            "primary-hover": "#312535",
+            "accent-copper": "#C56845"
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-[#F4EFE6] text-text-base antialiased min-h-screen flex">
+<!-- 1. Shell: Sidebar desktop estándar exacto de 208px a la izquierda con padding 24px (p-6) -->
+<aside class="fixed left-0 top-0 h-full w-[208px] bg-[#FFFFFF] border-r border-border-default z-50 flex flex-col p-6 box-border select-none">
+<!-- Marca -->
+<div class="flex items-center gap-3 mb-6">
+<div class="w-8 h-8 rounded bg-[#3D3042] flex items-center justify-center text-white shrink-0">
+<span class="material-symbols-outlined text-[20px]">directions_car</span>
+</div>
+<div class="flex flex-col min-w-0">
+<span class="text-[16px] font-bold text-text-base leading-tight tracking-tight">Repuestos Autos</span>
+</div>
+</div>
+<!-- Navegación con 'Ventas' como único destino activo -->
+<nav class="flex flex-col gap-1 flex-1">
+<a class="flex items-center gap-3 h-10 px-3 text-text-muted hover:bg-[#F4EFE6] hover:text-text-base transition-colors rounded-[6px] text-[14px]" data-path="dashboard" href="#">
+<span class="material-symbols-outlined text-[20px]">grid_view</span>
+<span class="">Dashboard</span>
+</a>
+<a aria-current="page" class="flex items-center gap-3 h-10 px-3 bg-[#3D3042] text-white font-semibold rounded-[6px] text-[14px]" data-path="ventas" href="#">
+<span class="material-symbols-outlined text-[20px]">point_of_sale</span>
+<span class="">Ventas</span>
+</a>
+<a class="flex items-center gap-3 h-10 px-3 text-text-muted hover:bg-[#F4EFE6] hover:text-text-base transition-colors rounded-[6px] text-[14px]" data-path="inventario" href="#">
+<span class="material-symbols-outlined text-[20px]">inventory_2</span>
+<span class="">Inventario</span>
+</a>
+<a class="flex items-center gap-3 h-10 px-3 text-text-muted hover:bg-[#F4EFE6] hover:text-text-base transition-colors rounded-[6px] text-[14px]" data-path="catalogo" href="#">
+<span class="material-symbols-outlined text-[20px]">auto_stories</span>
+<span class="">Catálogo</span>
+</a>
+<a class="flex items-center gap-3 h-10 px-3 text-text-muted hover:bg-[#F4EFE6] hover:text-text-base transition-colors rounded-[6px] text-[14px]" data-path="alta-de-productos" href="#">
+<span class="material-symbols-outlined text-[20px]">add_box</span>
+<span class="">Alta de productos</span>
+</a>
+<a class="flex items-center gap-3 h-10 px-3 text-text-muted hover:bg-[#F4EFE6] hover:text-text-base transition-colors rounded-[6px] text-[14px]" data-path="historial-de-ventas" href="#">
+<span class="material-symbols-outlined text-[20px]">receipt_long</span>
+<span class="">Historial de ventas</span>
+</a>
+<a class="flex items-center gap-3 h-10 px-3 text-text-muted hover:bg-[#F4EFE6] hover:text-text-base transition-colors rounded-[6px] text-[14px]" data-path="copia-y-restauracion" href="#">
+<span class="material-symbols-outlined text-[20px]">settings_backup_restore</span>
+<span class="">Copia y restauración</span>
+</a>
+</nav>
+</aside>
+<!-- Main Content Canvas (Sin Topbar, scroll normal de documento, padding 24px) -->
+<main class="ml-[208px] flex-1 p-6 min-h-screen bg-[#F4EFE6] box-border">
+<div class="w-full flex flex-col items-center">
+<!-- 2. Superficie del comprobante: min(1040px, 100%), p-6 (24px), bg #FFFFFF, border 1px #E4DDD2, r-10px, shadow 0 12px 32px rgba(41, 37, 43, 0.18) -->
+<section aria-label="Comprobante de venta" class="w-full max-w-[1040px] bg-[#FFFFFF] border border-border-default rounded-[10px] p-6 shadow-[0_12px_32px_rgba(41,37,43,0.18)] flex flex-col gap-6">
+<!-- 3. Encabezado de comprobante -->
+<div class="border-b border-border-default pb-5">
+<div class="flex items-center gap-3 mb-2">
+<!-- Indicador de éxito sobrio no dependiente sólo de color -->
+<div class="w-8 h-8 rounded-full bg-[#52634D]/15 text-[#52634D] border border-[#52634D]/30 flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">check</span>
+</div>
+<!-- H1 con foco accesible: tabindex="-1", visible focus outline 3px solid #C56845, offset 2px -->
+<h1 class="text-[24px] font-bold text-text-base leading-tight outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#C56845] focus-visible:outline-offset-2 rounded-[2px]" tabindex="-1">
+              Venta confirmada
+            </h1>
+</div>
+<p class="text-[15px] text-text-muted leading-relaxed pl-11">
+            La venta quedó guardada y estos datos son de solo lectura.
+          </p>
+</div>
+<!-- 4. Identidad de venta (Metadata limpia: Venta y Fecha y hora) -->
+<div class="bg-[#F8F5EE] border border-border-default rounded-[6px] px-5 py-3 flex items-center justify-between flex-wrap gap-4">
+<div class="flex items-center gap-6 flex-wrap">
+<div class="flex items-baseline gap-2">
+<span class="text-[13px] font-medium text-text-muted">Venta:</span>
+<span class="font-mono-code text-[14px] font-bold text-text-base bg-[#FFFFFF] px-2 py-0.5 rounded border border-border-default">Venta #00284</span>
+</div>
+<div class="h-4 w-px bg-border-default hidden sm:block"></div>
+<div class="flex items-baseline gap-2">
+<span class="text-[13px] font-medium text-text-muted">Fecha y hora:</span>
+<span class="text-[14px] font-medium text-text-base">14/10/2026, 16:42</span>
+</div>
+</div>
+</div>
+<!-- 5. Grilla desktop interna: minmax(0, 1fr) minmax(280px, 320px), gap 24px -->
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(280px,320px)] gap-6 items-start">
+<!-- Columna izquierda: Artículos confirmados -->
+<div class="flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<h2 class="text-[18px] font-bold text-text-base">Artículos confirmados</h2>
+<span class="text-[13px] text-text-muted">3 registrados</span>
+</div>
+<div class="border border-border-default rounded-[8px] bg-white overflow-hidden">
+<!-- Encabezados de columnas -->
+<div class="bg-[#F8F5EE] border-b border-border-default px-4 py-2.5 grid grid-cols-[1fr_80px_100px_100px] gap-3 text-[12px] font-semibold text-text-muted uppercase tracking-wider">
+<div class="">Descripción del repuesto</div>
+<div class="text-right">Cantidad</div>
+<div class="text-right">Precio unitario</div>
+<div class="text-right">Subtotal</div>
+</div>
+<!-- Lista de 3 productos típicos sin truncamientos -->
+<div class="divide-y divide-border-default">
+<!-- Producto 1 -->
+<div class="p-4 grid grid-cols-[1fr_80px_100px_100px] gap-3 items-center">
+<div class="flex flex-col">
+<span class="text-[15px] font-semibold text-text-base leading-snug">
+                      Pastillas de Freno Delanteras - Bosch
+                    </span>
+<div class="flex items-center gap-2 mt-1 text-[12px] text-text-muted flex-wrap"><span class="">ID artículo: 8821</span><span class="text-border-default">•</span><span class="font-mono-code px-1.5 py-0.5 rounded bg-[#F8F5EE] border border-border-default text-text-base text-[12px]">SKU: SKU-FRN-8821</span></div>
+</div>
+<div class="text-right text-[14px] text-text-muted tabular-nums">
+                    2 un.
+                  </div>
+<div class="text-right text-[14px] text-text-muted tabular-nums">
+                    Bs 145,00
+                  </div>
+<div class="text-right text-[15px] font-semibold text-text-base tabular-nums">
+                    Bs 290,00
+                  </div>
+</div>
+<!-- Producto 2 -->
+<div class="p-4 grid grid-cols-[1fr_80px_100px_100px] gap-3 items-center">
+<div class="flex flex-col">
+<span class="text-[15px] font-semibold text-text-base leading-snug">
+                      Filtro de Aceite Sintético - Mann
+                    </span>
+<div class="flex items-center gap-2 mt-1 text-[12px] text-text-muted flex-wrap">
+<span class="">ID artículo: 1049</span>
+<span class="text-border-default">•</span>
+<span class="font-mono-code px-1.5 py-0.5 rounded bg-[#F8F5EE] border border-border-default text-text-base text-[12px]">SKU: SKU-FLT-1049</span>
+</div>
+</div>
+<div class="text-right text-[14px] text-text-muted tabular-nums">
+                    1 un.
+                  </div>
+<div class="text-right text-[14px] text-text-muted tabular-nums">
+                    Bs 62,50
+                  </div>
+<div class="text-right text-[15px] font-semibold text-text-base tabular-nums">
+                    Bs 62,50
+                  </div>
+</div>
+<!-- Producto 3 -->
+<div class="p-4 grid grid-cols-[1fr_80px_100px_100px] gap-3 items-center">
+<div class="flex flex-col">
+<span class="text-[15px] font-semibold text-text-base leading-snug">
+                      Bujía de Iridio Platinum - NGK
+                    </span>
+<div class="flex items-center gap-2 mt-1 text-[12px] text-text-muted flex-wrap">
+<span class="">ID artículo: 7102</span>
+<span class="text-border-default">•</span>
+<span class="font-mono-code px-1.5 py-0.5 rounded bg-[#F8F5EE] border border-border-default text-text-base text-[12px]">SKU: SKU-ELC-7102</span>
+</div>
+</div>
+<div class="text-right text-[14px] text-text-muted tabular-nums">
+                    2 un.
+                  </div>
+<div class="text-right text-[14px] text-text-muted tabular-nums">
+                    Bs 45,00
+                  </div>
+<div class="text-right text-[15px] font-semibold text-text-base tabular-nums">
+                    Bs 90,00
+                  </div>
+</div>
+</div>
+</div>
+</div>
+<!-- Columna derecha: Rail de pagos y acción -->
+<div class="bg-white border border-border-default rounded-[8px] p-5 flex flex-col gap-4">
+<h2 class="text-[16px] font-bold text-text-base border-b border-border-default pb-3">
+              Pagos confirmados
+            </h2>
+<!-- Desglose exacto -->
+<div class="flex flex-col gap-2.5 text-[14px]">
+<div class="flex justify-between items-center text-text-muted">
+<span class="">Efectivo aplicado</span>
+<span class="font-medium text-text-base tabular-nums">Bs 200,00</span>
+</div>
+<div class="flex justify-between items-center text-[13px] text-text-muted pl-3 border-l-2 border-border-default">
+<span class="">Efectivo recibido</span>
+<span class="tabular-nums">Bs 250,00</span>
+</div>
+<div class="flex justify-between items-center text-[13px] text-[#994626] font-medium pl-3 border-l-2 border-[#994626]/40">
+<span class="">Cambio</span>
+<span class="tabular-nums font-semibold">Bs 50,00</span>
+</div>
+<div class="h-px bg-border-default my-1"></div>
+<div class="flex justify-between items-center text-text-muted">
+<span class="">Pago QR</span>
+<span class="font-medium text-text-base tabular-nums">Bs 242,50</span>
+</div>
+</div>
+<!-- Bloque destacado de total -->
+<div class="bg-[#F8F5EE] border border-border-default rounded-[6px] p-4 flex flex-col gap-1 mt-1">
+<span class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">
+                Total persistido
+              </span>
+<div class="text-[26px] font-bold text-text-base tracking-tight tabular-nums">
+                Bs 442,50
+              </div>
+</div>
+<!-- Acción única: Botón semántico min-h 48px, focus outline cobre 3px, bg #3D3042 hover #312535, texto blanco -->
+<div class="pt-2">
+<button class="w-full min-h-[48px] h-12 bg-[#3D3042] hover:bg-[#312535] active:bg-[#29252B] text-white rounded-[6px] font-semibold text-[15px] flex items-center justify-center gap-2 transition-colors outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[#C56845] focus-visible:outline-offset-2 cursor-pointer shadow-sm" type="button">
+<span class="material-symbols-outlined text-[20px]">add_shopping_cart</span>
+<span class="">Nueva venta</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+<!-- 6. Notas técnicas de accesibilidad en pie -->
+<footer class="w-full max-w-[1040px] mt-6 px-4 py-3 text-[12px] text-text-muted border-t border-border-default flex flex-wrap items-center justify-between gap-2"><div class="flex flex-col gap-2 w-full"><div class="flex flex-wrap items-center justify-between gap-2"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-[15px] text-[#C56845]">accessibility_new</span><span class="">Foco inicial en <strong>Venta confirmada</strong> (h1 tabindex="-1"). Al activar <strong>Nueva venta</strong>, transiciona y pone foco en <em>"Buscar en el catálogo"</em>.</span></div><div class="flex flex-wrap items-center gap-3"><span class="">Outline visible cobre sólido de 3px (<span class="font-mono-code font-semibold">#C56845</span>, offset 2px)</span><span class="">•</span><span class="">Target mín. 44px / botón primario 48px</span><span class="">•</span><span class="">Reduced motion y forced colors compatibles</span><span class="">•</span><span class="">Cifras tabulares</span></div></div><div class="text-[11px] text-text-muted border-t border-border-default pt-2 mt-1 leading-relaxed">Nota técnica de prototipo: Tailwind CDN, Google Fonts, iconos Material y scripts interactivos son herramientas exclusivas de este prototipo visual y no deben copiarse a producción; el frontend real debe usar styles.css y fuentes del sistema.</div></div></footer>
+</div>
+</main>
+<script>
+    // Autofocus inicial accesible en el encabezado principal
+    window.addEventListener('DOMContentLoaded', () => {
+      const heading = document.querySelector('h1[tabindex="-1"]');
+      if (heading) {
+        heading.focus();
+      }
+    });
+  </script>
+</body></html>
