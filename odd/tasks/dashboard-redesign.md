@@ -26,7 +26,7 @@ Implement the approved operationally balanced Dashboard using the A/C references
 - [x] Specify and implement the approved Dashboard hierarchy and authoritative content.
 - [x] Implement desktop/compact Dashboard-scoped styling and overflow resilience.
 - [x] Run full automated verification.
-- [ ] Validate desktop and compact behavior in the native Windows application.
+- [x] Validate desktop and compact behavior in the native Windows application.
 
 ## Evidence
 
@@ -39,5 +39,5 @@ Implement the approved operationally balanced Dashboard using the A/C references
 - Focused Dashboard suites: 8/8 passed.
 - Full frontend suite: 246/246 passed.
 - `npm run typecheck:tests`, `npm run build`, and `git diff --check`: passed.
-- Native Windows desktop/compact validation: pending.
+- Native Windows desktop/compact visual and interaction validation: approved by the user.
 - Implementation commit: `b6f8580` (`feat(dashboard): redesign operational overview`).
