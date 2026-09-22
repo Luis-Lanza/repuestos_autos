@@ -29,13 +29,23 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
   const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null);
-  const searchSequence = useRef(0), confirmationSequence = useRef(0), confirming = useRef(false), mounted = useRef(true);
+  const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null), headingRef = useRef<HTMLHeadingElement>(null);
+  const searchSequence = useRef(0), confirmationSequence = useRef(0), confirming = useRef(false), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
   useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; }, []);
   useEffect(() => {
     if (state.focus_price_product_id === null || !mounted.current) return;
     draftRef.current?.querySelector<HTMLInputElement>(`#sale-final-price-${state.focus_price_product_id}`)?.focus();
   }, [state.focus_price_product_id]);
+  useEffect(() => {
+    if (state.persisted_summary && persistedDetails && mounted.current) headingRef.current?.focus();
+  }, [persistedDetails, state.persisted_summary]);
+  useEffect(() => {
+    if (persistedDetails || !focusSearchOnDraftMount.current || !mounted.current) return;
+    const searchInput = draftRef.current?.querySelector<HTMLInputElement>('input[type="search"]');
+    if (!searchInput) return;
+    focusSearchOnDraftMount.current = false;
+    searchInput.focus();
+  }, [persistedDetails]);
   const draftDispatch = (action: Parameters<typeof dispatch>[0]) => { if (!confirming.current) dispatch(action); };
 
   async function browsePage(query: string, category_id: number | null, page: number) {
@@ -107,7 +117,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     browserDispatch({ type: "browse_started", query: "", category_id: null, stock_state: "all", activity: "active", page: 1, request_id: ++searchSequence.current });
     setPaymentErrors({});
   };
-  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, onNewSale: () => { setCheckoutOpen(false); setPersistedDetails(null); void browsePage("", null, 1); setPaymentErrors({}); dispatch({ type: "discard" }); } });
+  if (state.persisted_summary && persistedDetails) return createElement(PersistedSaleSummaryView, { details: persistedDetails, headingRef, onNewSale: () => { focusSearchOnDraftMount.current = true; setCheckoutOpen(false); setPersistedDetails(null); void browsePage("", null, 1); setPaymentErrors({}); dispatch({ type: "discard" }); } });
   const total = formatBs(draftTotalCentavos(state.lines));
   const totalUnits = draftTotalUnits(state.lines);
   const lineCount = `${state.lines.length} ${state.lines.length === 1 ? "línea" : "líneas"}`;
