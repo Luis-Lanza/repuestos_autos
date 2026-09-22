@@ -29,4 +29,5 @@ Preserve the approved confirmed-sale visual and HTML references in the repositor
 - README authority and production-boundary review: passed.
 - `git diff --check`: passed.
 - Independent verification: passed.
-- Commit: pending explicit user authorization.
+- Approved issue: `#177`.
+- Work-unit commit: `d4ec398` (`docs(sales): preserve confirmed-sale design references`).
