@@ -25,7 +25,7 @@ Replace the current confirmed-sale presentation with the approved centered recei
 - [x] Specify and implement authoritative receipt content and semantics.
 - [x] Specify and implement result-entry and new-sale focus transitions.
 - [x] Implement responsive receipt styling and complete automated verification.
-- [ ] Validate desktop and compact behavior in the native Windows application.
+- [x] Validate desktop and compact behavior in the native Windows application.
 
 ## Evidence
 
@@ -41,5 +41,6 @@ Replace the current confirmed-sale presentation with the approved centered recei
 - `npm run build`: passed with the existing mixed static/dynamic Tauri `core.js` warning.
 - `git diff --check`: passed.
 - Complete independent implementation verification: passed.
-- Native Windows desktop/compact validation: pending.
+- Native Windows desktop/compact visual and interaction validation: approved by the user.
+- Approved issue: `#176`.
 - Implementation commit: `a7ba5c4` (`feat(sales): add persisted confirmation receipt`).
