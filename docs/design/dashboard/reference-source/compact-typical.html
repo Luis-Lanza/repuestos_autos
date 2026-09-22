@@ -1,0 +1,692 @@
+<!DOCTYPE html><html lang="es"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Dashboard — Frame C (Compacto típico)</title>
+<style>
+    /* Reset & Base Tokens */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --canvas: #F4EFE6;
+      --surface: #FFFCF7;
+      --surface-elevated: #FFFFFF;
+      --surface-subtle: #EEE7DC;
+      --text: #29252B;
+      --muted-text: #625A63;
+      --border: #E4DDD2;
+      --strong-border: #8D8177;
+      --primary-action: #3D3042;
+      --primary-hover: #312535;
+      --focus: #C56845;
+      --success: #52634D;
+      --warning-bg: #FFF8EB;
+      --warning-border: #D9A043;
+      --warning-text: #78470E;
+      --danger-bg: #FDF2F2;
+      --danger-border: #DC2626;
+      --danger-text: #991B1B;
+      --font-family-ui: "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+      --font-family-mono: "Cascadia Mono", Consolas, monospace;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: var(--font-family-ui);
+      background-color: var(--canvas);
+      color: var(--text);
+      line-height: 1.4;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 176px 1fr;
+      height: 100vh;
+      background-color: #F4EFE6;
+    }
+
+    .sidebar {
+      width: 176px;
+      height: 100vh;
+      background-color: #FFFCF7;
+      border-right: 1px solid #E4DDD2;
+      box-sizing: border-box;
+      padding: 20px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow: hidden;
+    }
+
+    .main-wrapper {
+      min-width: 0;
+      min-height: 0;
+      max-height: 100vh;
+      height: 100vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 20px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .main-wrapper,
+    .panel,
+    .record,
+    td,
+    th {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+
+    :focus-visible {
+      outline: 3px solid #C56845;
+      outline-offset: 2px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    @media (forced-colors: active) {
+      :focus-visible {
+        outline-color: Highlight !important;
+      }
+
+      .panel,
+      .record,
+      .status {
+        border: 1px solid CanvasText;
+      }
+    }
+
+    .tabular {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .brand-block {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 4px;
+    }
+
+    .brand-icon {
+      width: 26px;
+      height: 26px;
+      background: var(--primary-action);
+      color: #FFFFFF;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .brand-name {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.15;
+      color: var(--text);
+    }
+
+    .nav-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-item a {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 44px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted-text);
+      text-decoration: none;
+      text-align: left;
+      box-sizing: border-box;
+    }
+
+    .nav-item a:hover {
+      background-color: var(--surface-subtle);
+      color: var(--text);
+    }
+
+    .nav-item a[aria-current="page"] {
+      background-color: var(--primary-action);
+      color: #FFFFFF;
+    }
+
+    .nav-item svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+      flex-shrink: 0;
+    }
+
+    /* Page Header */
+    .page-header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .page-header p {
+      font-size: 14px;
+      color: var(--muted-text);
+      margin-top: 2px;
+    }
+
+    /* Card styling */
+    .card, .panel {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    .card-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-scope {
+      font-size: 12px;
+      color: var(--muted-text);
+      font-weight: 500;
+    }
+
+    /* Metric stacked items for compact */
+    .metric-grid-compact {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .metric-subcard {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+
+    .metric-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted-text);
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .metric-value {
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+    }
+
+    .metric-value.primary {
+      color: var(--primary-action);
+    }
+
+    /* Operational Stock Treatment */
+    .stock-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-left: 5px solid #D9A043;
+      border-radius: 8px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    .stock-action-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+      width: 100%;
+      margin-top: 14px;
+      padding: 10px 16px;
+      background: var(--primary-action);
+      color: #FFFFFF;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      box-sizing: border-box;
+    }
+
+    .stock-action-btn:hover {
+      background: var(--primary-hover);
+    }
+
+    /* Labeled Record Items */
+    .record-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .record-item, .record {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-sizing: border-box;
+    }
+
+    .record-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .record-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.3;
+    }
+
+    .record-facts {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--muted-text);
+    }
+
+    .sku-code {
+      font-family: var(--font-family-mono);
+      font-size: 12px;
+      background: var(--surface-subtle);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #332B36;
+    }
+
+    /* Status Badges */
+    .status-badge, .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge-out-stock {
+      background: var(--danger-bg);
+      color: var(--danger-text);
+      border-color: var(--danger-border);
+    }
+
+    .badge-low-stock {
+      background: var(--warning-bg);
+      color: var(--warning-text);
+      border-color: var(--warning-border);
+    }
+
+    .badge-confirmed {
+      background: #EDF4EC;
+      color: var(--success);
+      border-color: #A3C29D;
+    }
+
+    .badge-cancelled {
+      background: #F4F1F4;
+      color: var(--muted-text);
+      border-color: #D1C9D2;
+      text-decoration: line-through;
+    }
+
+    /* Payment Distribution */
+    .payment-compact-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    /* Footer Annotation */
+    .spec-annotation {
+      margin-top: 10px;
+      padding: 10px 14px;
+      background: #F9F6F0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--muted-text);
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body class="app-shell">
+<!-- Persistent Sidebar: Exactly 176px -->
+<aside aria-label="Navegación principal" class="sidebar">
+<div class="brand-block">
+<div class="brand-icon">
+<svg fill="white" height="14" viewBox="0 0 24 24" width="14">
+<path d="M19 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm-1 9h-3v3H9v-3H6v-2h3v-3h4v3h3v2z"></path>
+</svg>
+</div>
+<div class="brand-name">Repuestos Autos</div>
+</div>
+<nav>
+<ul class="nav-list">
+<li class="nav-item">
+<a aria-current="page" href="#" class="">
+<svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"></path></svg>
+            Dashboard
+          </a>
+</li>
+<li class="nav-item">
+<a href="#" class="">
+<svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"></path></svg>
+            Ventas
+          </a>
+</li>
+<li class="nav-item">
+<a href="#">
+<svg viewBox="0 0 24 24"><path d="M20 2H4c-1 0-2 .9-2 2v3.01c0 .72.43 1.34 1 1.69V20c0 1.1 1.1 2 2 2h14c.9 0 2-.9 2-2V8.7c.57-.35 1-.97 1-1.69V4c0-1.1-1-2-2-2zm-5 12H9v-2h6v2zm5-7H4V4h16v3z"></path></svg>
+<div style="display:flex; flex-direction:column; line-height:1.2;">
+<span class="">Inventario</span>
+<span style="font-size:10px; font-weight:700; color:#991B1B; background:#FDF2F2; border:1px solid #DC2626; padding:1px 4px; border-radius:3px; margin-top:2px; display:inline-block; white-space:nowrap;" class="">⚠ 2 alertas de stock</span>
+</div>
+</a>
+</li>
+<li class="nav-item">
+<a href="#" class="">
+<svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"></path></svg>
+            Catálogo
+          </a>
+</li>
+<li class="nav-item">
+<a href="#" class="">
+<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"></path></svg>
+            Alta de productos
+          </a>
+</li>
+<li class="nav-item">
+<a href="#" class="">
+<svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"></path></svg>
+            Historial de ventas
+          </a>
+</li>
+<li class="nav-item">
+<a href="#" class="">
+<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"></path></svg>
+            Copia y restauración
+          </a>
+</li>
+</ul>
+</nav>
+</aside>
+<!-- Main Content: Frame C (Compacto típico 960x800, una columna) -->
+<main aria-labelledby="dashboard-heading" class="main-wrapper" id="main-content">
+<!-- 1. Header -->
+<header class="page-header">
+<h1 id="dashboard-heading" class="">Dashboard</h1>
+<p class="">Resumen operativo de ventas e inventario.</p>
+</header>
+<!-- 2. Period Orientation: Hoy (primero) -->
+<section aria-label="Métricas de Hoy" class="card panel">
+<div class="card-title-row">
+<h2 class="card-title">
+<svg fill="currentColor" height="16" viewBox="0 0 24 24" width="16"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"></path></svg>
+          Hoy
+        </h2>
+<span class="card-scope">Jornada actual</span>
+</div>
+<div class="metric-grid-compact">
+<div class="metric-subcard">
+<span class="metric-label">Ventas efectivas</span>
+<div class="metric-value primary tabular">3</div>
+</div>
+<div class="metric-subcard">
+<span class="metric-label">Total efectivo</span>
+<div class="metric-value tabular">Bs 18.750,00</div>
+</div>
+<div class="metric-subcard">
+<span class="metric-label">Unidades netas</span>
+<div class="metric-value tabular">7</div>
+</div>
+<div class="metric-subcard">
+<span class="metric-label">Ventas canceladas</span>
+<div class="metric-value tabular">1</div>
+</div>
+</div>
+</section>
+<!-- 2b. Period Orientation: Este mes (segundo) -->
+<section aria-label="Métricas de Este mes" class="card panel">
+<div class="card-title-row">
+<h2 class="card-title">
+<svg fill="currentColor" height="16" viewBox="0 0 24 24" width="16"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"></path></svg>
+          Este mes
+        </h2>
+<span class="card-scope">Mes calendario en curso</span>
+</div>
+<div class="metric-grid-compact">
+<div class="metric-subcard">
+<span class="metric-label">Ventas efectivas</span>
+<div class="metric-value primary tabular">42</div>
+</div>
+<div class="metric-subcard">
+<span class="metric-label">Total efectivo</span>
+<div class="metric-value tabular">Bs 286.430,00</div>
+</div>
+<div class="metric-subcard">
+<span class="metric-label">Unidades netas</span>
+<div class="metric-value tabular">96</div>
+</div>
+<div class="metric-subcard">
+<span class="metric-label">Ventas canceladas</span>
+<div class="metric-value tabular">3</div>
+</div>
+</div>
+</section>
+<!-- 3. Operational Attention: Alertas de stock -->
+<section aria-labelledby="stock-alerts-heading" class="stock-card panel">
+<div class="card-title-row">
+<h2 class="card-title" id="stock-alerts-heading" style="color: #5D370A;">
+<svg fill="#D9A043" height="18" viewBox="0 0 24 24" width="18"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"></path></svg>
+      Alertas de stock
+    </h2>
+<span class="card-scope">Catálogo activo</span>
+</div>
+<div class="record-list">
+<article class="record-item record">
+<div class="record-header">
+<div>
+<div class="record-name">Producto: Correa de distribución reforzada</div>
+<div class="record-facts" style="margin-top: 4px;">
+<span class="">ID: <strong class="tabular">#31</strong></span>
+<span class="">SKU: <strong class="sku-code">COR-DIST-031</strong></span>
+<span class="">Cantidad actual: <strong class="tabular" style="color: var(--text);">0 un.</strong></span>
+</div>
+</div>
+<span class="status-badge badge-out-stock status"><svg fill="currentColor" height="10" viewBox="0 0 24 24" width="10"><circle cx="12" cy="12" r="10"></circle></svg>Estado de alerta: Sin stock</span>
+</div>
+</article>
+<article class="record-item record">
+<div class="record-header">
+<div>
+<div class="record-name">Producto: Filtro de aire</div>
+<div class="record-facts" style="margin-top: 4px;">
+<span class="">ID: <strong class="tabular">#8</strong></span>
+<span class="">SKU: <strong class="sku-code">FLT-AIR-008</strong></span>
+<span class="">Cantidad actual: <strong class="tabular" style="color: var(--text);">1 un.</strong></span>
+</div>
+</div>
+<span class="status-badge badge-low-stock status"><svg fill="currentColor" height="10" viewBox="0 0 24 24" width="10"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"></path></svg>Estado de alerta: Stock bajo</span>
+</div>
+</article>
+</div>
+<button class="stock-action-btn" type="button">
+<svg fill="white" height="16" viewBox="0 0 24 24" width="16"><path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"></path></svg>
+    Ver en Inventario
+  </button>
+</section>
+<!-- 4. Supporting Context: Top Productos · Este mes -->
+<section aria-labelledby="top-products-heading" class="card panel">
+<div class="card-title-row">
+<h2 class="card-title" id="top-products-heading">Productos más vendidos · Este mes</h2>
+<span class="card-scope">Este mes</span>
+</div>
+<div class="record-list">
+<article class="record-item record">
+<div class="record-header">
+<div class="record-name">Producto: Filtro de aire</div>
+</div>
+<div class="record-facts">
+<span class="">ID: <strong class="tabular">#8</strong></span>
+<span class="">SKU: <strong class="sku-code">FLT-AIR-008</strong></span>
+<span class="">Unidades netas: <strong class="tabular" style="color: var(--text);">18 un.</strong></span>
+</div>
+</article>
+<article class="record-item record">
+<div class="record-header">
+<div class="record-name">Producto: Filtro de Aceite Sintético</div>
+</div>
+<div class="record-facts">
+<span class="">ID: <strong class="tabular">#1049</strong></span>
+<span class="">SKU: <strong class="sku-code">SKU-FLT-1049</strong></span>
+<span class="">Unidades netas: <strong class="tabular" style="color: var(--text);">14 un.</strong></span>
+</div>
+</article>
+<article class="record-item record">
+<div class="record-header">
+<div class="record-name">Producto: Pastillas de Freno Delanteras</div>
+</div>
+<div class="record-facts">
+<span class="">ID: <strong class="tabular">#8821</strong></span>
+<span class="">SKU: <strong class="sku-code">SKU-FRN-8821</strong></span>
+<span class="">Unidades netas: <strong class="tabular" style="color: var(--text);">9 un.</strong></span>
+</div>
+</article>
+</div>
+</section>
+<!-- 5. Supporting Context: Distribución de pagos · Este mes -->
+<section aria-labelledby="payment-dist-heading" class="card panel">
+<div class="card-title-row">
+<h2 class="card-title" id="payment-dist-heading">Distribución de pagos · Este mes</h2>
+<span class="card-scope">Este mes</span>
+</div>
+<div class="record-list">
+<div class="payment-compact-item record">
+<div style="font-size: 13px; color: var(--text);" class="">Método de pago: <strong>Efectivo</strong></div>
+<div style="font-size: 13px; color: var(--muted-text);" class="">Monto aplicado: <strong class="tabular" style="color: var(--text);">Bs 180.000,00</strong></div>
+</div>
+<div class="payment-compact-item record">
+<div style="font-size: 13px; color: var(--text);" class="">Método de pago: <strong>QR</strong></div>
+<div style="font-size: 13px; color: var(--muted-text);" class="">Monto aplicado: <strong class="tabular" style="color: var(--text);">Bs 106.430,00</strong></div>
+</div>
+</div>
+</section>
+<!-- 6. Supporting Context: Ventas recientes · Todas las fechas -->
+<section aria-labelledby="recent-sales-heading" class="card panel">
+<div class="card-title-row">
+<h2 class="card-title" id="recent-sales-heading">Ventas recientes · Todas las fechas</h2>
+<span class="card-scope">Todas las fechas</span>
+</div>
+<div class="record-list">
+<article class="record-item record">
+<div class="record-header">
+<div>
+<div class="tabular" style="font-weight: 700; font-size: 13px;">Venta: #00285</div>
+<div class="tabular" style="font-size: 12px; color: var(--muted-text); margin-top: 1px;">Fecha y hora: 14/10/2026, 17:15</div>
+</div>
+<span class="status-badge badge-confirmed status"><svg fill="currentColor" height="10" viewBox="0 0 24 24" width="10"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"></path></svg>Estado: Confirmada</span>
+</div>
+<div style="font-size: 12px; color: var(--muted-text); margin-top: 2px;" class="">Total persistido: <strong class="tabular" style="font-size: 13px; color: var(--text);">Bs 5.565,00</strong></div>
+</article>
+<article class="record-item record">
+<div class="record-header">
+<div>
+<div class="tabular" style="font-weight: 700; font-size: 13px;">Venta: #00284</div>
+<div class="tabular" style="font-size: 12px; color: var(--muted-text); margin-top: 1px;">Fecha y hora: 14/10/2026, 16:42</div>
+</div>
+<span class="status-badge badge-confirmed status"><svg fill="currentColor" height="10" viewBox="0 0 24 24" width="10"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"></path></svg>Estado: Confirmada</span>
+</div>
+<div style="font-size: 12px; color: var(--muted-text); margin-top: 2px;" class="">Total persistido: <strong class="tabular" style="font-size: 13px; color: var(--text);">Bs 442,50</strong></div>
+</article>
+<article class="record-item record">
+<div class="record-header">
+<div>
+<div class="tabular" style="font-weight: 700; font-size: 13px;">Venta: #00283</div>
+<div class="tabular" style="font-size: 12px; color: var(--muted-text); margin-top: 1px;">Fecha y hora: 14/10/2026, 15:10</div>
+</div>
+<span class="status-badge badge-cancelled status"><svg fill="currentColor" height="10" viewBox="0 0 24 24" width="10"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>Estado: Cancelada</span>
+</div>
+<div style="font-size: 12px; color: var(--muted-text); margin-top: 2px;" class="">Total persistido: <strong class="tabular" style="font-size: 13px; color: var(--muted-text);">Bs 1.200,00</strong></div>
+</article>
+<article class="record-item record">
+<div class="record-header">
+<div>
+<div class="tabular" style="font-weight: 700; font-size: 13px;">Venta: #00282</div>
+<div class="tabular" style="font-size: 12px; color: var(--muted-text); margin-top: 1px;">Fecha y hora: 14/10/2026, 11:25</div>
+</div>
+<span class="status-badge badge-confirmed status"><svg fill="currentColor" height="10" viewBox="0 0 24 24" width="10"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"></path></svg>Estado: Confirmada</span>
+</div>
+<div style="font-size: 12px; color: var(--muted-text); margin-top: 2px;" class="">Total persistido: <strong class="tabular" style="font-size: 13px; color: var(--text);">Bs 12.742,50</strong></div>
+</article>
+</div>
+</section>
+<!-- Notes & Boundary -->
+
+</main>
+
+
+</body></html>
