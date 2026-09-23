@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type FormEvent, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { createElement, type FormEvent, useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
 import { browseProducts, type ProductBrowseResult, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
@@ -23,7 +23,16 @@ export function createInventoryCatalogInteraction(searchActiveProducts: (query: 
 }
 
 export function InventoryOperationChoices({ operation, onChange, disabled = false }: { operation: InventoryState["operation"]; onChange: (operation: InventoryState["operation"]) => void; disabled?: boolean }) {
-  return createElement(Field, { kind: "select", label: "Operación", control: createElement("select", { value: operation, disabled, onChange: (event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value as InventoryState["operation"]) }, createElement("option", { value: "stock_entry" }, "Entrada de stock"), createElement("option", { value: "physical_count" }, "Conteo físico")) } as never);
+  const name = useId();
+  return createElement("fieldset", { "data-ui-inventory-choices": true, disabled },
+    createElement("legend", null, "Operación"),
+    createElement("div", { "data-ui-inventory-choice-list": true },
+      ([
+        ["stock_entry", "Entrada de stock", "Sumar unidades al inventario"],
+        ["physical_count", "Conteo físico", "Ajuste directo de existencias"],
+      ] as const).map(([value, label, description]) => createElement("label", { key: value, "data-ui-inventory-choice": true },
+        createElement("input", { type: "radio", name, value, checked: operation === value, disabled, onChange: () => onChange(value) }),
+        createElement("span", null, createElement("strong", null, label), createElement("small", null, description))))));
 }
 
 export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null) => void; onInventoryAlertsRefresh?: () => void; initialStockState?: ProductStockState }) {
@@ -105,24 +114,29 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     "data-ui-inventory": true,
     "data-ui-density": sparseBrowser ? "sparse" : undefined,
   },
-    createElement("h1", { id: "inventory-heading" }, "Inventario"),
-    createElement("p", null, inventoryScreenDescription),
+    createElement("header", { "data-ui-inventory-header": true },
+      createElement("h1", { id: "inventory-heading" }, "Inventario"),
+      createElement("p", null, inventoryScreenDescription)),
     createElement("div", { "data-ui-inventory-layout": true },
       createElement(Panel, { label: "Operación de inventario" } as never,
+        !state.product && browser.status === "results" ? createElement("p", { "data-ui-inventory-intro": true }, "Seleccioná un producto para comenzar.") : null,
         !state.product ? createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => dispatch(catalog.select(product)), actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
-          createElement("div", { "data-ui-inventory-selection": true }, createElement("strong", null, state.product.name), createElement("span", { "data-ui-kind": "sku" }, `SKU: ${(state.product as Product).sku}`), createElement("span", null, `Stock actual: ${state.product.available_quantity}`)),
+          createElement("div", { "data-ui-inventory-selection": true },
+            createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, state.product.name), createElement("span", { "data-ui-kind": "sku" }, `SKU: ${(state.product as Product).sku}`)),
+            createElement("span", { "data-ui-inventory-stock": true }, `Stock actual: ${state.product.available_quantity}`)),
           createElement(InventoryOperationChoices, { operation: state.operation, disabled: pending, onChange: (operation) => dispatch({ type: "operation_changed", operation }) }),
-          state.operation === "stock_entry"
+          createElement("div", { "data-ui-inventory-fields": true }, state.operation === "stock_entry"
             ? createElement(Field, { kind: "quantity", label: "Cantidad (unidades enteras)", hint: "Solo unidades enteras positivas.", error: value && !whole ? "Ingresá una cantidad entera mayor que cero." : undefined, control: createElement("input", { min: 1, value, disabled: pending, onChange: (event) => dispatch({ type: "entry_quantity_changed", value: event.target.value }) }) } as never)
             : createElement(Field, { kind: "quantity", label: "Conteo físico (unidades enteras)", error: value && !whole ? "Ingresá un conteo entero igual o mayor que cero." : undefined, control: createElement("input", { min: 0, value, disabled: pending, onChange: (event) => dispatch({ type: "physical_count_changed", value: event.target.value }) }) } as never),
-          createElement(Field, { kind: "text", label: state.operation === "stock_entry" ? "Nota (opcional)" : "Motivo", error: state.operation === "physical_count" && !state.reason.trim() ? "Ingresá el motivo del conteo físico." : undefined, control: createElement("input", { required: state.operation === "physical_count", value: state.operation === "stock_entry" ? state.note : state.reason, disabled: pending, onChange: (event) => dispatch({ type: state.operation === "stock_entry" ? "note_changed" : "reason_changed", value: event.target.value } as Parameters<typeof dispatch>[0]) }) } as never),
+            createElement(Field, { kind: "text", label: state.operation === "stock_entry" ? "Nota (opcional)" : "Motivo", error: state.operation === "physical_count" && !state.reason.trim() ? "Ingresá el motivo del conteo físico." : undefined, control: createElement("input", { required: state.operation === "physical_count", value: state.operation === "stock_entry" ? state.note : state.reason, disabled: pending, onChange: (event) => dispatch({ type: state.operation === "stock_entry" ? "note_changed" : "reason_changed", value: event.target.value } as Parameters<typeof dispatch>[0]) }) } as never)),
           projection !== null ? createElement("p", { "data-ui-inventory-projection": true }, `Saldo proyectado: ${projection}`) : null,
           state.advisory_notice ? createElement(Feedback, { kind: "stale" } as never, "Saldo proyectado desactualizado. Revisá el stock actual.") : null,
-          createElement("div", { "data-ui-inventory-actions": true }, createElement(Action, { variant: "primary", pending, pendingLabel: "Guardando…", disabled: !valid, onClick: confirm }, "Confirmar operación"), createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => dispatch({ type: "discard" }) }, "Nueva operación")),
+          createElement("div", { "data-ui-inventory-actions": true }, createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => dispatch({ type: "discard" }) }, "Nueva operación"), createElement(Action, { variant: "primary", pending, pendingLabel: "Guardando…", disabled: !valid, onClick: confirm }, "Confirmar operación")),
           state.result ? createElement(Feedback, { kind: "success" } as never, `Operación guardada. Stock actual: ${state.result.resulting_quantity}.`) : null,
           state.feedback ? createElement(Feedback, { kind: "error" } as never, createElement("span", null, state.feedback, " ", createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar"))) : null) : null),
       createElement(Panel, { label: "Alertas de stock" } as never,
+        createElement("p", { "data-ui-inventory-alert-description": true }, "Productos en catálogo activo con stock crítico o agotado. Solo lectura."),
         alertState === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando alertas de stock…")
           : alertState === "unavailable" ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "Las alertas de stock no están disponibles. ", createElement(Action, { variant: "tertiary", onClick: refreshAlerts }, "Reintentar")))
           : sortedAlerts.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "No hay alertas de stock.")
