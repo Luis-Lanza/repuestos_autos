@@ -72,6 +72,7 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 - GREEN: `npx tsx --test --import ./test/react-dom.ts src/commands/catalog.test.ts src/ui/catalog/catalog-maintenance-screen.mounted.test.ts src/ui/catalog/product-browser.test.ts && npm run typecheck:tests` — passed (39 tests and test typecheck).
 - TRIANGULATE: covered picker cancellation, path-bearing/malformed native payload rejection, oversized/noncanonical/non-JPEG thumbnail rejection, image replace/remove, duplicate-action pending lock, stale authoritative-detail recovery, and browse/detail thumbnail absent/present states. Browse payload projections do not expose image source fields.
 - Desktop runtime verification was not attempted, as requested.
+- Windows desktop compile fix: `choose_product_image_command` now returns `Result<ProductImageResponse, String>`, retains its typed safe outcomes inside `Ok`, and moves an owned `AppHandle` into the picker setup after releasing the `WebviewWindow`. The adjacent unnecessary `mut` on the selected image file was removed. Focused non-desktop command tests pass; desktop-feature compilation still requires Windows recheck.
 - T3B contract correction: Rust now returns `image_unavailable` for a product at the requested revision that has no thumbnail, keeps stale revisions as `stale_catalog_record`, and keeps a missing product as `catalog_unavailable`; mounted tests verify absence renders `Sin imagen` without preview-load feedback and real unavailable outcomes still show feedback. Strict TDD RED: the Rust distinction test failed because absence returned `catalog_unavailable`, then exposed stale absence incorrectly mapping to `image_unavailable`; GREEN: `cargo test --manifest-path src-tauri/Cargo.toml --test catalog_maintenance_commands` passed (5 tests). Required TypeScript verification: `npx tsx --test --import ./test/react-dom.ts src/commands/catalog.test.ts src/ui/catalog/catalog-maintenance-screen.mounted.test.ts src/ui/catalog/product-browser.test.ts && npm run typecheck:tests` — passed (40 tests and typecheck).
 
 ## T4A Evidence
@@ -99,7 +100,7 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 - TRIANGULATE: category and product archive dialogs make no IPC request before confirmation; Cancel and Escape make no mutation and restore focus to the opener, including when the confirmation is stacked over the product edit dialog; confirmation sends the captured entity ID/revision exactly once; pending disables confirmation and dismissal; blocked/stale outcomes retain existing feedback and recovery; reactivation remains direct; successful mutations retain existing refresh.
 
 ## Blockers
-- T3A focused command/storage tests pass, but desktop-feature command registration remains unverified on this Linux host because `glib-2.0` and `gio-2.0` development pkg-config files are unavailable. Verify it on Windows or a Linux host with those development packages before marking T3A complete.
+- T3A focused command/storage tests pass. The Windows desktop command compile issue in `choose_product_image_command` has been corrected, but desktop-feature compilation and command registration still require a Windows recheck before marking T3A complete.
 
 ## Constraints
 - Preserve all Catalog domain validation, stale async handling, request sequencing, and recovery behavior.

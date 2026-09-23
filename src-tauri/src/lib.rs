@@ -411,42 +411,44 @@ async fn choose_product_image_command<R: Runtime>(
     state: tauri::State<'_, AppState>,
     window: tauri::WebviewWindow<R>,
     request: commands::catalog::ProductImageRequest,
-) -> commands::catalog::ProductImageResponse {
+) -> Result<commands::catalog::ProductImageResponse, String> {
     let Ok(request) = commands::catalog::parse_product_image_request(request) else {
-        return commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+        return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
             code: "validation_error", message: "Review the catalog values and try again.",
-        });
+        }));
     };
+    let app_handle = window.app_handle().clone();
+    drop(window);
     let selection = commands::backup::select_callback_path(|complete| {
         #[cfg(test)]
-        { let _ = window; complete(None); }
+        { let _ = app_handle; complete(None); }
         #[cfg(not(test))]
-        { window.app_handle().dialog().file().add_filter("Product image", &["png", "jpg", "jpeg", "webp"]).pick_file(move |path| {
+        { app_handle.dialog().file().add_filter("Product image", &["png", "jpg", "jpeg", "webp"]).pick_file(move |path| {
             complete(path.and_then(|path| path.into_path().ok()));
         }); }
     }).await;
     let commands::backup::PathSelection::Selected { path } = selection else {
-        return commands::catalog::ProductImageResponse::Cancelled;
+        return Ok(commands::catalog::ProductImageResponse::Cancelled);
     };
     let read_result = read_selected_image(&path);
     let (mime, bytes) = match read_result {
         Ok(value) => value,
-        Err(()) => return commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+        Err(()) => return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
             code: "image_unavailable", message: "The selected image could not be used.",
-        }),
+        })),
     };
-    state.with_write(|connection| Ok(commands::catalog::persist_selected_product_image(
+    Ok(state.with_write(|connection| Ok(commands::catalog::persist_selected_product_image(
         connection, request.product_id, request.expected_revision, mime, bytes,
     ))).unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
         code: "persistence_failure", message: "The catalog could not be completed.",
-    }))
+    })))
 }
 
 #[cfg(feature = "desktop")]
 fn read_selected_image(path: &std::path::Path) -> Result<(&'static str, Vec<u8>), ()> {
     use std::io::Read;
     const MAX_BYTES: u64 = application::catalog::MAX_PRODUCT_IMAGE_BYTES as u64;
-    let mut file = std::fs::File::open(path).map_err(|_| ())?;
+    let file = std::fs::File::open(path).map_err(|_| ())?;
     if file.metadata().map_err(|_| ())?.len() > MAX_BYTES { return Err(()); }
     let mut bytes = Vec::new();
     file.take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|_| ())?;
