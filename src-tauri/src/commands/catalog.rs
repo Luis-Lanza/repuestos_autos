@@ -59,6 +59,91 @@ pub struct EditAttributeValueRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductImageRequest {
+    pub product_id: i64,
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProductImageResponse {
+    Success { product_id: i64, revision: i64 },
+    Cancelled,
+    Error(CatalogMaintenanceError),
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProductImageThumbnailResponse {
+    Success { product_id: i64, revision: i64, mime_type: &'static str, encoding: &'static str, bytes: String },
+    Error(CatalogMaintenanceError),
+}
+
+pub fn parse_product_image_request(request: ProductImageRequest) -> Result<ProductImageRequest, ()> {
+    if request.product_id <= 0 || request.expected_revision < 0 { Err(()) } else { Ok(request) }
+}
+
+#[cfg(feature = "desktop")]
+pub(crate) fn persist_selected_product_image(connection: &mut rusqlite::Connection, product_id: i64, expected_revision: i64, mime_type: &str, bytes: Vec<u8>) -> ProductImageResponse {
+    if product_id <= 0 || expected_revision < 0 { return ProductImageResponse::Error(validation_error()); }
+    let Ok(image) = catalog::ProductImage::new(mime_type, bytes) else { return ProductImageResponse::Error(validation_error()); };
+    match catalog::replace_product_image(connection, product_id, expected_revision, &image) {
+        Ok(revision) => ProductImageResponse::Success { product_id, revision },
+        Err(error) => ProductImageResponse::Error(map_image_error(error)),
+    }
+}
+
+pub fn remove_product_image(connection: &mut rusqlite::Connection, request: ProductImageRequest) -> ProductImageResponse {
+    let Ok(request) = parse_product_image_request(request) else { return ProductImageResponse::Error(validation_error()); };
+    match catalog::remove_product_image(connection, request.product_id, request.expected_revision) {
+        Ok(revision) => ProductImageResponse::Success { product_id: request.product_id, revision },
+        Err(error) => ProductImageResponse::Error(map_image_error(error)),
+    }
+}
+
+pub fn catalog_product_image_thumbnail(connection: &rusqlite::Connection, request: ProductImageRequest) -> ProductImageThumbnailResponse {
+    let Ok(request) = parse_product_image_request(request) else { return ProductImageThumbnailResponse::Error(validation_error()); };
+    match catalog::read_product_image_thumbnail(connection, request.product_id) {
+        Ok(Some(thumbnail)) if thumbnail.revision == request.expected_revision => ProductImageThumbnailResponse::Success {
+            product_id: thumbnail.product_id, revision: thumbnail.revision, mime_type: thumbnail.mime_type,
+            encoding: "base64", bytes: encode_base64(&thumbnail.bytes),
+        },
+        Ok(Some(_)) => ProductImageThumbnailResponse::Error(stale_catalog_error()),
+        Ok(None) => match catalog::read_catalog_metadata_detail(connection, CatalogTarget::Product, request.product_id) {
+            Ok(Some(catalog::CatalogMetadataDetail::Product { revision, .. })) if revision == request.expected_revision => ProductImageThumbnailResponse::Error(image_unavailable_error()),
+            Ok(Some(_)) => ProductImageThumbnailResponse::Error(stale_catalog_error()),
+            Ok(None) => ProductImageThumbnailResponse::Error(unavailable_error()),
+            Err(_) => ProductImageThumbnailResponse::Error(persistence_error()),
+        },
+        Err(_) => ProductImageThumbnailResponse::Error(persistence_error()),
+    }
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let value = ((chunk[0] as u32) << 16)
+            | ((chunk.get(1).copied().unwrap_or(0) as u32) << 8)
+            | chunk.get(2).copied().unwrap_or(0) as u32;
+        encoded.push(TABLE[((value >> 18) & 63) as usize] as char);
+        encoded.push(TABLE[((value >> 12) & 63) as usize] as char);
+        encoded.push(if chunk.len() > 1 { TABLE[((value >> 6) & 63) as usize] as char } else { '=' });
+        encoded.push(if chunk.len() > 2 { TABLE[(value & 63) as usize] as char } else { '=' });
+    }
+    encoded
+}
+
+fn map_image_error(error: catalog::ProductImagePersistenceError) -> CatalogMaintenanceError {
+    match error {
+        catalog::ProductImagePersistenceError::MissingProduct => unavailable_error(),
+        catalog::ProductImagePersistenceError::StaleCatalogRecord => stale_catalog_error(),
+        catalog::ProductImagePersistenceError::PersistenceFailure => persistence_error(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "target", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EditCatalogRequest {
     Category {
@@ -104,6 +189,8 @@ pub struct CatalogMaintenanceRecord {
     pub label: String,
     pub activity: &'static str,
     pub revision: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_product_count: Option<i64>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct CatalogMaintenanceError {
@@ -165,22 +252,20 @@ pub fn search_products(
 pub fn list_catalog_categories(
     connection: &rusqlite::Connection,
 ) -> Result<CatalogMaintenanceListResponse, String> {
-    connection
-        .prepare("SELECT id, name, active, revision FROM categories ORDER BY name LIMIT 100")
-        .and_then(|mut statement| {
-            statement
-                .query_map([], |row| {
-                    Ok(CatalogMaintenanceRecord {
-                        entity_id: row.get(0)?,
-                        target: "category",
-                        label: row.get(1)?,
-                        activity: activity_name(row.get(2)?),
-                        revision: row.get(3)?,
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()
+    catalog::list_category_metadata(connection, SqliteCatalogRepository)
+        .map(|categories| CatalogMaintenanceListResponse::Success {
+            records: categories
+                .into_iter()
+                .map(|category| CatalogMaintenanceRecord {
+                    entity_id: category.category_id,
+                    target: "category",
+                    label: category.name,
+                    activity: if category.active { "active" } else { "archived" },
+                    revision: category.revision,
+                    active_product_count: Some(category.active_product_count),
+                })
+                .collect(),
         })
-        .map(|records| CatalogMaintenanceListResponse::Success { records })
         .map_err(|_| "persistence_failure".into())
 }
 
@@ -198,6 +283,7 @@ pub fn list_catalog_maintenance(
                         label: row.get(1)?,
                         activity: activity_name(row.get(2)?),
                         revision: row.get(3)?,
+                        active_product_count: None,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()
@@ -213,6 +299,7 @@ pub fn list_catalog_maintenance(
                         label: row.get(1)?,
                         activity: activity_name(row.get(2)?),
                         revision: row.get(3)?,
+                        active_product_count: None,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()
@@ -251,6 +338,7 @@ pub fn maintain_catalog(
                 label: String::new(),
                 activity: activity(snapshot.activity),
                 revision: snapshot.revision,
+                active_product_count: None,
             }),
             Err(error) => CatalogMaintenanceResponse::Error(match error {
                 catalog::MaintainCatalogError::LifecycleBlocked => CatalogMaintenanceError {
@@ -319,6 +407,7 @@ pub fn edit_catalog(
                 label: String::new(),
                 activity: activity(snapshot.activity),
                 revision: snapshot.revision,
+                active_product_count: None,
             }),
             Err(error) => CatalogMaintenanceResponse::Error(map_maintenance_error(error)),
         },
@@ -398,10 +487,22 @@ fn persistence_error() -> CatalogMaintenanceError {
         message: "The catalog could not be completed.",
     }
 }
+fn stale_catalog_error() -> CatalogMaintenanceError {
+    CatalogMaintenanceError {
+        code: "stale_catalog_record",
+        message: "This catalog record changed. Reload and try again.",
+    }
+}
 fn unavailable_error() -> CatalogMaintenanceError {
     CatalogMaintenanceError {
         code: "catalog_unavailable",
         message: "This catalog record is unavailable.",
+    }
+}
+fn image_unavailable_error() -> CatalogMaintenanceError {
+    CatalogMaintenanceError {
+        code: "image_unavailable",
+        message: "This product image is unavailable.",
     }
 }
 pub fn map_command_state_error(error: &str) -> CatalogMaintenanceError {

@@ -25,6 +25,7 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }

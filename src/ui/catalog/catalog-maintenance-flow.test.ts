@@ -3,11 +3,20 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { createCatalogEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, formForCatalogDetail, initialCatalogMaintenanceState } from "./catalog-maintenance-flow.ts";
+import { createCatalogEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState } from "./catalog-maintenance-flow.ts";
 import { CatalogMaintenanceRecovery, CatalogMetadataEditor, CatalogSuccessNotice, loadCatalogDetail, reloadCatalogRecords } from "./catalog-maintenance-screen.ts";
 import { createCatalogMaintenanceCommands } from "../../commands/catalog.ts";
 
 const archived = { entity_id: 1, target: "product" as const, label: "Filter", activity: "archived" as const, revision: 2 };
+
+test("filters category management rows by category name without changing authoritative metadata", () => {
+  const categories = [
+    { entity_id: 1, target: "category" as const, label: "Filtros", activity: "active" as const, revision: 2, active_product_count: 8 },
+    { entity_id: 2, target: "category" as const, label: "Pastillas", activity: "archived" as const, revision: 3, active_product_count: 0 },
+  ];
+  assert.deepEqual(filterCatalogCategories(categories, "  past "), [categories[1]]);
+  assert.deepEqual(filterCatalogCategories(categories, " "), categories);
+});
 
 test("surfaces loading, unavailable, validation, conflict, failure, recovery, and archived records", () => {
   const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "load_started" });

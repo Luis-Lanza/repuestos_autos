@@ -1,10 +1,14 @@
-use rusqlite::{Result, Transaction};
+use rusqlite::{Connection, Result, Transaction};
 
 use crate::domain::catalog::{
     AttributeDefinition, CatalogSnapshot, CatalogTarget, TransitionPlan, ValidatedAttributeValue,
 };
 
-use super::CreateProductInput;
+use super::{CategoryMetadataSummary, CreateProductInput};
+
+pub trait CatalogCategoryRepository {
+    fn list_metadata(&self, connection: &Connection) -> Result<Vec<CategoryMetadataSummary>>;
+}
 
 pub trait CatalogMetadataRepository {
     fn load(

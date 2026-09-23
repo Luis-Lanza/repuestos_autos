@@ -1,3 +1,4 @@
+use image::GenericImageView;
 use rusqlite::{params, Connection, OptionalExtension, Result, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +17,8 @@ pub use bootstrap_demo::{
 };
 
 use repository::{
-    CatalogMaintenanceRepository, CatalogMetadataRepository, CreateProductRepository,
+    CatalogCategoryRepository, CatalogMaintenanceRepository, CatalogMetadataRepository,
+    CreateProductRepository,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,6 +269,282 @@ fn map_maintenance_error(error: MaintenanceError) -> MaintainCatalogError {
     }
 }
 
+pub const MAX_PRODUCT_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_PRODUCT_IMAGE_DIMENSION: u32 = 1600;
+pub const MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION: u32 = 256;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductImage {
+    mime_type: &'static str,
+    bytes: Vec<u8>,
+    thumbnail: Option<ProductImageThumbnail>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductImageThumbnail {
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductImageValidationError {
+    InvalidImage,
+    UnsupportedImage,
+    ImageTooLarge,
+}
+
+impl ProductImage {
+    pub fn new(
+        mime_type: &str,
+        bytes: Vec<u8>,
+    ) -> std::result::Result<Self, ProductImageValidationError> {
+        if bytes.is_empty() {
+            return Err(ProductImageValidationError::InvalidImage);
+        }
+        if bytes.len() > MAX_PRODUCT_IMAGE_BYTES {
+            return Err(ProductImageValidationError::ImageTooLarge);
+        }
+        let (expected_mime, format) = match mime_type {
+            "image/png" => ("image/png", image::ImageFormat::Png),
+            "image/jpeg" => ("image/jpeg", image::ImageFormat::Jpeg),
+            "image/webp" => ("image/webp", image::ImageFormat::WebP),
+            _ => return Err(ProductImageValidationError::UnsupportedImage),
+        };
+        let dimensions = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format)
+            .into_dimensions()
+            .map_err(|_| ProductImageValidationError::InvalidImage)?;
+        if dimensions.0 > MAX_PRODUCT_IMAGE_DIMENSION
+            || dimensions.1 > MAX_PRODUCT_IMAGE_DIMENSION
+        {
+            return Err(ProductImageValidationError::ImageTooLarge);
+        }
+        let decoded = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format)
+            .decode()
+            .map_err(|_| ProductImageValidationError::InvalidImage)?;
+        let thumbnail = Self::derive_thumbnail(&decoded)?;
+        Ok(Self {
+            mime_type: expected_mime,
+            bytes,
+            thumbnail: Some(thumbnail),
+        })
+    }
+
+    pub fn mime_type(&self) -> &'static str {
+        self.mime_type
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn thumbnail(&self) -> Option<&ProductImageThumbnail> {
+        self.thumbnail.as_ref()
+    }
+
+    fn derive_thumbnail(
+        image: &image::DynamicImage,
+    ) -> std::result::Result<ProductImageThumbnail, ProductImageValidationError> {
+        let thumbnail = if image.width() <= MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION
+            && image.height() <= MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION
+        {
+            image.clone()
+        } else {
+            image.thumbnail(
+                MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION,
+                MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION,
+            )
+        }
+        .to_rgb8();
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(thumbnail)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Jpeg,
+            )
+            .map_err(|_| ProductImageValidationError::InvalidImage)?;
+        Ok(ProductImageThumbnail { bytes })
+    }
+
+    pub(crate) fn from_persisted(
+        mime_type: &str,
+        bytes: Vec<u8>,
+        thumbnail_mime_type: Option<String>,
+        thumbnail_bytes: Option<Vec<u8>>,
+    ) -> std::result::Result<Self, ProductImageValidationError> {
+        let mut image = Self::new(mime_type, bytes)?;
+        match (thumbnail_mime_type.as_deref(), thumbnail_bytes) {
+            (None, None) => image.thumbnail = None,
+            (Some("image/jpeg"), Some(bytes)) => {
+                if bytes.len() > MAX_PRODUCT_IMAGE_BYTES {
+                    return Err(ProductImageValidationError::ImageTooLarge);
+                }
+                let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+                    .with_guessed_format()
+                    .map_err(|_| ProductImageValidationError::InvalidImage)?;
+                if reader.format() != Some(image::ImageFormat::Jpeg) {
+                    return Err(ProductImageValidationError::InvalidImage);
+                }
+                let decoded = reader
+                    .decode()
+                    .map_err(|_| ProductImageValidationError::InvalidImage)?;
+                let dimensions = decoded.dimensions();
+                if dimensions.0 > MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION
+                    || dimensions.1 > MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION
+                {
+                    return Err(ProductImageValidationError::ImageTooLarge);
+                }
+                image.thumbnail = Some(ProductImageThumbnail { bytes });
+            }
+            _ => return Err(ProductImageValidationError::InvalidImage),
+        }
+        Ok(image)
+    }
+}
+
+impl ProductImageThumbnail {
+    pub fn mime_type(&self) -> &'static str {
+        "image/jpeg"
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProductImagePersistenceError {
+    MissingProduct,
+    StaleCatalogRecord,
+    PersistenceFailure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductImageThumbnailRead {
+    pub product_id: i64,
+    pub revision: i64,
+    pub mime_type: &'static str,
+    pub bytes: Vec<u8>,
+}
+
+pub fn replace_product_image(
+    connection: &mut Connection,
+    product_id: i64,
+    expected_revision: i64,
+    image: &ProductImage,
+) -> std::result::Result<i64, ProductImagePersistenceError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    let revision = product_revision(&transaction, product_id)?;
+    check_image_revision(revision, expected_revision)?;
+    SqliteCatalogRepository
+        .replace_product_image(&transaction, product_id, image)
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    let next_revision = advance_product_revision(&transaction, product_id, expected_revision)?;
+    transaction
+        .commit()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    Ok(next_revision)
+}
+
+pub fn read_product_image(
+    connection: &Connection,
+    product_id: i64,
+) -> std::result::Result<Option<ProductImage>, ProductImagePersistenceError> {
+    SqliteCatalogRepository
+        .read_product_image(connection, product_id)
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
+        .map(|(mime_type, bytes, thumbnail_mime_type, thumbnail_bytes)| {
+            ProductImage::from_persisted(
+                &mime_type,
+                bytes,
+                thumbnail_mime_type,
+                thumbnail_bytes,
+            )
+            .map_err(|_| ProductImagePersistenceError::PersistenceFailure)
+        })
+        .transpose()
+}
+
+pub fn remove_product_image(
+    connection: &mut Connection,
+    product_id: i64,
+    expected_revision: i64,
+) -> std::result::Result<i64, ProductImagePersistenceError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    let revision = product_revision(&transaction, product_id)?;
+    check_image_revision(revision, expected_revision)?;
+    SqliteCatalogRepository
+        .remove_product_image(&transaction, product_id)
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    let next_revision = advance_product_revision(&transaction, product_id, expected_revision)?;
+    transaction
+        .commit()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    Ok(next_revision)
+}
+
+pub fn read_product_image_thumbnail(
+    connection: &Connection,
+    product_id: i64,
+) -> std::result::Result<Option<ProductImageThumbnailRead>, ProductImagePersistenceError> {
+    let Some((revision, mime_type, bytes)) = connection.query_row(
+        "SELECT p.revision, i.thumbnail_mime_type, i.thumbnail_bytes
+         FROM products p JOIN product_images i ON i.product_id = p.id WHERE p.id = ?1",
+        [product_id],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)),
+    ).optional().map_err(|_| ProductImagePersistenceError::PersistenceFailure)? else {
+        return Ok(None);
+    };
+    let (Some(mime_type), Some(bytes)) = (mime_type, bytes) else {
+        return Ok(None);
+    };
+    if mime_type != "image/jpeg" || bytes.len() > MAX_PRODUCT_IMAGE_BYTES {
+        return Err(ProductImagePersistenceError::PersistenceFailure);
+    }
+    let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    if reader.format() != Some(image::ImageFormat::Jpeg) {
+        return Err(ProductImagePersistenceError::PersistenceFailure);
+    }
+    let dimensions = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
+        .into_dimensions()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    if dimensions.0 > MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION
+        || dimensions.1 > MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION
+    {
+        return Err(ProductImagePersistenceError::PersistenceFailure);
+    }
+    image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
+        .decode()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    Ok(Some(ProductImageThumbnailRead { product_id, revision, mime_type: "image/jpeg", bytes }))
+}
+
+fn product_revision(connection: &Connection, product_id: i64) -> Result<i64, ProductImagePersistenceError> {
+    connection.query_row("SELECT revision FROM products WHERE id = ?1", [product_id], |row| row.get(0))
+        .optional()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
+        .ok_or(ProductImagePersistenceError::MissingProduct)
+}
+
+fn check_image_revision(current: i64, expected: i64) -> Result<(), ProductImagePersistenceError> {
+    if expected < 0 || current != expected { Err(ProductImagePersistenceError::StaleCatalogRecord) } else { Ok(()) }
+}
+
+fn advance_product_revision(connection: &Connection, product_id: i64, expected: i64) -> Result<i64, ProductImagePersistenceError> {
+    let changed = connection.execute("UPDATE products SET revision = revision + 1 WHERE id = ?1 AND revision = ?2 AND revision < 9223372036854775807", rusqlite::params![product_id, expected])
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    if changed != 1 { return Err(ProductImagePersistenceError::StaleCatalogRecord); }
+    Ok(expected + 1)
+}
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct ProductSearchResult {
     pub product_id: i64,
@@ -465,6 +743,22 @@ pub struct CategoryField {
     pub field_type: String,
     pub required: bool,
     pub options: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CategoryMetadataSummary {
+    pub category_id: i64,
+    pub name: String,
+    pub active: bool,
+    pub revision: i64,
+    pub active_product_count: i64,
+}
+
+pub fn list_category_metadata<Repository: CatalogCategoryRepository>(
+    connection: &Connection,
+    repository: Repository,
+) -> Result<Vec<CategoryMetadataSummary>> {
+    repository.list_metadata(connection)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

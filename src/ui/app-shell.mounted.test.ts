@@ -150,5 +150,9 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /(?:^|\n)\[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /\[data-ui-product-browser="sales"\] \[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /data-ui-product-browser-pages[^}]*flex:\s*0 0 auto/);
+  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-catalog-search-actions\][^}]*display:\s*flex/);
+  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\][^}]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(source, /@media \(max-width: 960px\)[\s\S]*\[data-ui-catalog-workspace\] \[data-ui-product-browser-list\]\[data-ui-catalog-gallery="true"\][^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(source, /\[data-ui-catalog-workspace\] \[data-ui-catalog-view-toggle\] > button[^}]*min-block-size:\s*var\(--size-control-default\)/);
   assert.doesNotMatch(source, /data-ui-catalog-master[^}]*max-block-size:\s*(?:520|208)px/);
 });

@@ -8,7 +8,7 @@ use repuestos_autos::domain::sales::{Payment, PostSaleDomainError, RequestedRetu
 use repuestos_autos::domain::{MoneyCentavos, Quantity, RequestId};
 use repuestos_autos::infrastructure::sqlite::{
     open_database, production_database_config, SqlitePostSaleRepository,
-    SqlitePostSaleTransactionFactory,
+    SqlitePostSaleTransactionFactory, CURRENT_SCHEMA_VERSION,
 };
 use rusqlite::{types::Value, Connection};
 use std::{
@@ -185,7 +185,7 @@ fn sqlite_post_sale_lifecycle_commits_and_rolls_back_in_a_migrated_database() {
                 .repository_transaction()
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            15
+            CURRENT_SCHEMA_VERSION
         );
         transaction
             .repository_transaction()
