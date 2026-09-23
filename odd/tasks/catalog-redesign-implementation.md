@@ -24,6 +24,7 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 - [ ] T4B2 Add dedicated Category Management subview and preserve lifecycle/recovery behavior (mounted and flow tests pass; the required runner's test typecheck is currently blocked by an existing T4B1 type error in `src/commands/catalog.ts:78`).
 - [x] T4C Add archive confirmation before mutation; preserve direct reactivation.
 - [ ] T5 Verify behavior, accessibility, migrations, backup, and visual contracts.
+- [x] T6 Fix user-observed Windows Catalog UI regressions: remove the legacy category pane from Products; keep persistent Table/Gallery buttons active and browse state intact; show bounded thumbnails or an accessible `Sin imagen` Gallery placeholder; make Category Management return an accessible, reliable button; add mounted/flow/product-browser regression coverage.
 
 ## Evidence
 - Next schema version is 16; migration and current-schema validation live under `src-tauri/src/infrastructure/sqlite/`.
@@ -98,6 +99,10 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 - Strict TDD RED: the exact focused runner failed in the mounted category and product flows because archive actions invoked lifecycle IPC immediately instead of opening a confirmation.
 - GREEN: `npx tsx --test --import ./test/react-dom.ts src/ui/catalog/catalog-maintenance-screen.mounted.test.ts src/ui/catalog/catalog-maintenance-flow.test.ts src/ui/visual-system/confirmation-dialog.mounted.test.ts && npm run typecheck:tests` — passed (43 tests and test typecheck).
 - TRIANGULATE: category and product archive dialogs make no IPC request before confirmation; Cancel and Escape make no mutation and restore focus to the opener, including when the confirmation is stacked over the product edit dialog; confirmation sends the captured entity ID/revision exactly once; pending disables confirmation and dismissal; blocked/stale outcomes retain existing feedback and recovery; reactivation remains direct; successful mutations retain existing refresh.
+
+## T6 Evidence
+- Strict TDD RED: the authorized runner failed in the mounted Catalog suite because the regression tests still depended on the removed legacy category pane; the product-browser regression failed because Gallery omitted image-less products. The runner's TypeScript typecheck stage did not run after test failure.
+- GREEN/TRIANGULATE: `npx tsx --test --import ./test/react-dom.ts src/ui/catalog/catalog-maintenance-screen.mounted.test.ts src/ui/catalog/catalog-maintenance-flow.test.ts src/ui/catalog/product-browser.test.ts && npm run typecheck:tests` — passed (39 tests and test typecheck). Covers removed side-pane UI while Category Management remains; keyboard-operable return and browse context; Table/Gallery button state and persisted switch-back without a new browse request; gallery image/placeholder including invalid-source rejection; category-flow retention.
 
 ## Blockers
 - T3A focused command/storage tests pass. The Windows desktop command compile issue in `choose_product_image_command` has been corrected, but desktop-feature compilation and command registration still require a Windows recheck before marking T3A complete.

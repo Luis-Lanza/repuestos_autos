@@ -26,16 +26,25 @@ function baseIPC(command: string) {
   if (command === "browse_products_command") return browse();
   throw new Error(`Unexpected command: ${command}`);
 }
+async function openCategoryEditor() {
+  await userEvent.click(await screen.findByRole("button", { name: "Gestionar categorías" }));
+  return screen.findByRole("button", { name: "Editar Filtros" });
+}
 
 test("opens Category Management and returns to the preserved product browse context", async () => {
   mockIPC((command) => baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));
   const search = await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  assert.equal(screen.queryByRole("region", { name: "Registros del catálogo" }), null);
+  assert.equal(document.querySelector("[data-ui-catalog-master]"), null);
   await userEvent.type(search, "filtro");
   await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
   await userEvent.click(screen.getByRole("button", { name: "Gestionar categorías" }));
   assert.ok(await screen.findByRole("region", { name: "Gestión de categorías" }));
-  await userEvent.click(screen.getByRole("button", { name: "Volver a productos" }));
+  const returnButton = screen.getByRole("button", { name: "Volver a productos" });
+  assert.equal((returnButton as HTMLButtonElement).tagName, "BUTTON");
+  returnButton.focus();
+  await userEvent.keyboard("{Enter}");
   assert.equal(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }).getAttribute("value"), "filtro");
   assert.ok(screen.getByRole("region", { name: "Productos" }));
 });
@@ -139,10 +148,16 @@ test("persists Catalog view mode across remounts without resubmitting browse sta
     const beforeToggle = browseCalls;
     await userEvent.click(screen.getByRole("button", { name: "Vista de galería" }));
     assert.equal(screen.getByRole("button", { name: "Vista de galería" }).getAttribute("aria-pressed"), "true");
+    assert.equal((screen.getByRole("button", { name: "Vista de galería" }) as HTMLButtonElement).disabled, false);
+    assert.equal((screen.getByRole("button", { name: "Vista de tabla" }) as HTMLButtonElement).disabled, false);
+    assert.equal(browseCalls, beforeToggle);
+    await userEvent.click(screen.getByRole("button", { name: "Vista de tabla" }));
+    assert.equal(screen.getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "true");
     assert.equal(browseCalls, beforeToggle);
     first.unmount();
     render(createElement(CatalogMaintenanceScreen));
-    assert.equal((await screen.findByRole("button", { name: "Vista de galería" })).getAttribute("aria-pressed"), "true");
+    assert.equal((await screen.findByRole("button", { name: "Vista de tabla" })).getAttribute("aria-pressed"), "true");
+    assert.equal((await screen.findByRole("button", { name: "Vista de galería" })).getAttribute("aria-pressed"), "false");
     await waitFor(() => assert.equal(browseCalls, beforeToggle + 1));
   } finally {
     if (previous === null) values.delete(key);
@@ -197,7 +212,7 @@ test("does not let delayed initial browse replace a newer submitted search", asy
 test("keeps browsing free of the inline editor and opens a named category modal with authoritative detail", async () => {
   mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));
-  const opener = await screen.findByRole("button", { name: "Editar Filtros" });
+  const opener = await openCategoryEditor();
   await userEvent.click(opener);
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   assert.equal(dialog.getAttribute("data-ui-catalog-edit-dialog"), "true");
@@ -260,7 +275,7 @@ test("keeps the newest selected detail when requests resolve in reverse order", 
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   await waitFor(() => assert.ok(resolveFirst));
   await userEvent.click(screen.getByRole("button", { name: "Editar Pastillas" }));
   await waitFor(() => assert.ok(resolveSecond));
@@ -285,7 +300,7 @@ test("keeps the modal actionable without repeating a successful mutation when li
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Archivar" }));
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Archivar Filtros" })).getByRole("button", { name: "Confirmar archivo" }));
@@ -324,7 +339,7 @@ test("keeps recovery locked while product browse refresh is delayed", async () =
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Archivar" }));
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Archivar Filtros" })).getByRole("button", { name: "Confirmar archivo" }));
@@ -361,7 +376,7 @@ test("keeps recovery locked after browse refresh failure and fully recovers with
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Archivar" }));
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Archivar Filtros" })).getByRole("button", { name: "Confirmar archivo" }));
@@ -395,7 +410,7 @@ test("recovers an edited detail after list refresh failure without repeating the
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   const name = within(dialog).getByRole("textbox", { name: "Nombre de la categoría" });
   await userEvent.clear(name);
@@ -431,7 +446,7 @@ test("rehydrates authoritative detail before unlocking stale lifecycle recovery"
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Archivar" }));
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Archivar Filtros" })).getByRole("button", { name: "Confirmar archivo" }));
@@ -468,7 +483,7 @@ test("rehydrates authoritative detail before unlocking stale edit recovery", asy
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   const name = within(dialog).getByRole("textbox", { name: "Nombre de la categoría" });
   await userEvent.clear(name);
@@ -498,7 +513,7 @@ test("reactivates an archived record without a confirmation step", async () => {
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar" }));
   await waitFor(() => assert.deepEqual(maintainRequest, { target: "category", entity_id: 4, intent: "reactivate", expected_revision: 9 }));
@@ -515,7 +530,7 @@ test("keeps blocked category lifecycle feedback adjacent to the action", async (
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  await userEvent.click(await screen.findByRole("button", { name: "Editar Filtros" }));
+  await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   const lifecycle = within(dialog).getByRole("region", { name: "Acciones de ciclo de vida" });
   await userEvent.click(within(lifecycle).getByRole("button", { name: "Archivar" }));
@@ -538,7 +553,7 @@ test("locks modal controls and Escape while lifecycle is pending", async () => {
     throw new Error(command);
   });
   render(createElement(CatalogMaintenanceScreen));
-  const opener = await screen.findByRole("button", { name: "Editar Filtros" });
+  const opener = await openCategoryEditor();
   await userEvent.click(opener);
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   const archive = within(dialog).getByRole("button", { name: "Archivar" });
@@ -678,9 +693,9 @@ test("focuses validation errors in the routine form and retains stale feedback",
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-catalog-edit-dialog/);
   assert.match(css, /data-ui-catalog-lifecycle-action="active"/);
-  assert.match(css, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(280px,\s*4fr\) minmax\(0,\s*7fr\)/);
+  assert.match(css, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*42rem\)/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-layout[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.doesNotMatch(css, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
 });

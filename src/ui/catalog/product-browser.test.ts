@@ -26,16 +26,23 @@ test("names Seleccionar actions by product and SKU without changing visible copy
   assert.deepEqual(selected, [2]);
 });
 
-test("renders only the supplied bounded thumbnail and leaves absent images out of browse rows", () => {
+test("renders bounded thumbnails or a visible accessible no-image placeholder in Gallery", () => {
   const product = page.products[0];
   const state = { ...initialProductBrowserState, status: "results" as const, result: page };
   const props = { state, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {} };
   const view = render(createElement(ProductBrowser, props));
   const row = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByRole("listitem");
   assert.equal(within(row).queryByRole("img"), null);
-  view.rerender(createElement(ProductBrowser, { ...props, thumbnails: { [product.product_id]: "data:image/jpeg;base64,/9j/2Q==" } }));
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "gallery" }));
+  const placeholder = within(row).getByRole("img", { name: "Sin imagen" });
+  assert.equal(placeholder.getAttribute("data-ui-catalog-image-placeholder"), "true");
+  assert.equal(placeholder.textContent, "Sin imagen");
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "gallery", thumbnails: { [product.product_id]: "data:image/jpeg;base64,/9j/2Q==" } }));
   const image = within(row).getByRole("img", { name: "Filter" });
   assert.equal(image.getAttribute("src"), "data:image/jpeg;base64,/9j/2Q==");
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "gallery", thumbnails: { [product.product_id]: "/private/image.jpg" } }));
+  assert.equal(within(row).queryByRole("img", { name: "Filter" }), null);
+  assert.ok(within(row).getByRole("img", { name: "Sin imagen" }));
 });
 
 test("keeps unavailable selection disabled and leaves Agregar and Editar names unchanged", () => {
@@ -59,12 +66,15 @@ test("Catalog Table and Gallery expose the same product facts and explicit Edit 
   const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products, total: 2 } };
   const props = { state, presentation: "catalog" as const, catalogViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Editar" };
   const table = render(createElement(ProductBrowser, props));
-  const tableContent = screen.getByRole("list", { name: "Resultados del catálogo" }).textContent;
   assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getAllByRole("button", { name: "Editar" }).length, 2);
   table.rerender(createElement(ProductBrowser, { ...props, catalogViewMode: "gallery" }));
   const gallery = screen.getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(gallery.getAttribute("data-ui-catalog-gallery"), "true");
-  assert.equal(gallery.textContent, tableContent);
+  assert.equal(within(gallery).getAllByText("Sin imagen").length, 2);
+  assert.equal(within(gallery).getByText("Filter").textContent, "Filter");
+  assert.equal(within(gallery).getByText("FLT").textContent, "FLT");
+  assert.equal(within(gallery).getByText("Second filter").textContent, "Second filter");
+  assert.equal(within(gallery).getByText("FLT-2").textContent, "FLT-2");
   assert.equal(within(gallery).getAllByRole("button", { name: "Editar" }).length, 2);
   assert.equal(within(gallery).getAllByText("Sin stock: 0").length, 1);
   assert.equal(within(gallery).getAllByText("Stock bajo: 1").length, 1);

@@ -299,7 +299,6 @@ export function CatalogMaintenanceScreen() {
       void browseCatalogProducts(snapshot, snapshot.page ?? 1);
     }
   };
-  const visibleRecords = state.records;
   const visibleCategories = filterCatalogCategories(state.records, categoryQuery);
 
   return createElement(
@@ -313,7 +312,7 @@ export function CatalogMaintenanceScreen() {
     catalogSubview === "categories" ? createElement("section", { "aria-labelledby": "catalog-category-management-heading", "data-ui-category-management": true },
       createElement("div", { "data-ui-category-management-header": true },
         createElement("h2", { id: "catalog-category-management-heading", ref: categoryManagementHeading, tabIndex: -1 }, "Gestión de categorías"),
-        createElement(Action, { variant: "tertiary", onClick: () => setCatalogSubview("products") }, "Volver a productos")),
+        createElement(Action, { variant: "tertiary", type: "button", onClick: () => setCatalogSubview("products") }, "Volver a productos")),
       createElement("label", { "data-ui-category-search": true }, "Buscar categorías", createElement("input", { type: "search", value: categoryQuery, onChange: (event: ChangeEvent<HTMLInputElement>) => setCategoryQuery(event.currentTarget.value), "aria-label": "Buscar categorías" })),
       state.status === "loading" && !state.selected ? createElement(Feedback, { kind: "loading" } as never, "Cargando categorías…") : null,
       state.status === "unavailable" && !state.selected ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "Las categorías no están disponibles. ", createElement(Action, { variant: "tertiary", onClick: () => void load() }, "Reintentar categorías"))) : null,
@@ -334,25 +333,6 @@ export function CatalogMaintenanceScreen() {
     createElement(
       "div",
       { "data-ui-catalog-layout": true, hidden: catalogSubview !== "products" },
-      createElement(
-        Panel,
-        { label: "Registros del catálogo" } as never,
-        createElement("h2", null, "Categorías"),
-        state.status === "ready" && state.records.length === 0 ? createElement(Feedback, { kind: "empty" } as never, "Todavía no hay registros del catálogo.") : null,
-        createElement("ul", { "data-ui-catalog-master": true }, visibleRecords.map((record) => createElement(
-          "li",
-          { key: `${record.target}-${record.entity_id}`, "data-ui-selected": state.selected?.target === record.target && state.selected.entity_id === record.entity_id || undefined },
-          createElement(
-            Action,
-            { variant: "tertiary", disabled: state.status === "pending" || state.recovery_required, onClick: () => void loadDetail(record), "aria-label": `Editar ${record.label}` },
-            createElement("span", null,
-              createElement("strong", null, record.label),
-              createElement("small", null, record.target === "product" ? "Producto" : "Categoría"),
-              createElement("span", null, "Editar"),
-              createElement("span", null, record.activity === "active" ? "Activo" : "Archivado")),
-          ),
-        ))),
-      ),
       createElement(
         "div",
         { "data-ui-catalog-workspace": true },

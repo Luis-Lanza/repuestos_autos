@@ -101,8 +101,8 @@ export function ProductBrowser(props: ProductBrowserProps) {
       props.onStockStateChange ? createElement(Field, { kind: "select", label: "Estado del stock", control: createElement("select", { value: state.stock_state, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onStockStateChange?.(event.target.value as ProductStockState); } }, createElement("option", { value: "all" }, "Todo el stock"), createElement("option", { value: "available" }, "Disponible"), createElement("option", { value: "low_stock" }, "Stock bajo"), createElement("option", { value: "out_of_stock" }, "Sin stock"), createElement("option", { value: "alerts" }, "Alertas")) } as never) : null,
       catalogPresentation ? createElement("div", { "data-ui-catalog-search-actions": true },
         createElement("div", { role: "group", "aria-label": "Presentación del catálogo", "data-ui-catalog-view-toggle": true },
-          createElement(Action, { variant: props.catalogViewMode === "gallery" ? "tertiary" : "secondary", type: "button", "aria-label": "Vista de tabla", "aria-pressed": props.catalogViewMode !== "gallery", "data-ui-catalog-view-toggle": true, disabled: props.disabled, onClick: () => props.onCatalogViewModeChange?.("table") }, "Tabla"),
-          createElement(Action, { variant: props.catalogViewMode === "gallery" ? "secondary" : "tertiary", type: "button", "aria-label": "Vista de galería", "aria-pressed": props.catalogViewMode === "gallery", "data-ui-catalog-view-toggle": true, disabled: props.disabled, onClick: () => props.onCatalogViewModeChange?.("gallery") }, "Galería")),
+          createElement(Action, { variant: props.catalogViewMode === "gallery" ? "tertiary" : "secondary", type: "button", "aria-label": "Vista de tabla", "aria-pressed": props.catalogViewMode !== "gallery", "data-ui-catalog-view-toggle": true, onClick: () => props.onCatalogViewModeChange?.("table") }, "Tabla"),
+          createElement(Action, { variant: props.catalogViewMode === "gallery" ? "secondary" : "tertiary", type: "button", "aria-label": "Vista de galería", "aria-pressed": props.catalogViewMode === "gallery", "data-ui-catalog-view-toggle": true, onClick: () => props.onCatalogViewModeChange?.("gallery") }, "Galería")),
         createElement(Action, { variant: "secondary", type: "submit", disabled: props.disabled }, "Buscar"))
         : createElement(Action, { variant: "secondary", type: "submit", disabled: props.disabled }, "Buscar")),
     feedback,
@@ -120,8 +120,9 @@ export function ProductBrowser(props: ProductBrowserProps) {
       }, actionText) : null;
       const thumbnail = props.thumbnails?.[product.product_id];
       const safeThumbnail = thumbnail && thumbnail.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(thumbnail) ? createElement("img", { src: thumbnail, alt: product.name, loading: "lazy", "data-ui-product-thumbnail": true }) : null;
+      const galleryImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-image-placeholder": true }, "Sin imagen");
       return galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
-        safeThumbnail,
+        createElement("div", { "data-ui-catalog-image-area": true }, galleryImage),
         createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
         createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
         createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
