@@ -71,7 +71,7 @@ test("automatically loads active products once on mount", async () => {
   await screen.findByText("Filter");
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*main\[data-ui-inventory\]\[data-ui-density="sparse"\][\s\S]*data-ui-product-browser-list[\s\S]*overflow-y:\s*visible/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*main\[data-ui-inventory\]\[data-ui-density="sparse"\] \[data-ui-product-browser-list\] \{[^}]*contain:\s*none;[^}]*overflow-y:\s*visible/);
   assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
   view.unmount();
 });
@@ -88,7 +88,11 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   const list = within(operation).getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(list.previousElementSibling?.tagName, "FORM");
-  assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
+  const pages = within(operation).getByRole("navigation", { name: "Páginas de productos" });
+  assert.equal(list.nextElementSibling, pages);
+  assert.ok(within(pages).getByText("Página 1 de 5"));
+  assert.equal((within(pages).getByRole("button", { name: "Anterior" }) as HTMLButtonElement).disabled, true);
+  assert.equal((within(pages).getByRole("button", { name: "Siguiente" }) as HTMLButtonElement).disabled, false);
   assert.equal(within(operation).getAllByRole("listitem").length, 100);
   const firstRow = within(operation).getAllByRole("listitem")[0];
   for (const text of ["Filter", "FLT-1", "Filters", "Bs 25,00", "Disponible: 8"]) {
@@ -101,12 +105,16 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1\.85fr\) minmax\(260px,\s*1fr\)/s);
-  assert.match(css, /data-ui-inventory-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
+  // The track must honor the browser's minimum (form + three-row list + pagination),
+  // then yield the remaining height to the list instead of sizing to all dense rows.
+  assert.match(css, /\[data-ui-inventory-layout\] \{[^}]*grid-template-rows:\s*minmax\(min-content,\s*1fr\)/s);
+  assert.match(css, /\[data-ui-product-browser\] \{[^}]*display:\s*flex[^}]*flex-direction:\s*column/s);
+  assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/s);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*48rem\)[^}]*max-inline-size:\s*100%/s);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/s);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*scrollbar-width:\s*auto/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*contain:\s*size;[^}]*scrollbar-width:\s*auto/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] > li \{[^}]*grid-template-columns:\s*minmax\(0, 2fr\)/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
 });
@@ -128,7 +136,7 @@ test("keeps browse first and read-only alerts second across desktop and compact 
   assert.ok(await within(alerts).findByText("Correa"));
   assert.equal(within(alerts).queryAllByRole("button").length, 0);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\) max-content; \}/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(min-content, 1fr\) max-content; \}/);
   assert.match(css, /\[data-ui-shell-content\] \{[^}]*overflow: auto/);
   assert.match(css, /--size-shell-sidebar: 208px/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar: 176px/);
