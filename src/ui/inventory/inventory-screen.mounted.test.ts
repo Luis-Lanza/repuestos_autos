@@ -199,6 +199,58 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   assert.ok(screen.getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
 });
 
+test("keeps entry and count control rows before one-sided descriptions", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  const fields = () => [...document.querySelectorAll("[data-ui-inventory-fields] > [data-ui-field]")];
+  const assertControlRow = (field: Element, name: string) => {
+    assert.equal(field.children[0].tagName, "LABEL");
+    assert.equal(field.children[0].textContent, name);
+    assert.equal(field.children[1].getAttribute("data-ui-field-control") !== null, true);
+    const input = field.querySelector("input")!;
+    assert.equal((field.children[0] as HTMLLabelElement).htmlFor, input.id);
+    return input;
+  };
+  let [quantity, note] = fields();
+  let quantityInput = assertControlRow(quantity, "Cantidad (unidades enteras)");
+  assertControlRow(note, "Nota (opcional)");
+  assert.equal(quantity.children[2].tagName, "SMALL");
+  assert.equal(quantityInput.getAttribute("aria-describedby"), quantity.children[2].id);
+  assert.equal(note.children.length, 2);
+  await user.type(quantityInput, "0");
+  [quantity, note] = fields();
+  quantityInput = assertControlRow(quantity, "Cantidad (unidades enteras)");
+  assertControlRow(note, "Nota (opcional)");
+  assert.equal(quantity.children[3].getAttribute("data-ui-field-error"), "true");
+  assert.equal(quantityInput.getAttribute("aria-invalid"), "true");
+  assert.equal(quantityInput.getAttribute("aria-describedby"), `${quantity.children[2].id} ${quantity.children[3].id}`);
+  assert.equal(note.children.length, 2);
+
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  let [count, reason] = fields();
+  assertControlRow(count, "Conteo físico (unidades enteras)");
+  let reasonInput = assertControlRow(reason, "Motivo");
+  assert.equal(count.children.length, 2);
+  assert.equal(reason.children[2].getAttribute("data-ui-field-error"), "true");
+  assert.equal(reasonInput.getAttribute("aria-invalid"), "true");
+  assert.equal(reasonInput.getAttribute("aria-describedby"), reason.children[2].id);
+  await user.type(reasonInput, "Recuento");
+  [count, reason] = fields();
+  assertControlRow(count, "Conteo físico (unidades enteras)");
+  reasonInput = assertControlRow(reason, "Motivo");
+  assert.equal(reason.children.length, 2);
+  assert.equal(reasonInput.hasAttribute("aria-invalid"), false);
+
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-inventory-fields\] \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*align-items:\s*start/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-fields\] \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
+});
+
 test("requests the owning App to refresh sidebar alerts after a successful mutation", async () => {
   let ownerRefreshes = 0;
   mockIPC((command) => {
