@@ -108,7 +108,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
     salesPresentation && page && state.status === "results" ? createElement("div", { role: "status", "data-ui-sales-catalog-status": true },
       createElement("span", null, `Resultados del catálogo: ${page.total} ${page.total === 1 ? "repuesto" : "repuestos"}`),
       createElement("span", null, "Filtro: Stock activo")) : null,
-    page && state.status !== "error" && page.products.length ? createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true, "data-ui-catalog-gallery": galleryPresentation || undefined }, page.products.map((product) => {
+    page && state.status !== "error" && page.products.length ? createElement("div", catalogPresentation && !galleryPresentation ? { "data-ui-catalog-table-scroll": true, role: "region", tabIndex: 0, "aria-label": "Resultados de productos; desplazamiento horizontal disponible" } : { "data-ui-catalog-results": true }, createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true, "data-ui-catalog-gallery": galleryPresentation || undefined, "data-ui-catalog-table": catalogPresentation && !galleryPresentation || undefined }, page.products.map((product) => {
       const selected = props.disabledProductIds?.has(product.product_id) ?? false;
       const actionText = salesPresentation && selected ? "Agregado" : props.actionLabel ?? "Seleccionar";
       const action = props.onSelect ? createElement(Action, {
@@ -120,12 +120,14 @@ export function ProductBrowser(props: ProductBrowserProps) {
       const thumbnail = props.thumbnails?.[product.product_id];
       const safeThumbnail = thumbnail && thumbnail.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(thumbnail) ? createElement("img", { src: thumbnail, alt: product.name, loading: "lazy", "data-ui-product-thumbnail": true }) : null;
       const galleryImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-image-placeholder": true }, "Sin imagen");
+      const tableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-table-image-placeholder": true }, "Sin imagen");
       return galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
         createElement("div", { "data-ui-catalog-image-area": true }, galleryImage),
         createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
         createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
         createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
         action) : salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
+
         createElement("div", { "data-ui-product-identity": true },
           createElement("strong", null, product.name),
           createElement("div", { "data-ui-product-facts": true },
@@ -136,12 +138,18 @@ export function ProductBrowser(props: ProductBrowserProps) {
           createElement("span", { "data-ui-unit-price": true },
             createElement("span", { "data-ui-unit-price-caption": true }, "Precio unitario"),
             createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos))),
-          action)) : createElement("li", { key: product.product_id },
+          action)) : catalogPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-table-row": true },
+            createElement("div", { "data-testid": "catalog-table-thumbnail", "data-ui-catalog-table-thumbnail": true }, tableImage),
+            createElement("div", { "data-testid": "catalog-table-identity", "data-ui-catalog-table-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku)),
+            createElement("span", { "data-testid": "catalog-table-price", "data-ui-money": true }, priceText(product.list_price_centavos)),
+            createElement("span", { "data-testid": "catalog-table-category", "data-ui-catalog-table-category": true }, product.category_name),
+            createElement("span", { "data-testid": "catalog-table-stock" }, createElement(Badge, { kind: stockKind(product), text: stockText(product) })),
+            createElement("div", { "data-testid": "catalog-table-edit", "data-ui-catalog-table-edit": true }, action)) : createElement("li", { key: product.product_id },
             safeThumbnail,
             createElement("div", null, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
             createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
             createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
             action);
-    })) : null,
+    }))) : null,
     page && page.total_pages > 1 ? createElement("nav", { "aria-label": "Páginas de productos", "data-ui-product-browser-pages": true }, createElement("span", null, `Página ${page.page} de ${page.total_pages}`), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page <= 1, onClick: () => props.onPageChange(page.page - 1) }, "Anterior"), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page >= page.total_pages, onClick: () => props.onPageChange(page.page + 1) }, "Siguiente")) : null);
 }

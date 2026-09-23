@@ -180,6 +180,15 @@ test("renders the Catalog controls in the approved toolbar order with a compact 
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
 });
 
+test("keeps Gallery results separated from the toolbar and Table columns readable at narrow widths", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-catalog-gallery="true"\][^{]*\{[^}]*margin-block-start:\s*var\(--space-3\)/);
+  assert.match(css, /data-ui-catalog-table-scroll[^}]*overflow-x:\s*auto/);
+  assert.match(css, /data-ui-catalog-table="true"[^}]*min-inline-size:\s*(?:[0-9.]+rem|[0-9]+px)/);
+  assert.match(css, /data-ui-catalog-table="true"\]\s*>\s*li\s*\{[^}]*grid-template-columns:[^}]*minmax\([^)]*\)/);
+  assert.match(css, /data-ui-catalog-table-identity[^}]*min-inline-size:\s*(?:[0-9.]+rem|[0-9]+px)/);
+});
+
 test("applies a submitted multi-character catalog query", async () => {
   const queries: unknown[] = [];
   mockIPC((command, payload) => {

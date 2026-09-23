@@ -61,6 +61,26 @@ test("keeps unavailable selection disabled and leaves Agregar and Editar names u
   }
 });
 
+test("Catalog Table exposes stable result columns, a thumbnail slot, and an accessible no-image placeholder", () => {
+  const state = { ...initialProductBrowserState, status: "results" as const, result: page };
+  render(createElement(ProductBrowser, {
+    state, presentation: "catalog", catalogViewMode: "table",
+    onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Editar",
+  }));
+  const scroll = document.querySelector('[data-ui-catalog-table-scroll="true"]');
+  assert.ok(scroll);
+  assert.equal(scroll?.getAttribute("tabindex"), "0");
+  const table = screen.getByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(table.getAttribute("data-ui-catalog-table"), "true");
+  const row = within(table).getByRole("listitem");
+  for (const column of ["thumbnail", "identity", "price", "category", "stock", "edit"]) {
+    assert.ok(within(row).getByTestId(`catalog-table-${column}`), `missing ${column} column`);
+  }
+  assert.ok(within(row).getByRole("img", { name: "Sin imagen" }));
+  assert.equal(within(row).getByText("Filter").textContent, "Filter");
+  assert.equal(within(row).getByText("Filters").textContent, "Filters");
+});
+
 test("Catalog Table and Gallery expose the same product facts and explicit Edit action", () => {
   const products = [{ ...page.products[0], available_quantity: 0 }, { ...page.products[0], product_id: 2, sku: "FLT-2", name: "Second filter", available_quantity: 1 }];
   const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products, total: 2 } };
