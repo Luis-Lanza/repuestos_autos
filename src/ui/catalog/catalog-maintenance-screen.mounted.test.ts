@@ -41,9 +41,9 @@ test("opens Category Management and returns to the preserved product browse cont
   await userEvent.click(screen.getByRole("button", { name: "Buscar" }));
   await userEvent.click(screen.getByRole("button", { name: "Gestionar categorías" }));
   assert.ok(await screen.findByRole("region", { name: "Gestión de categorías" }));
-  const returnButton = screen.getByRole("button", { name: "Volver a productos" });
-  assert.equal((returnButton as HTMLButtonElement).tagName, "BUTTON");
-  returnButton.focus();
+  assert.equal(screen.queryByRole("button", { name: "Volver a productos" }), null);
+  const productsNavigation = screen.getByRole("button", { name: "Productos" });
+  productsNavigation.focus();
   await userEvent.keyboard("{Enter}");
   assert.equal(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }).getAttribute("value"), "filtro");
   assert.ok(screen.getByRole("region", { name: "Productos" }));

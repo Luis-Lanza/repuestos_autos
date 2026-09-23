@@ -118,6 +118,10 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 - GREEN/TRIANGULATE: the exact focused runner passed (37 tests and `typecheck:tests`), covering Gallery toolbar/result spacing, Table horizontal-scroll/minimum-column hooks, six explicit Table column hooks, bounded thumbnail/visible accessible `Sin imagen` behavior, existing Gallery placeholder behavior, and preserved browse/view interaction tests.
 - Table uses a keyboard-focusable horizontal scroll region with stable minimum widths for product identity, price, category, stock, thumbnail, and Edit. Gallery keeps a compact 12px separation before result cards.
 
+## Approved Category Management Correction
+- Strict TDD RED: updated the mounted navigation regression to require that the redundant `Volver a productos` button is absent and that the top-level `Productos` button remains keyboard-operable; the exact runner failed before the UI change while the redundant button was still rendered.
+- GREEN/TRIANGULATE: removed only the redundant button; the mounted regression verifies keyboard navigation back to Products and preservation of the submitted browse query. The exact required runner passed (26 tests and `typecheck:tests`). Top-level `Productos` / `Gestionar categorías` navigation remains unchanged.
+
 ## Blockers
 - T3A focused command/storage tests pass. The Windows desktop command compile issue in `choose_product_image_command` has been corrected, but desktop-feature compilation and command registration still require a Windows recheck before marking T3A complete.
 
