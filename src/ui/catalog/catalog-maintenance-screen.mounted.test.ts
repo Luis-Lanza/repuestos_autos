@@ -167,6 +167,19 @@ test("persists Catalog view mode across remounts without resubmitting browse sta
   }
 });
 
+test("renders the Catalog controls in the approved toolbar order with a compact layout hook", async () => {
+  mockIPC((command) => baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  const form = await screen.findByRole("searchbox", { name: "Buscar en el catálogo" }).then((search) => search.closest("form")!);
+  const controls = Array.from(form.querySelectorAll(":scope > *"));
+  assert.deepEqual(controls.map((control) => control.getAttribute("data-ui-catalog-toolbar-item")), ["search", "category", "activity", "views", "submit"]);
+  assert.equal(screen.getByRole("combobox", { name: "Categoría" }) !== null, true);
+  assert.equal(screen.getByRole("combobox", { name: "Actividad" }) !== null, true);
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+});
+
 test("applies a submitted multi-character catalog query", async () => {
   const queries: unknown[] = [];
   mockIPC((command, payload) => {
@@ -694,8 +707,8 @@ test("focuses validation errors in the routine form and retains stale feedback",
   assert.match(css, /data-ui-catalog-edit-dialog/);
   assert.match(css, /data-ui-catalog-lifecycle-action="active"/);
   assert.match(css, /data-ui-catalog-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*42rem\)/);
+  assert.match(css, /\[data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(12rem,\s*2fr\) minmax\(10rem,\s*1fr\) minmax\(9rem,\s*1fr\) auto auto/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-layout[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/);
-  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(css, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
 });

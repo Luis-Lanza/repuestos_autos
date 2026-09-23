@@ -25,6 +25,7 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 - [x] T4C Add archive confirmation before mutation; preserve direct reactivation.
 - [ ] T5 Verify behavior, accessibility, migrations, backup, and visual contracts.
 - [x] T6 Fix user-observed Windows Catalog UI regressions: remove the legacy category pane from Products; keep persistent Table/Gallery buttons active and browse state intact; show bounded thumbnails or an accessible `Sin imagen` Gallery placeholder; make Category Management return an accessible, reliable button; add mounted/flow/product-browser regression coverage.
+- [x] T7 Redesign the Catalog toolbar as one desktop row with icon-only Table/Gallery controls and a predictable compact layout, without changing browse behavior or preference persistence.
 
 ## Evidence
 - Next schema version is 16; migration and current-schema validation live under `src-tauri/src/infrastructure/sqlite/`.
@@ -103,6 +104,13 @@ Implement the approved Catalog redesign on `feat/catalog-redesign`: persistent T
 ## T6 Evidence
 - Strict TDD RED: the authorized runner failed in the mounted Catalog suite because the regression tests still depended on the removed legacy category pane; the product-browser regression failed because Gallery omitted image-less products. The runner's TypeScript typecheck stage did not run after test failure.
 - GREEN/TRIANGULATE: `npx tsx --test --import ./test/react-dom.ts src/ui/catalog/catalog-maintenance-screen.mounted.test.ts src/ui/catalog/catalog-maintenance-flow.test.ts src/ui/catalog/product-browser.test.ts && npm run typecheck:tests` — passed (39 tests and test typecheck). Covers removed side-pane UI while Category Management remains; keyboard-operable return and browse context; Table/Gallery button state and persisted switch-back without a new browse request; gallery image/placeholder including invalid-source rejection; category-flow retention.
+
+## T7 Evidence
+- Strict TDD RED: the exact TypeScript runner failed as intended: mounted markup lacked the ordered toolbar layout hooks, and Table still rendered visible `Tabla` text instead of icon-only controls.
+- GREEN/TRIANGULATE: the exact runner passed (35 tests and `typecheck:tests`), covering toolbar DOM order, desktop/compact CSS hooks, icon-only SVGs and tooltip/accessibility names, selected states, keyboard activation, unchanged Catalog preference persistence and browse request sequencing, shared non-Catalog controls, and existing stale-response handling.
+- Table uses a row/column SVG; Gallery uses a four-cell square grid SVG. Both remain native buttons with `aria-pressed`, focus behavior, and 44px square targets. Compact widths wrap predictably into a two-column layout with submit on its own right-aligned row.
+- Strict TDD RED: the exact relevant runner failed in `app-shell.mounted.test.ts` because assertions still expected the removed 280px/4fr-7fr Catalog layout and obsolete view-toggle CSS selector; other Catalog and shell assertions passed.
+- GREEN/TRIANGULATE: updated only the stale Catalog CSS assertions to check current Catalog workspace toolbar columns, view-group control sizing, compact two-column reflow, and absence of the retired search-actions hook; preserved Inventory, Sales, and general shell assertions. Exact runner `npx tsx --test --import ./test/react-dom.ts src/ui/app-shell.mounted.test.ts src/ui/catalog/catalog-maintenance-screen.mounted.test.ts src/ui/catalog/product-browser.test.ts && npm run typecheck:tests` passed (41 tests and test typecheck).
 
 ## Blockers
 - T3A focused command/storage tests pass. The Windows desktop command compile issue in `choose_product_image_command` has been corrected, but desktop-feature compilation and command registration still require a Windows recheck before marking T3A complete.

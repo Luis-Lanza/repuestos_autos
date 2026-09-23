@@ -80,6 +80,20 @@ test("Catalog Table and Gallery expose the same product facts and explicit Edit 
   assert.equal(within(gallery).getAllByText("Stock bajo: 1").length, 1);
 });
 
+test("Catalog toolbar view controls are icon-only, named, and depict table and gallery", () => {
+  const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+  render(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "table" }));
+  const group = screen.getByRole("group", { name: "Presentación del catálogo" });
+  const table = within(group).getByRole("button", { name: "Vista de tabla" });
+  const gallery = within(group).getByRole("button", { name: "Vista de galería" });
+  assert.equal(table.textContent, "");
+  assert.equal(gallery.textContent, "");
+  assert.equal(table.getAttribute("title"), "Vista de tabla");
+  assert.equal(gallery.getAttribute("title"), "Vista de galería");
+  assert.equal(within(table).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "table");
+  assert.equal(within(gallery).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "gallery");
+});
+
 test("view controls are accessible, selected, and only rendered for Catalog", async () => {
   const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
   const changed: string[] = [];
@@ -89,10 +103,12 @@ test("view controls are accessible, selected, and only rendered for Catalog", as
   assert.equal(table.getAttribute("aria-pressed"), "true");
   assert.equal(gallery.getAttribute("aria-pressed"), "false");
   assert.ok(Number.parseFloat(getComputedStyle(table).minHeight || "0") >= 44 || table.hasAttribute("data-ui-catalog-view-toggle"));
-  await userEvent.click(gallery);
+  gallery.focus();
+  await userEvent.keyboard("{Enter}");
   assert.deepEqual(changed, ["gallery"]);
   view.rerender(createElement(ProductBrowser, props));
   assert.equal(screen.queryByRole("button", { name: "Vista de tabla" }), null);
+  assert.equal(view.container.querySelector("[data-ui-catalog-toolbar-item]"), null);
 });
 
 test("defensively defaults and persists Catalog view preference", () => {

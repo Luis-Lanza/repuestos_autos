@@ -537,12 +537,13 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-catalog-layout] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; }
 [data-ui-catalog-workspace] { min-inline-size: 0; }
 [data-ui-catalog-workspace] { display: grid; grid-template-rows: minmax(0, 1fr); min-block-size: 0; gap: var(--space-5); }
-[data-ui-catalog-workspace] [data-ui-product-browser] > form { inline-size: min(100%, 42rem); max-inline-size: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-[data-ui-catalog-workspace] [data-ui-product-browser] > form > [data-ui-action] { grid-column: 1 / -1; justify-self: start; }
+[data-ui-catalog-workspace] [data-ui-product-browser] > form { inline-size: 100%; max-inline-size: 100%; grid-template-columns: minmax(12rem, 2fr) minmax(10rem, 1fr) minmax(9rem, 1fr) auto auto; gap: var(--space-2); align-items: end; }
+[data-ui-catalog-workspace] [data-ui-product-browser] > form > [data-ui-catalog-toolbar-item] { min-inline-size: 0; }
+[data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="views"] { display: flex; gap: var(--space-1); }
+[data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="views"] > button { display: grid; inline-size: var(--size-control-default); min-inline-size: var(--size-control-default); block-size: var(--size-control-default); min-block-size: var(--size-control-default); place-items: center; padding: 0; }
+[data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="views"] svg { inline-size: 1.25rem; block-size: 1.25rem; }
+[data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="submit"] { justify-self: end; }
 [data-ui-catalog-workspace] [data-ui-product-browser-list] > li { grid-template-columns: 3.5rem minmax(0, 1fr) auto auto auto; }
-[data-ui-catalog-workspace] [data-ui-catalog-search-actions] { display: flex; grid-column: 1 / -1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
-[data-ui-catalog-workspace] [data-ui-catalog-view-toggle] { display: flex; gap: var(--space-1); }
-[data-ui-catalog-workspace] [data-ui-catalog-view-toggle] > button { min-inline-size: var(--size-control-default); min-block-size: var(--size-control-default); padding-inline: var(--space-2); }
 [data-ui-catalog-workspace] [data-ui-product-browser-list][data-ui-catalog-gallery="true"] { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-3); overflow-y: auto; }
 [data-ui-catalog-workspace] [data-ui-catalog-gallery="true"] > [data-ui-catalog-product-card] { display: grid; min-inline-size: 0; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); align-content: start; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
 [data-ui-catalog-workspace] [data-ui-catalog-image-area] { display: grid; min-block-size: 8rem; place-items: center; overflow: hidden; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
@@ -870,8 +871,9 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-product-browser] > form, [data-ui-product-browser-list] > li { grid-template-columns: minmax(0, 1fr); }
   [data-ui-catalog-layout] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   [data-ui-catalog-workspace] { grid-template-rows: minmax(0, 1fr); }
-  [data-ui-catalog-workspace] [data-ui-product-browser] > form { grid-template-columns: minmax(0, 1fr); }
-  [data-ui-catalog-workspace] [data-ui-product-browser] > form > [data-ui-action] { grid-column: auto; justify-self: stretch; }
+  [data-ui-catalog-workspace] [data-ui-product-browser] > form { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+  [data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="submit"] { grid-column: 1 / -1; justify-self: end; }
+  [data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="submit"] > button { min-inline-size: 8rem; }
   [data-ui-category-row] { grid-template-columns: minmax(0, 1fr); }
   [data-ui-category-actions] { align-items: stretch; }
   [data-ui-category-actions] > button { flex: 1 1 7rem; }
