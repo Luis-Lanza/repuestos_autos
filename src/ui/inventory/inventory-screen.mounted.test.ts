@@ -119,6 +119,25 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
 });
 
+test("keeps the browse controls in submit order with a panel-width four-control layout and narrow fallback", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const operation = screen.getByRole("region", { name: "Operación de inventario" });
+  const form = within(operation).getByRole("searchbox", { name: "Buscar producto" }).closest("form")!;
+  assert.deepEqual([...form.children].map((child) => child.tagName === "BUTTON" ? child.textContent?.trim() : child.querySelector("label")?.textContent), ["Buscar producto", "Categoría", "Estado del stock", "Buscar"]);
+  assert.equal((within(form).getByRole("button", { name: "Buscar" }) as HTMLButtonElement).type, "submit");
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] \{ container: inventory-browse \/ inline-size; \}/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{ inline-size: min\(100%, 48rem\); max-inline-size: 100%; \}/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 1 \/ -1; \}/);
+  assert.match(css, /@container inventory-browse \(min-width: 60rem\) \{\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size: 100%;[^}]*grid-template-columns: minmax\(0, 1\.3fr\) minmax\(0, 1fr\) minmax\(0, \.9fr\) auto;[^}]*\}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 3; \}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: 4; grid-row: 1; \}\s*\}/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: auto; grid-row: auto; \}[\s\S]*\[data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+});
+
 test("keeps browse first and read-only alerts second across desktop and compact layout", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [{ product_id: 2, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] };
