@@ -470,14 +470,17 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-product-browser] { display: flex; min-block-size: 0; flex: 1 1 auto; flex-direction: column; }
 [data-ui-product-browser] > form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, 1fr) auto; flex: 0 0 auto; gap: var(--space-3); align-items: end; }
 [data-ui-product-browser] > form [data-ui-field] { margin: 0; }
-/* Switch only when the primary panel, not the window, can fit four readable controls. */
-@container inventory-browse (min-width: 60rem) {
-  [data-ui-inventory-layout] [data-ui-product-browser] > form {
-    inline-size: 100%;
-    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .9fr) auto;
+/* Four controls fit from a 36rem browse area on desktop; smaller panels retain two rows. */
+@media (min-width: 961px) {
+  @container inventory-browse (min-width: 36rem) {
+    [data-ui-inventory-layout] [data-ui-product-browser] > form {
+      inline-size: 100%;
+      gap: var(--space-2);
+      grid-template-columns: minmax(0, 1fr) minmax(11.5rem, 1fr) minmax(7.5rem, .8fr) auto;
+    }
+    [data-ui-inventory-layout] [data-ui-product-browser] > form > [data-ui-field]:nth-child(3) { grid-column: 3; }
+    [data-ui-inventory-layout] [data-ui-product-browser] > form > [data-ui-action] { grid-column: 4; grid-row: 1; }
   }
-  [data-ui-inventory-layout] [data-ui-product-browser] > form > [data-ui-field]:nth-child(3) { grid-column: 3; }
-  [data-ui-inventory-layout] [data-ui-product-browser] > form > [data-ui-action] { grid-column: 4; grid-row: 1; }
 }
 [data-ui-product-browser-list] { --product-browser-row-block-size: calc(var(--type-body-line) + var(--type-mono-line) + var(--type-body-line) + var(--space-2) + var(--space-2) + 1px); min-block-size: calc(var(--product-browser-row-block-size) + var(--product-browser-row-block-size) + var(--product-browser-row-block-size) + var(--space-2) + var(--space-2)); flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
 [data-ui-product-browser-list] > li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: var(--space-3); align-items: center; padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
