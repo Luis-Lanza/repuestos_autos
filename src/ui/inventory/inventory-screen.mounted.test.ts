@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -16,11 +17,48 @@ function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(gl
 async function searchAndSelect() {
   const user = userEvent.setup({ document });
   await user.type(screen.getByRole("searchbox", { name: "Buscar producto" }), "filter{Enter}");
-  const select = await screen.findByRole("button", { name: "Seleccionar" });
+  const select = await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" });
   select.focus();
   await user.keyboard("{Enter}");
   return user;
 }
+
+test("shows the selection intro only alongside results, not initial, loading, empty or error feedback", async () => {
+  const initialMarkup = renderToStaticMarkup(createElement(InventoryScreen));
+  assert.equal(initialMarkup.split("Seleccioná un producto para comenzar.").length - 1, 1);
+
+  let resolveFirst!: (value: ReturnType<typeof browse>) => void;
+  let attempts = 0;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") {
+      attempts += 1;
+      if (attempts === 1) return new Promise((resolve) => { resolveFirst = resolve; });
+      if (attempts === 2) return browse([]);
+      if (attempts === 3) throw new Error("Local browse unavailable");
+      return browse();
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const intro = "Seleccioná un producto para comenzar.";
+  assert.ok(screen.getByText("Buscando productos…"));
+  assert.equal(screen.queryByText(intro), null);
+  resolveFirst(browse([]));
+  assert.ok(await screen.findByText("No encontramos productos para “”."));
+  assert.equal(screen.queryByText(intro), null);
+
+  const user = userEvent.setup({ document });
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  assert.ok(await screen.findByText("No encontramos productos para “”."));
+  assert.equal(screen.queryByText(intro), null);
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  assert.ok(await screen.findByText("No se pudo buscar en el catálogo local. Reintentá."));
+  assert.equal(screen.queryByText(intro), null);
+  await user.click(screen.getByRole("button", { name: "Buscar" }));
+  assert.ok(await screen.findByText("Filter"));
+  assert.ok(screen.getByText(intro));
+});
 
 test("automatically loads active products once on mount", async () => {
   const calls: unknown[] = [];
@@ -52,6 +90,14 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.equal(list.previousElementSibling?.tagName, "FORM");
   assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
   assert.equal(within(operation).getAllByRole("listitem").length, 100);
+  const firstRow = within(operation).getAllByRole("listitem")[0];
+  for (const text of ["Filter", "FLT-1", "Filters", "Bs 25,00", "Disponible: 8"]) {
+    assert.ok(within(firstRow).getByText(text));
+  }
+  const firstSelect = within(firstRow).getByRole("button", { name: "Seleccionar Filter (SKU: FLT-1)" });
+  assert.equal(firstSelect.textContent, "Seleccionar");
+  const secondRow = within(operation).getAllByRole("listitem")[1];
+  assert.ok(within(secondRow).getByRole("button", { name: "Seleccionar Filter (SKU: FLT-2)" }));
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1\.85fr\) minmax\(260px,\s*1fr\)/s);
@@ -60,6 +106,32 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
   assert.match(css, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*scrollbar-width:\s*auto/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] > li \{[^}]*grid-template-columns:\s*minmax\(0, 2fr\)/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
+});
+
+test("keeps browse first and read-only alerts second across desktop and compact layout", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [{ product_id: 2, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] };
+    if (command === "browse_products_command") return browse();
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const main = screen.getByRole("main", { name: "Inventario" });
+  const operation = within(main).getByRole("region", { name: "Operación de inventario" });
+  const alerts = within(main).getByRole("region", { name: "Alertas de stock" });
+  assert.ok(operation.compareDocumentPosition(alerts) & Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.ok(within(operation).getByRole("searchbox", { name: "Buscar producto" }));
+  assert.ok(await within(operation).findByText("Filter"));
+  assert.match(alerts.textContent ?? "", /Solo lectura/);
+  assert.ok(await within(alerts).findByText("Correa"));
+  assert.equal(within(alerts).queryAllByRole("button").length, 0);
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\) max-content; \}/);
+  assert.match(css, /\[data-ui-shell-content\] \{[^}]*overflow: auto/);
+  assert.match(css, /--size-shell-sidebar: 208px/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar: 176px/);
 });
 
 test("uses the alert stock filter for sidebar entry without a duplicate browse", async () => {
@@ -95,11 +167,23 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   assert.ok(screen.getByText("Filter"));
   assert.ok(screen.getByText("SKU: FLT"));
   assert.ok(screen.getByText("Stock actual: 8"));
+  const operation = screen.getByRole("region", { name: "Operación de inventario" });
+  const alerts = screen.getByRole("region", { name: "Alertas de stock" });
+  assert.equal(within(operation).queryByRole("searchbox"), null);
+  assert.ok(within(operation).getByRole("group", { name: "Operación" }));
+  assert.equal((within(operation).getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement).checked, true);
+  assert.equal((within(operation).getByRole("radio", { name: /Conteo físico/ }) as HTMLInputElement).checked, false);
+  assert.ok(within(alerts).getByText("No hay alertas de stock."));
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   assert.ok(screen.getByText("Saldo proyectado: 11"));
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   const saving = screen.getByRole("button", { name: "Guardando…" });
   assert.equal((saving as HTMLButtonElement).disabled, true);
+  assert.equal((screen.getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement).disabled, true);
+  assert.equal((screen.getByRole("radio", { name: /Conteo físico/ }) as HTMLInputElement).disabled, true);
+  assert.equal((screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }) as HTMLInputElement).disabled, true);
+  assert.equal((screen.getByRole("button", { name: "Nueva operación" }) as HTMLButtonElement).disabled, true);
+  assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   await user.click(saving);
   assert.equal(confirmations, 1);
   resolve(success(requestId));
@@ -147,18 +231,49 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   assert.ok(await screen.findByText("No encontramos productos para “nada”."));
   await user.clear(search);
   await user.type(search, "filter{Enter}");
-  await user.click(await screen.findByRole("button", { name: "Seleccionar" }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Operación" }), "physical_count");
+  await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  const stockEntry = screen.getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement;
+  stockEntry.focus();
+  await user.keyboard("{ArrowRight}");
+  const physicalCountChoice = screen.getByRole("radio", { name: /Conteo físico/ }) as HTMLInputElement;
+  assert.equal(physicalCountChoice.checked, true);
+  assert.equal(document.activeElement, physicalCountChoice);
+  assert.equal(screen.queryByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), null);
   await user.type(screen.getByRole("textbox", { name: "Motivo" }), "Producto dañado");
   assert.equal(screen.queryByText("Saldo proyectado: 0"), null);
   assert.equal((screen.getByRole("button", { name: "Confirmar operación" }) as HTMLButtonElement).disabled, true);
   await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
   assert.ok(screen.getByText("Saldo proyectado: 0"));
+  assert.ok(within(screen.getByRole("region", { name: "Operación de inventario" })).getByRole("textbox", { name: "Motivo" }));
+  assert.ok(within(screen.getByRole("region", { name: "Alertas de stock" })).getByText("Correa"));
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await waitFor(() => assert.equal(physicalCount, 0));
+  assert.equal((physicalCountChoice as HTMLInputElement).checked, true);
   const items = within(screen.getByRole("region", { name: "Alertas de stock" })).getAllByRole("listitem");
   assert.match(items[0].textContent ?? "", /Sin stock: 0.*Correa/);
   assert.match(items[1].textContent ?? "", /Stock bajo: 1.*Bujía/);
+});
+
+test("locks both operation cards while a physical count is pending", async () => {
+  let resolve!: (value: ReturnType<typeof success>) => void;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_physical_count_command") return new Promise((done) => { resolve = done; });
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
+  await user.type(screen.getByRole("textbox", { name: "Motivo" }), "Recuento de depósito");
+  assert.ok(screen.getByText("Saldo proyectado: 0"));
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  assert.equal((screen.getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement).disabled, true);
+  assert.equal((screen.getByRole("radio", { name: /Conteo físico/ }) as HTMLInputElement).disabled, true);
+  assert.equal((screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }) as HTMLInputElement).disabled, true);
+  resolve(success("count-request"));
+  assert.ok(await screen.findByText("Operación guardada. Stock actual: 11."));
 });
 
 test("renders category and stock filters through the paged inventory browse contract", async () => {
@@ -227,7 +342,7 @@ test("retries an exact inventory envelope and replaces its identity after edits 
   assert.equal(requests[2].note, "Conteo de depósito");
 
   await user.click(screen.getByRole("button", { name: "Nueva operación" }));
-  await user.click(await screen.findByRole("button", { name: "Seleccionar" }));
+  await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await waitFor(() => assert.equal(requests.length, 4));

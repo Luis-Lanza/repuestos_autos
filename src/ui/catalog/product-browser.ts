@@ -91,11 +91,13 @@ export function ProductBrowser(props: ProductBrowserProps) {
       createElement("span", null, "Filtro: Stock activo")) : null,
     page && state.status !== "error" && page.products.length ? createElement("ul", { "aria-label": "Resultados del catálogo", "data-ui-product-browser-list": true, "data-ui-sale-list": true }, page.products.map((product) => {
       const selected = props.disabledProductIds?.has(product.product_id) ?? false;
+      const actionText = salesPresentation && selected ? "Agregado" : props.actionLabel ?? "Seleccionar";
       const action = props.onSelect ? createElement(Action, {
         variant: "secondary",
+        "aria-label": actionText === "Seleccionar" ? `Seleccionar ${product.name} (SKU: ${product.sku})` : undefined,
         disabled: props.disabled || selected || !props.allowUnavailableSelection && product.available_quantity < 1,
         onClick: () => props.onSelect?.(product),
-      }, salesPresentation && selected ? "Agregado" : props.actionLabel ?? "Seleccionar") : null;
+      }, actionText) : null;
       return salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
         createElement("div", { "data-ui-product-identity": true },
           createElement("strong", null, product.name),
