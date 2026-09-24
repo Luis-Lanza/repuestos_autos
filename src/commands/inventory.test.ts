@@ -24,9 +24,25 @@ test("allowlists inventory payloads and maps malformed responses to opaque error
     calls.push({ command, payload });
     return { kind: "success", request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, previous_quantity: 8, quantity_delta: 2, resulting_quantity: 10, occurred_at: "now", note: "delivery", internal: "never expose" };
   });
-  const result = await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, quantity: 2, note: "delivery", ignored: true } as never);
+  const result = await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, quantity: 2, unit_purchase_price_centavos: 1800, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, note: "delivery", ignored: true } as never);
   assert.deepEqual(result, { kind: "success", request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, previous_quantity: 8, quantity_delta: 2, resulting_quantity: 10, occurred_at: "now", note: "delivery" });
-  assert.deepEqual(calls, [{ command: "confirm_stock_entry_command", payload: { request: { request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, quantity: 2, note: "delivery" } } }]);
+  assert.deepEqual(calls, [{ command: "confirm_stock_entry_command", payload: { request: { request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, quantity: 2, unit_purchase_price_centavos: 1800, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, note: "delivery" } } }]);
+});
+
+test("requires positive safe prices and validates optional minimum against sale before IPC", async () => {
+  let calls = 0;
+  const commands = createInventoryCommands(async () => { calls += 1; return { kind: "success" }; });
+  const base = { request_id: "550e8400-e29b-41d4-a716-446655440215", product_id: 1, quantity: 2, unit_purchase_price_centavos: 100, note: null };
+  for (const request of [
+    { ...base, unit_purchase_price_centavos: 0 },
+    { ...base, unit_purchase_price_centavos: Number.MAX_SAFE_INTEGER + 1 },
+    { ...base, sale_price_centavos: -1 },
+    { ...base, minimum_sale_price_centavos: Number.MAX_SAFE_INTEGER + 1 },
+    { ...base, sale_price_centavos: 100, minimum_sale_price_centavos: 101 },
+  ]) assert.deepEqual(await commands.confirmStockEntry(request), { kind: "error", code: "invalid_price", message: "The inventory operation could not be completed." });
+  assert.equal(calls, 0);
+  assert.equal((await commands.confirmStockEntry(base)).kind, "error");
+  assert.equal(calls, 1);
 });
 
 test("maps invoke failures and backend errors to stable inventory errors", async () => {
@@ -45,11 +61,11 @@ test("bounds alert error variants and rejects unknown top-level kinds", async ()
 
 test("rejects fractional inventory quantities before invoking IPC", async () => {
   const commands = createInventoryCommands(async () => ({ kind: "success" }));
-  assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440212", product_id: 1, quantity: 1.5, note: null }), { kind: "error", code: "invalid_quantity", message: "The inventory operation could not be completed." });
+  assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440212", product_id: 1, quantity: 1.5, unit_purchase_price_centavos: 100, note: null }), { kind: "error", code: "invalid_quantity", message: "The inventory operation could not be completed." });
   assert.deepEqual(await commands.confirmPhysicalCount({ request_id: "550e8400-e29b-41d4-a716-446655440213", product_id: 1, count: 1.5, reason: "counted" }), { kind: "error", code: "invalid_count", message: "The inventory operation could not be completed." });
 });
 
 test("preserves the stable request conflict code from inventory IPC", async () => {
   const commands = createInventoryCommands(async () => ({ kind: "error", code: "request_conflict", message: "Native storage details" }));
-  assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440214", product_id: 1, quantity: 2, note: null }), { kind: "error", code: "request_conflict", message: "The inventory operation could not be completed." });
+  assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440214", product_id: 1, quantity: 2, unit_purchase_price_centavos: 1900, note: null }), { kind: "error", code: "request_conflict", message: "The inventory operation could not be completed." });
 });

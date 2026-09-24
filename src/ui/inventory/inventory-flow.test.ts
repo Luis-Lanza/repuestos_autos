@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createInventoryFlow, initialInventoryState, projectedBalance } from "./inventory-flow.ts";
+import { createInventoryFlow, initialInventoryState, projectedBalance, stockEntryPrices } from "./inventory-flow.ts";
 
 test("retains one request through failures, reports stale projections, refreshes alerts, and resets intents", () => {
   const selected = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8 } });
@@ -37,6 +37,9 @@ test("keeps the failed request identity when an inventory action repeats the sam
     { type: "physical_count_changed", value: "" },
     { type: "note_changed", value: "Conteo de depósito" },
     { type: "reason_changed", value: "" },
+    { type: "purchase_price_changed", value: "" },
+    { type: "sale_price_changed", value: "" },
+    { type: "minimum_sale_price_changed", value: "" },
   ] as const) {
     const repeated = createInventoryFlow(state, action);
     assert.equal(repeated, state, action.type);
@@ -71,4 +74,20 @@ test("replaces request identity for every changed inventory payload", () => {
   state = fail(state, "inventory-request-6");
   state = createInventoryFlow(state, { type: "reason_changed", value: "Ajuste de inventario" });
   assert.equal(state.request_id, null);
+  for (const [type, value] of [["purchase_price_changed", "10,00"], ["sale_price_changed", "15,00"], ["minimum_sale_price_changed", "12,00"]] as const) {
+    state = fail(state, `inventory-${type}`);
+    state = createInventoryFlow(state, { type, value });
+    assert.equal(state.request_id, null, type);
+  }
+});
+
+test("requires positive purchase price and checks optional prices against existing or updated sale price", () => {
+  let state = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000 } });
+  assert.equal(stockEntryPrices(state).valid, false);
+  state = createInventoryFlow(state, { type: "purchase_price_changed", value: "18,00" });
+  assert.equal(stockEntryPrices(state).valid, true);
+  state = createInventoryFlow(state, { type: "minimum_sale_price_changed", value: "26,00" });
+  assert.equal(stockEntryPrices(state).valid, false);
+  state = createInventoryFlow(state, { type: "sale_price_changed", value: "30,00" });
+  assert.deepEqual(stockEntryPrices(state), { purchase: 1800, sale: 3000, minimum: 2600, valid: true });
 });

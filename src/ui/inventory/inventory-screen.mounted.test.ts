@@ -233,6 +233,7 @@ test("renders Spanish selection, whole-unit projection, pending lock, and succes
   assert.equal((within(operation).getByRole("radio", { name: /Conteo físico/ }) as HTMLInputElement).checked, false);
   assert.ok(within(alerts).getByText("No hay alertas de stock."));
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   assert.ok(screen.getByText("Saldo proyectado: 11"));
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   const saving = screen.getByRole("button", { name: "Guardando…" });
@@ -266,15 +267,21 @@ test("keeps entry and count control rows before one-sided descriptions", async (
     assert.equal((field.children[0] as HTMLLabelElement).htmlFor, input.id);
     return input;
   };
-  let [quantity, note] = fields();
+  let [quantity, purchase, sale, minimum, note] = fields();
   let quantityInput = assertControlRow(quantity, "Cantidad (unidades enteras)");
+  assertControlRow(purchase, "Precio de compra (Bs)");
+  assertControlRow(sale, "Precio de venta (Bs)");
+  assertControlRow(minimum, "Precio mínimo de venta (Bs)");
   assertControlRow(note, "Nota (opcional)");
   assert.equal(quantity.children[2].tagName, "SMALL");
   assert.equal(quantityInput.getAttribute("aria-describedby"), quantity.children[2].id);
   assert.equal(note.children.length, 2);
   await user.type(quantityInput, "0");
-  [quantity, note] = fields();
+  [quantity, purchase, sale, minimum, note] = fields();
   quantityInput = assertControlRow(quantity, "Cantidad (unidades enteras)");
+  assertControlRow(purchase, "Precio de compra (Bs)");
+  assertControlRow(sale, "Precio de venta (Bs)");
+  assertControlRow(minimum, "Precio mínimo de venta (Bs)");
   assertControlRow(note, "Nota (opcional)");
   assert.equal(quantity.children[3].getAttribute("data-ui-field-error"), "true");
   assert.equal(quantityInput.getAttribute("aria-invalid"), "true");
@@ -284,6 +291,8 @@ test("keeps entry and count control rows before one-sided descriptions", async (
   await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
   let [count, reason] = fields();
   assertControlRow(count, "Conteo físico (unidades enteras)");
+  assertControlRow(reason, "Motivo");
+  assert.equal(screen.queryByRole("textbox", { name: /Precio/ }), null);
   let reasonInput = assertControlRow(reason, "Motivo");
   assert.equal(count.children.length, 2);
   assert.equal(reason.children[2].getAttribute("data-ui-field-error"), "true");
@@ -312,6 +321,7 @@ test("requests the owning App to refresh sidebar alerts after a successful mutat
   render(createElement(InventoryScreen, { onInventoryAlertsRefresh: () => { ownerRefreshes += 1; } }));
   const user = await searchAndSelect();
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await screen.findByText("Operación guardada. Stock actual: 11.");
   assert.equal(ownerRefreshes, 1);
@@ -416,6 +426,7 @@ test("localizes failure and preserves retry", async () => {
   render(createElement(InventoryScreen, {}));
   const user = await searchAndSelect();
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   assert.match((await screen.findByRole("alert")).textContent ?? "", /^No se pudo guardar la operación de inventario\. Reintentá\./);
   assert.ok(screen.getByRole("button", { name: "Reintentar" }));
@@ -423,7 +434,7 @@ test("localizes failure and preserves retry", async () => {
 
 test("retries an exact inventory envelope and replaces its identity after edits and a new operation", async () => {
   installUuid("inventory-request-1", "inventory-request-2", "inventory-request-3");
-  const requests: Array<{ request_id: string; product_id: number; quantity: number; note: string | null }> = [];
+  const requests: Array<{ request_id: string; product_id: number; quantity: number; unit_purchase_price_centavos: number; sale_price_centavos?: number; note: string | null }> = [];
   let confirmations = 0;
   mockIPC((command, payload) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
@@ -439,21 +450,25 @@ test("retries an exact inventory envelope and replaces its identity after edits 
   render(createElement(InventoryScreen));
   const user = await searchAndSelect();
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await screen.findByRole("alert");
   await user.click(screen.getByRole("button", { name: "Reintentar" }));
   await waitFor(() => assert.equal(requests.length, 2));
   assert.deepEqual(requests[1], requests[0]);
 
+  await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "30,00");
   await user.type(screen.getByRole("textbox", { name: "Nota (opcional)" }), "Conteo de depósito");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await screen.findByText("Operación guardada. Stock actual: 11.");
   assert.notEqual(requests[2].request_id, requests[1].request_id);
   assert.equal(requests[2].note, "Conteo de depósito");
+  assert.equal(requests[2].sale_price_centavos, 3000);
 
   await user.click(screen.getByRole("button", { name: "Nueva operación" }));
   await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   await waitFor(() => assert.equal(requests.length, 4));
   assert.notEqual(requests[3].request_id, requests[2].request_id);
@@ -469,6 +484,7 @@ test("shows a specific neutral message for reused inventory requests", async () 
   render(createElement(InventoryScreen, {}));
   const user = await searchAndSelect();
   await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "18,00");
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   const feedback = await screen.findByRole("alert");
   assert.match(feedback.textContent ?? "", /^El ID de solicitud ya fue usado con datos de inventario diferentes\. Reintentá con los datos correctos\./);
