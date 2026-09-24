@@ -315,6 +315,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         maintain_catalog_command,
         edit_catalog_command,
         catalog_metadata_detail_command,
+        choose_product_image_command,
+        remove_product_image_command,
+        catalog_product_image_thumbnail_command,
         list_categories_command,
         create_category_command,
         create_product_command,
@@ -400,6 +403,81 @@ async fn choose_restore_source_command<R: Runtime>(
         }
     })
     .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn choose_product_image_command<R: Runtime>(
+    state: tauri::State<'_, AppState>,
+    window: tauri::WebviewWindow<R>,
+    request: commands::catalog::ProductImageRequest,
+) -> Result<commands::catalog::ProductImageResponse, String> {
+    let Ok(request) = commands::catalog::parse_product_image_request(request) else {
+        return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "validation_error", message: "Review the catalog values and try again.",
+        }));
+    };
+    let app_handle = window.app_handle().clone();
+    drop(window);
+    let selection = commands::backup::select_callback_path(|complete| {
+        #[cfg(test)]
+        { let _ = app_handle; complete(None); }
+        #[cfg(not(test))]
+        { app_handle.dialog().file().add_filter("Product image", &["png", "jpg", "jpeg", "webp"]).pick_file(move |path| {
+            complete(path.and_then(|path| path.into_path().ok()));
+        }); }
+    }).await;
+    let commands::backup::PathSelection::Selected { path } = selection else {
+        return Ok(commands::catalog::ProductImageResponse::Cancelled);
+    };
+    let read_result = read_selected_image(&path);
+    let (mime, bytes) = match read_result {
+        Ok(value) => value,
+        Err(()) => return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "image_unavailable", message: "The selected image could not be used.",
+        })),
+    };
+    Ok(state.with_write(|connection| Ok(commands::catalog::persist_selected_product_image(
+        connection, request.product_id, request.expected_revision, mime, bytes,
+    ))).unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+        code: "persistence_failure", message: "The catalog could not be completed.",
+    })))
+}
+
+#[cfg(feature = "desktop")]
+fn read_selected_image(path: &std::path::Path) -> Result<(&'static str, Vec<u8>), ()> {
+    use std::io::Read;
+    const MAX_BYTES: u64 = application::catalog::MAX_PRODUCT_IMAGE_BYTES as u64;
+    let file = std::fs::File::open(path).map_err(|_| ())?;
+    if file.metadata().map_err(|_| ())?.len() > MAX_BYTES { return Err(()); }
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|_| ())?;
+    if bytes.len() as u64 > MAX_BYTES { return Err(()); }
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let mime = match extension.as_str() { "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "webp" => "image/webp", _ => return Err(()) };
+    Ok((mime, bytes))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn remove_product_image_command(
+    state: tauri::State<AppState>, request: commands::catalog::ProductImageRequest,
+) -> commands::catalog::ProductImageResponse {
+    state.with_write(|connection| Ok(commands::catalog::remove_product_image(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "persistence_failure", message: "The catalog could not be completed.",
+        }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn catalog_product_image_thumbnail_command(
+    state: tauri::State<AppState>, request: commands::catalog::ProductImageRequest,
+) -> commands::catalog::ProductImageThumbnailResponse {
+    state.with_read(|connection| Ok(commands::catalog::catalog_product_image_thumbnail(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductImageThumbnailResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "persistence_failure", message: "The catalog could not be completed.",
+        }))
 }
 
 #[cfg(feature = "desktop")]
@@ -803,6 +881,18 @@ mod command_surface_tests {
                 .unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn registers_catalog_image_commands_without_exposing_picker_paths() {
+        let (_app, window) = test_window();
+        let picker = get_ipc_response(&window, request_with("choose_product_image_command", serde_json::json!({ "product_id": 1, "expected_revision": 0 }))).unwrap();
+        assert_eq!(picker.deserialize::<serde_json::Value>().unwrap(), serde_json::json!({ "kind": "cancelled" }));
+        for command in ["remove_product_image_command", "catalog_product_image_thumbnail_command"] {
+            let response = get_ipc_response(&window, request_with(command, serde_json::json!({ "product_id": 1, "expected_revision": 0 }))).unwrap();
+            let value = response.deserialize::<serde_json::Value>().unwrap();
+            assert!(!value.to_string().contains("path"));
+        }
     }
 
     #[test]

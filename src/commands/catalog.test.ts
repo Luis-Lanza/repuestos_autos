@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogMaintenanceCommands, createSearchProductsCommand } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogMaintenanceCommands, createSearchProductsCommand, createCatalogProductImageCommands } from "./catalog.ts";
 
 const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
 const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9 }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("decodes the paged browse contract and sends optional filters in its request envelope", async () => {
   const calls: unknown[] = [];
-  const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return browsePage; });
+  const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return { ...browsePage, products: [{ ...browsePage.products[0], original_image_base64: "/9j/secret", source_path: "/private/image.jpg" }] }; });
   assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9 }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
   assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "low_stock", activity: "active", page: 2, page_size: 20 } } }]);
 });
@@ -67,9 +67,18 @@ test("maps malformed maintenance results and invoke failures to an opaque failur
 
 test("uses the bounded category-maintenance path separately from product browsing", async () => {
   const calls: string[] = [];
-  const commands = createCatalogMaintenanceCommands(async (command) => { calls.push(command); return { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, product_count: 999 }] }; });
-  assert.deepEqual(await commands.listCategories(), { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0 }] });
+  const commands = createCatalogMaintenanceCommands(async (command) => { calls.push(command); return { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, active_product_count: 3, product_count: 999 }] }; });
+  assert.deepEqual(await commands.listCategories(), { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, active_product_count: 3 }] });
   assert.deepEqual(calls, ["list_catalog_categories_command"]);
+});
+
+test("decodes authoritative active-product counts only on category metadata records", async () => {
+  const commands = createCatalogMaintenanceCommands(async () => ({ kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, active_product_count: 4 }] }));
+  assert.deepEqual(await commands.listCategories(), { kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, active_product_count: 4 }] });
+  for (const count of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, undefined]) {
+    const malformed = createCatalogMaintenanceCommands(async () => ({ kind: "success", records: [{ entity_id: 2, target: "category", label: "Filters", activity: "active", revision: 0, active_product_count: count }] }));
+    assert.deepEqual(await malformed.listCategories(), { kind: "error", code: "persistence_failure", message: "The catalog could not be loaded." });
+  }
 });
 
 test("projects successful maintenance records without backend-only fields", async () => {
@@ -101,6 +110,37 @@ test("projects category detail and rejects malformed detail payloads", async () 
   const malformed = createCatalogMaintenanceCommands(async () => ({ target: "product", entity_id: 1, name: "Filter" }));
   assert.deepEqual(await category.detail({ target: CATALOG_TARGET.CATEGORY, entity_id: 2 }), { kind: "success", detail: { target: "category", entity_id: 2, name: "Filters", activity: "active", revision: 1, attribute_definitions: [] } });
   assert.deepEqual(await malformed.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: 1 }), { kind: "error", code: "persistence_failure", message: "The catalog could not be loaded." });
+});
+
+test("decodes picker cancellation and revision-checked image mutations without paths", async () => {
+  const calls: unknown[] = [];
+  let result: unknown = { kind: "cancelled" };
+  const images = createCatalogProductImageCommands(async (command, payload) => { calls.push({ command, payload }); return result; });
+  assert.deepEqual(await images.choose({ product_id: 1, expected_revision: 7 }), { kind: "cancelled" });
+  result = { kind: "success", product_id: 1, revision: 8, path: "/private/image.jpg" };
+  assert.deepEqual(await images.choose({ product_id: 1, expected_revision: 7 }), { kind: "error", code: "persistence_failure", message: "The product image could not be updated." });
+  result = { kind: "success", product_id: 1, revision: 8 };
+  assert.deepEqual(await images.remove({ product_id: 1, expected_revision: 7 }), { kind: "success", product_id: 1, revision: 8 });
+  assert.deepEqual(calls, [
+    { command: "choose_product_image_command", payload: { request: { product_id: 1, expected_revision: 7 } } },
+    { command: "choose_product_image_command", payload: { request: { product_id: 1, expected_revision: 7 } } },
+    { command: "remove_product_image_command", payload: { request: { product_id: 1, expected_revision: 7 } } },
+  ]);
+});
+
+test("decodes only bounded canonical JPEG thumbnail data", async () => {
+  const images = createCatalogProductImageCommands(async () => ({ kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" }));
+  assert.deepEqual(await images.thumbnail({ product_id: 1, expected_revision: 7 }), { kind: "success", product_id: 1, revision: 7, src: "data:image/jpeg;base64,/9j/2Q==" });
+  for (const response of [
+    { kind: "success", product_id: 1, revision: 7, mime_type: "image/png", encoding: "base64", bytes: "/9j/2Q==" },
+    { kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "%%%=" },
+    { kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/" + "A".repeat(2_796_204) },
+    { kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2R==" },
+    { kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==", path: "/private/image.jpg" },
+  ]) {
+    const malformed = createCatalogProductImageCommands(async () => response);
+    assert.deepEqual(await malformed.thumbnail({ product_id: 1, expected_revision: 7 }), { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." });
+  }
 });
 
 test("rejects unsafe, nonpositive, and inconsistent catalog facts", async () => {
