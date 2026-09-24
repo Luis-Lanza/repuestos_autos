@@ -1,13 +1,13 @@
-use rusqlite::{params, OptionalExtension, Result, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Result, Transaction};
 
 use crate::application::catalog::bootstrap_demo::{
     BootstrapDemoEligibility, BootstrapDemoPlan, BootstrapDemoRepository,
 };
 use crate::application::catalog::repository::{
-    CatalogMaintenanceRepository, CatalogMetadataRepository, CreateProductRepository,
-    ProductMetadata,
+    CatalogCategoryRepository, CatalogMaintenanceRepository, CatalogMetadataRepository,
+    CreateProductRepository, ProductMetadata,
 };
-use crate::application::catalog::CreateProductInput;
+use crate::application::catalog::{CategoryMetadataSummary, CreateProductInput, ProductImage};
 use crate::domain::catalog::{
     AttributeDefinition, CatalogActivity, CatalogSnapshot, CatalogTarget, FieldType,
     TransitionPlan, ValidatedAttributeValue,
@@ -172,7 +172,89 @@ impl CreateProductRepository for SqliteCatalogRepository {
     }
 }
 
+impl CatalogCategoryRepository for SqliteCatalogRepository {
+    fn list_metadata(&self, connection: &Connection) -> Result<Vec<CategoryMetadataSummary>> {
+        let mut statement = connection.prepare(
+            "SELECT c.id, c.name, c.active, c.revision, COUNT(p.id)
+             FROM categories c
+             LEFT JOIN products p ON p.category_id = c.id AND p.active = 1
+             GROUP BY c.id, c.name, c.active, c.revision
+             ORDER BY lower(c.name), c.id
+             LIMIT 100",
+        )?;
+        let categories = statement
+            .query_map([], |row| {
+                Ok(CategoryMetadataSummary {
+                    category_id: row.get(0)?,
+                    name: row.get(1)?,
+                    active: row.get(2)?,
+                    revision: row.get(3)?,
+                    active_product_count: row.get(4)?,
+                })
+            })?
+            .collect();
+        categories
+    }
+}
+
 impl SqliteCatalogRepository {
+    pub(crate) fn replace_product_image(
+        &self,
+        transaction: &Transaction<'_>,
+        product_id: i64,
+        image: &ProductImage,
+    ) -> Result<()> {
+        let thumbnail = image.thumbnail().ok_or(rusqlite::Error::InvalidQuery)?;
+        let changed = transaction.execute(
+            "INSERT INTO product_images (
+                 product_id, mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
+             )
+             SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (SELECT 1 FROM products WHERE id = ?1)
+             ON CONFLICT(product_id) DO UPDATE SET
+                 mime_type = excluded.mime_type,
+                 image_bytes = excluded.image_bytes,
+                 thumbnail_mime_type = excluded.thumbnail_mime_type,
+                 thumbnail_bytes = excluded.thumbnail_bytes",
+            params![
+                product_id,
+                image.mime_type(),
+                image.bytes(),
+                thumbnail.mime_type(),
+                thumbnail.bytes(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn read_product_image(
+        &self,
+        connection: &rusqlite::Connection,
+        product_id: i64,
+    ) -> Result<Option<(String, Vec<u8>, Option<String>, Option<Vec<u8>>)>> {
+        connection
+            .query_row(
+                "SELECT mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
+                 FROM product_images WHERE product_id = ?1",
+                [product_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+    }
+
+    pub(crate) fn remove_product_image(
+        &self,
+        transaction: &Transaction<'_>,
+        product_id: i64,
+    ) -> Result<bool> {
+        Ok(transaction.execute(
+            "DELETE FROM product_images WHERE product_id = ?1",
+            [product_id],
+        )? == 1)
+    }
+
     fn persist_product_with_opening_timestamp(
         &self,
         transaction: &Transaction<'_>,
