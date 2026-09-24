@@ -15,7 +15,7 @@ const browse = (products = [browseProduct]) => ({ kind: "success", products, cat
 const categoryDetail = { target: "category" as const, entity_id: 4, name: "Filtros", activity: "active" as const, revision: 2, attribute_definitions: [] };
 const productDetail = {
   target: "product" as const, entity_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium",
-  list_price_centavos: 12550, minimum_sale_price_centavos: 10000, activity: "active" as const, revision: 7,
+  purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, activity: "active" as const, revision: 7,
   attribute_definitions: [{ definition_id: 10, label: "Marca", field_type: "text" as const, required: true, options: [] }],
   attribute_values: [{ definition_id: 10, value: "Bosch" }],
 };

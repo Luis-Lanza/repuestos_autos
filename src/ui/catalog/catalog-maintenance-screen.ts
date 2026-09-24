@@ -157,7 +157,7 @@ export function CatalogMaintenanceScreen() {
   useEffect(() => {
     const first = Object.keys(state.field_errors)[0];
     if (first) {
-      const id = first.startsWith("attribute-") ? `catalog-${first}` : first === "list_price_centavos" ? "catalog-edit-list-price" : first === "minimum_sale_price_centavos" ? "catalog-edit-minimum-price" : `catalog-edit-${first}`;
+      const id = first.startsWith("attribute-") ? `catalog-${first}` : first === "minimum_sale_price_centavos" ? "catalog-edit-minimum-price" : `catalog-edit-${first.replaceAll("_", "-")}`;
       document.getElementById(id)?.focus();
     }
   }, [state.field_errors]);

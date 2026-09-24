@@ -113,9 +113,23 @@ fn maintenance_request_rejects_unknown_fields() {
 }
 
 #[test]
+fn edit_requests_accept_legacy_list_price_alias_but_emit_sale_price_terminology() {
+    let legacy = r#"{"target":"product","entity_id":1,"expected_revision":0,"sku":"FLT-001","name":"Filter","purchase_price_centavos":1500,"list_price_centavos":2500,"minimum_sale_price_centavos":2000,"attribute_values":[]}"#;
+    let request: EditCatalogRequest = serde_json::from_str(legacy).unwrap();
+    let mut connection = open_seeded_catalog().unwrap();
+    let response = edit_catalog(&mut connection, request).unwrap();
+    assert!(matches!(response, CatalogMaintenanceResponse::Success(_)));
+    let detail = catalog_metadata_detail(&connection, CatalogMetadataDetailRequest { target: "product".into(), entity_id: 1 }).unwrap();
+    let json = serde_json::to_value(detail).unwrap();
+    assert_eq!(json["sale_price_centavos"], 2500);
+    assert_eq!(json["purchase_price_centavos"], 1500);
+    assert!(json.get("list_price_centavos").is_none());
+}
+
+#[test]
 fn typed_metadata_commands_deny_unknown_fields_and_project_stable_outcomes() {
     let mut connection = open_seeded_catalog().unwrap();
-    let invalid = r#"{"target":"product","entity_id":1,"expected_revision":0,"sku":"NEW-1","name":"New","list_price_centavos":4000,"minimum_sale_price_centavos":3000,"attribute_values":[{"definition_id":1,"value":"x","sql":"details"}]}"#;
+    let invalid = r#"{"target":"product","entity_id":1,"expected_revision":0,"sku":"NEW-1","name":"New","purchase_price_centavos":2000,"sale_price_centavos":4000,"minimum_sale_price_centavos":3000,"attribute_values":[{"definition_id":1,"value":"x","sql":"details"}]}"#;
     assert!(serde_json::from_str::<EditCatalogRequest>(invalid).is_err());
     assert!(serde_json::from_str::<EditCatalogRequest>(r#"{"target":"category","entity_id":1,"expected_revision":0,"name":"Filters","unexpected":true}"#).is_err());
 
@@ -181,7 +195,9 @@ fn typed_metadata_commands_deny_unknown_fields_and_project_stable_outcomes() {
     assert!(matches!(detail, CatalogMetadataDetailResponse::Success(_)));
     assert_eq!(detail_json["target"], "product");
     assert_eq!(detail_json["sku"], "FLT-001");
-    assert_eq!(detail_json["list_price_centavos"], 2_500);
+    assert_eq!(detail_json["purchase_price_centavos"], serde_json::Value::Null);
+    assert_eq!(detail_json["sale_price_centavos"], 2_500);
+    assert!(detail_json.get("list_price_centavos").is_none());
     assert_eq!(detail_json["minimum_sale_price_centavos"], 2_500);
     assert_eq!(detail_json["revision"], 1);
     assert_eq!(detail_json["activity"], "archived");
