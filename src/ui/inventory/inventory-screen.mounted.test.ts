@@ -162,8 +162,11 @@ test("keeps the browse controls in submit order with a panel-width four-control 
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] \{ container: inventory-browse \/ inline-size; \}/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{ inline-size: min\(100%, 48rem\); max-inline-size: 100%; \}/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 1 \/ -1; \}/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \*,[\s\S]*form :is\(input, select, button\) \{ min-inline-size: 0; \}/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form :is\(input, select\) \{ inline-size: 100%; \}/);
   // Structural guard only: jsdom cannot measure a WebView's panel width or prove one visual row.
-  assert.match(css, /@media \(min-width: 961px\) \{[\s\S]*?@container inventory-browse \(min-width: 36rem\) \{\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size: 100%;[^}]*gap: var\(--space-2\);[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(11\.5rem, 1fr\) minmax\(7\.5rem, \.8fr\) auto;[^}]*\}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 3; \}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: 4; grid-row: 1; \}\s*\}\s*\}/);
+  assert.match(css, /@container inventory-browse \(min-width: 36rem\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 11\.5rem\) minmax\(0, 7\.5rem\) minmax\(0, auto\)/);
+  assert.match(css, /@container inventory-browse \(min-width: 36rem\)[\s\S]*form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 3; \}[\s\S]*form > \[data-ui-action\] \{ grid-column: 4; grid-row: 1; \}/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: auto; grid-row: auto; \}[\s\S]*\[data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{ grid-template-columns: minmax\(0, 1fr\); \}/);
 });
 

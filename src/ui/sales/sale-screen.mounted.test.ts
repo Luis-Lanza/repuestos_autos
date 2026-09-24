@@ -148,6 +148,22 @@ test("Sales loads revision-checked page thumbnails and offers a persisted Sales-
   assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
 });
 
+test("keeps Sales toolbar and gallery presentation isolated from browser layout repairs", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error(`Unexpected command: ${command}`)));
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  const toolbar = within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
+  assert.deepEqual(Array.from(toolbar.querySelectorAll(":scope > *"), (item) => item.getAttribute("role") === "group" ? item.getAttribute("aria-label") : item.tagName === "BUTTON" ? item.textContent?.trim() : item.querySelector("label")?.textContent), ["Buscar en el catálogo", "Categoría", "Presentación de ventas", "Buscar"]);
+  const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+  await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.equal(within(list).getAllByRole("listitem").length, 1);
+  const css = style.textContent ?? "";
+  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\] \{ grid-template-columns: minmax\(12rem, 1\.6fr\) minmax\(10rem, 1fr\) auto auto; \}/);
+  assert.match(css, /\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)[^}]*\}/);
+  assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
+});
+
 test("quick product detail uses the browse snapshot without changing browse or Add behavior", async () => {
   const product = { ...products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }, { definition_id: 2, label: "Largo", value: "  " }] };
   const calls: string[] = [];
