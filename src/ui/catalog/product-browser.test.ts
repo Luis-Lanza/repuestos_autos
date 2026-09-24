@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { render, screen, within } from "@testing-library/react";
@@ -143,6 +144,12 @@ test("defensively defaults and persists Catalog view preference", () => {
   assert.equal(values.get("catalog.product-browser.view-mode"), "gallery");
   assert.equal(readCatalogViewMode({ getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } }), "table");
   assert.doesNotThrow(() => writeCatalogViewMode("gallery", { getItem: () => null, setItem: () => { throw new Error("blocked"); } }));
+});
+
+test("keeps shared ProductBrowser viewport defaults outside Inventory", async () => {
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*calc\([^}]*\);[^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/);
 });
 
 test("keeps the newest browse response when requests complete out of order", () => {

@@ -60,7 +60,7 @@ test("shows the selection intro only alongside results, not initial, loading, em
   assert.ok(screen.getByText(intro));
 });
 
-test("automatically loads active products once on mount and expands a three-row sparse result", async () => {
+test("automatically loads active products and keeps a short result in the explicit inventory viewport structure", async () => {
   const calls: unknown[] = [];
   const threeProducts = Array.from({ length: 3 }, (_, index) => ({ ...product, product_id: index + 1, sku: `FLT-${index + 1}` }));
   mockIPC((command, payload) => {
@@ -70,15 +70,24 @@ test("automatically loads active products once on mount and expands a three-row 
   });
   const view = render(createElement(InventoryScreen));
   await screen.findByRole("list", { name: "Resultados del catálogo" });
-  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
-  assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getAllByRole("listitem").length, 3);
+  assert.equal(screen.getByRole("main").hasAttribute("data-ui-density"), false);
+  const operation = screen.getByRole("region", { name: "Operación de inventario" });
+  const browser = within(operation).getByLabelText("Buscar producto").closest("form")!.parentElement!;
+  assert.equal(browser.getAttribute("data-ui-product-browser"), "true");
+  const results = within(operation).getByRole("list", { name: "Resultados del catálogo" }).parentElement!;
+  assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
+  assert.equal(within(results).getAllByRole("listitem").length, 3);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(min-width: 961px\)[\s\S]*main\[data-ui-inventory\]\[data-ui-density="sparse"\] \[data-ui-product-browser-list\] \{[^}]*contain:\s*none;[^}]*overflow-y:\s*visible/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] > \[data-ui-panel\]:first-child:has\(> \[data-ui-product-browser\]\) \{[^}]*display:\s*flex;[^}]*min-block-size:\s*0;[^}]*flex-direction:\s*column/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-catalog-results\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*0;[^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/);
   assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
   view.unmount();
 });
 
-test("keeps a page beyond the three-row sparse limit in the constrained scroll mode", async () => {
+test("keeps long Inventory results in the same viewport structure without a row-count mode", async () => {
   const fourProducts = Array.from({ length: 4 }, (_, index) => ({ ...product, product_id: index + 1, sku: `FLT-${index + 1}` }));
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
@@ -88,9 +97,13 @@ test("keeps a page beyond the three-row sparse limit in the constrained scroll m
   render(createElement(InventoryScreen));
   const list = await screen.findByRole("list", { name: "Resultados del catálogo" });
   assert.equal(within(list).getAllByRole("listitem").length, 4);
-  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
+  assert.equal(screen.getByRole("main").hasAttribute("data-ui-density"), false);
+  const results = list.parentElement!;
+  assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
+  assert.equal(within(results).getAllByRole("listitem").length, 4);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
-  assert.match(css, /\[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*calc\([^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*0;[^}]*overflow-y:\s*auto/);
+  assert.doesNotMatch(css, /main\[data-ui-inventory\]\[data-ui-density="sparse"\]/);
 });
 
 test("contains the inventory product viewport while alerts remain a sibling panel", async () => {
@@ -123,16 +136,13 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-inventory-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1\.85fr\) minmax\(260px,\s*1fr\)/s);
-  // The track must honor the browser's minimum (form + three-row list + pagination),
-  // then yield the remaining height to the list instead of sizing to all dense rows.
-  assert.match(css, /\[data-ui-inventory-layout\] \{[^}]*grid-template-rows:\s*minmax\(min-content,\s*1fr\)/s);
-  assert.match(css, /\[data-ui-product-browser\] \{[^}]*display:\s*flex[^}]*flex-direction:\s*column/s);
+  assert.match(css, /\[data-ui-inventory-layout\] \{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /\[data-ui-product-browser-pages\] \{[^}]*flex:\s*0 0 auto/s);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size:\s*min\(100%,\s*48rem\)[^}]*max-inline-size:\s*100%/s);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
-  assert.match(css, /data-ui-product-browser-list[^}]*--product-browser-row-block-size:\s*calc\([^}]*\)[^}]*min-block-size:\s*calc\(\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)\s*\+\s*var\(--product-browser-row-block-size\)/s);
-  assert.match(css, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/s);
-  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*contain:\s*size;[^}]*scrollbar-width:\s*auto/);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain/);
+  assert.match(css, /\[data-ui-product-browser-list\] \{[^}]*--product-browser-row-block-size:/);
+  assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*0;[^}]*overflow-y:\s*auto/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] > li \{[^}]*grid-template-columns:\s*minmax\(0, 2fr\)/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \[data-ui-badge\] \{[^}]*white-space:\s*normal/);
 });
@@ -153,7 +163,7 @@ test("keeps the browse controls in submit order with a panel-width four-control 
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{ inline-size: min\(100%, 48rem\); max-inline-size: 100%; \}/);
   assert.match(css, /\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 1 \/ -1; \}/);
   // Structural guard only: jsdom cannot measure a WebView's panel width or prove one visual row.
-  assert.match(css, /@media \(min-width: 961px\) \{\s*@container inventory-browse \(min-width: 36rem\) \{\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size: 100%;[^}]*gap: var\(--space-2\);[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(11\.5rem, 1fr\) minmax\(7\.5rem, \.8fr\) auto;[^}]*\}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 3; \}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: 4; grid-row: 1; \}\s*\}\s*\}/);
+  assert.match(css, /@media \(min-width: 961px\) \{[\s\S]*?@container inventory-browse \(min-width: 36rem\) \{\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form \{[^}]*inline-size: 100%;[^}]*gap: var\(--space-2\);[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(11\.5rem, 1fr\) minmax\(7\.5rem, \.8fr\) auto;[^}]*\}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-field\]:nth-child\(3\) \{ grid-column: 3; \}\s*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: 4; grid-row: 1; \}\s*\}\s*\}/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser\] > form > \[data-ui-action\] \{ grid-column: auto; grid-row: auto; \}[\s\S]*\[data-ui-product-browser\] > form, \[data-ui-product-browser-list\] > li \{ grid-template-columns: minmax\(0, 1fr\); \}/);
 });
 
@@ -175,6 +185,8 @@ test("keeps browse first and read-only alerts second across desktop and compact 
   assert.equal(within(alerts).queryAllByRole("button").length, 0);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(min-content, 1fr\) max-content; \}/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-catalog-results\] \{[^}]*min-block-size:\s*auto;[^}]*flex:\s*0 0 auto/);
+  assert.match(css, /@media \(max-width: 960px\)[\s\S]*\[data-ui-inventory-layout\] \[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*auto;[^}]*flex:\s*0 0 auto;[^}]*overflow-y:\s*visible/);
   assert.match(css, /\[data-ui-shell-content\] \{[^}]*overflow: auto/);
   assert.match(css, /--size-shell-sidebar: 208px/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*--size-shell-sidebar: 176px/);
