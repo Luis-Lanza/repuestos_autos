@@ -60,20 +60,37 @@ test("shows the selection intro only alongside results, not initial, loading, em
   assert.ok(screen.getByText(intro));
 });
 
-test("automatically loads active products once on mount", async () => {
+test("automatically loads active products once on mount and expands a three-row sparse result", async () => {
   const calls: unknown[] = [];
+  const threeProducts = Array.from({ length: 3 }, (_, index) => ({ ...product, product_id: index + 1, sku: `FLT-${index + 1}` }));
   mockIPC((command, payload) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
-    if (command === "browse_products_command") { calls.push(payload); return browse(); }
+    if (command === "browse_products_command") { calls.push(payload); return browse(threeProducts); }
     throw new Error(`Unexpected command: ${command}`);
   });
   const view = render(createElement(InventoryScreen));
-  await screen.findByText("Filter");
+  await screen.findByRole("list", { name: "Resultados del catálogo" });
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
+  assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getAllByRole("listitem").length, 3);
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /@media \(min-width: 961px\)[\s\S]*main\[data-ui-inventory\]\[data-ui-density="sparse"\] \[data-ui-product-browser-list\] \{[^}]*contain:\s*none;[^}]*overflow-y:\s*visible/);
   assert.deepEqual(calls, [{ request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } }]);
   view.unmount();
+});
+
+test("keeps a page beyond the three-row sparse limit in the constrained scroll mode", async () => {
+  const fourProducts = Array.from({ length: 4 }, (_, index) => ({ ...product, product_id: index + 1, sku: `FLT-${index + 1}` }));
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse(fourProducts);
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const list = await screen.findByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(within(list).getAllByRole("listitem").length, 4);
+  assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-product-browser-list\] \{[^}]*min-block-size:\s*calc\([^}]*flex:\s*1 1 auto;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;/);
 });
 
 test("contains the inventory product viewport while alerts remain a sibling panel", async () => {
@@ -87,9 +104,10 @@ test("contains the inventory product viewport while alerts remain a sibling pane
   const operation = await screen.findByRole("region", { name: "Operación de inventario" });
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), null);
   const list = within(operation).getByRole("list", { name: "Resultados del catálogo" });
-  assert.equal(list.previousElementSibling?.tagName, "FORM");
+  const results = list.parentElement!;
+  assert.equal(results.previousElementSibling?.tagName, "FORM");
   const pages = within(operation).getByRole("navigation", { name: "Páginas de productos" });
-  assert.equal(list.nextElementSibling, pages);
+  assert.equal(results.nextElementSibling, pages);
   assert.ok(within(pages).getByText("Página 1 de 5"));
   assert.equal((within(pages).getByRole("button", { name: "Anterior" }) as HTMLButtonElement).disabled, true);
   assert.equal((within(pages).getByRole("button", { name: "Siguiente" }) as HTMLButtonElement).disabled, false);
