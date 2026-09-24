@@ -22,10 +22,13 @@ fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
     let mut connection = open_seeded_catalog().unwrap();
     let result = SqliteInventoryRepository::new(&mut connection)
         .confirm(
-            InventoryOperation::stock_entry(
+            InventoryOperation::stock_entry_with_prices(
                 1,
                 request("550e8400-e29b-41d4-a716-446655440103"),
                 2,
+                1_250,
+                None,
+                None,
                 Some("delivery".into()),
             )
             .unwrap(),
@@ -48,16 +51,19 @@ fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
         )
         .unwrap();
     assert_eq!(identity.0, "stock_entry");
-    assert_eq!(identity.1, 1);
+    assert_eq!(identity.1, 2);
     assert!(!identity.2.is_empty());
     assert_eq!(identity.3.len(), 64);
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection)
             .confirm(
-                InventoryOperation::stock_entry(
+                InventoryOperation::stock_entry_with_prices(
                     1,
                     request("550e8400-e29b-41d4-a716-446655440103"),
                     2,
+                    1_250,
+                    None,
+                    None,
                     Some("delivery".into()),
                 )
                 .unwrap(),
@@ -83,6 +89,12 @@ fn stock_entry_updates_balance_once_and_persists_an_immutable_movement() {
             []
         )
         .is_err());
+    assert!(connection
+        .execute(
+            "UPDATE inventory_movements SET unit_purchase_price_centavos = 1 WHERE request_id = ?1",
+            ["550e8400-e29b-41d4-a716-446655440103"],
+        )
+        .is_err());
 }
 
 #[test]
@@ -90,28 +102,28 @@ fn conflicting_stock_reuse_rejects_changed_quantity_note_product_and_operation()
     let mut connection = open_seeded_catalog().unwrap();
     let request_id = request("550e8400-e29b-41d4-a716-446655440111");
     let first =
-        InventoryOperation::stock_entry(1, request_id.clone(), 2, Some("delivery".into())).unwrap();
+        InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, 1_250, None, None, Some("delivery".into())).unwrap();
     SqliteInventoryRepository::new(&mut connection)
         .confirm(first)
         .unwrap();
 
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection).confirm(
-            InventoryOperation::stock_entry(1, request_id.clone(), 3, Some("delivery".into()))
+            InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 3, 1_250, None, None, Some("delivery".into()))
                 .unwrap(),
         ),
         Err(InventoryError::REQUEST_CONFLICT)
     );
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection).confirm(
-            InventoryOperation::stock_entry(1, request_id.clone(), 2, Some("other".into()))
+            InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, 1_250, None, None, Some("other".into()))
                 .unwrap(),
         ),
         Err(InventoryError::REQUEST_CONFLICT)
     );
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection).confirm(
-            InventoryOperation::stock_entry(2, request_id.clone(), 2, Some("delivery".into()))
+            InventoryOperation::stock_entry_with_prices(2, request_id.clone(), 2, 1_250, None, None, Some("delivery".into()))
                 .unwrap(),
         ),
         Err(InventoryError::REQUEST_CONFLICT)
@@ -135,6 +147,34 @@ fn conflicting_stock_reuse_rejects_changed_quantity_note_product_and_operation()
         ),
         1
     );
+}
+
+#[test]
+fn stock_entry_atomically_updates_current_prices_and_keeps_cost_on_immutable_movement() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = request("550e8400-e29b-41d4-a716-446655440120");
+    let operation = InventoryOperation::stock_entry_with_prices(
+        1, request_id.clone(), 2, 1_750, Some(5_000), Some(4_000), None,
+    ).unwrap();
+    SqliteInventoryRepository::new(&mut connection).confirm(operation.clone()).unwrap();
+    assert_eq!(scalar(&connection, "SELECT purchase_price_centavos FROM products WHERE id = 1"), 1_750);
+    assert_eq!(scalar(&connection, "SELECT list_price_centavos FROM products WHERE id = 1"), 5_000);
+    assert_eq!(scalar(&connection, "SELECT minimum_unit_price_centavos FROM products WHERE id = 1"), 4_000);
+    assert_eq!(scalar(&connection, "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE request_id = '550e8400-e29b-41d4-a716-446655440120'"), 1_750);
+    assert_eq!(SqliteInventoryRepository::new(&mut connection).confirm(
+        InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, 1_750, Some(5_000), Some(4_000), None).unwrap()
+    ).unwrap().resulting_quantity, 10);
+    for (cost, sale, minimum) in [(1_751, Some(5_000), Some(4_000)), (1_750, Some(5_001), Some(4_000)), (1_750, Some(5_000), Some(3_999))] {
+        assert_eq!(SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, cost, sale, minimum, None).unwrap()
+        ), Err(InventoryError::REQUEST_CONFLICT));
+    }
+    SqliteInventoryRepository::new(&mut connection).confirm(
+        InventoryOperation::physical_count(1, request("550e8400-e29b-41d4-a716-446655440121"), 9, "counted").unwrap()
+    ).unwrap();
+    assert_eq!(scalar(&connection, "SELECT purchase_price_centavos FROM products WHERE id = 1"), 1_750);
+    assert_eq!(scalar(&connection, "SELECT list_price_centavos FROM products WHERE id = 1"), 5_000);
+    assert_eq!(scalar(&connection, "SELECT minimum_unit_price_centavos FROM products WHERE id = 1"), 4_000);
 }
 
 #[test]
@@ -185,7 +225,7 @@ fn legacy_inventory_request_ids_fail_closed_without_changing_stock() {
 
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection)
-            .confirm(InventoryOperation::stock_entry(1, request(request_id), 2, None).unwrap(),),
+            .confirm(InventoryOperation::stock_entry_with_prices(1, request(request_id), 2, 1_250, None, None, None).unwrap(),),
         Err(InventoryError::REQUEST_CONFLICT)
     );
     assert_eq!(
@@ -205,6 +245,31 @@ fn legacy_inventory_request_ids_fail_closed_without_changing_stock() {
 }
 
 #[test]
+fn valid_legacy_v1_stock_entry_identity_conflicts_with_price_aware_retry() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let request_id = "550e8400-e29b-41d4-a716-446655440122";
+    let canonical_payload = b"12:inventory/v111:stock_entry1:11:24:null";
+    connection.execute(
+        "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, occurred_at, request_id, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256) VALUES (1, 'stock_entry', 2, '2025-01-01T00:00:00Z', ?1, 10, 'stock_entry', 1, ?2, ?3)",
+        params![request_id, canonical_payload, format!("{:x}", Sha256::digest(canonical_payload))],
+    ).unwrap();
+
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry_with_prices(1, request(request_id), 2, 1_250, None, None, None).unwrap(),
+        ),
+        Err(InventoryError::REQUEST_CONFLICT)
+    );
+    assert_eq!(scalar(&connection, "SELECT quantity FROM stock_balances WHERE product_id = 1"), 8);
+    let movement_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM inventory_movements WHERE request_id = ?1",
+        [request_id],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(movement_count, 1);
+}
+
+#[test]
 fn partial_or_malformed_inventory_identity_fails_without_new_effects() {
     let mut connection = open_seeded_catalog().unwrap();
     let request_id = "550e8400-e29b-41d4-a716-446655440114";
@@ -216,7 +281,7 @@ fn partial_or_malformed_inventory_identity_fails_without_new_effects() {
         .unwrap();
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection)
-            .confirm(InventoryOperation::stock_entry(1, request(request_id), 2, None).unwrap(),),
+            .confirm(InventoryOperation::stock_entry_with_prices(1, request(request_id), 2, 1_250, None, None, None).unwrap(),),
         Err(InventoryError::PERSISTENCE_FAILURE)
     );
 
@@ -236,7 +301,7 @@ fn partial_or_malformed_inventory_identity_fails_without_new_effects() {
         .unwrap();
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection).confirm(
-            InventoryOperation::stock_entry(1, request(malformed_request_id), 2, None).unwrap(),
+            InventoryOperation::stock_entry_with_prices(1, request(malformed_request_id), 2, 1_250, None, None, None).unwrap(),
         ),
         Err(InventoryError::PERSISTENCE_FAILURE)
     );
@@ -260,7 +325,7 @@ fn partial_or_malformed_inventory_identity_fails_without_new_effects() {
 fn noncanonical_persisted_identity_fails_without_new_effects() {
     let mut connection = open_seeded_catalog().unwrap();
     let request_id = "550e8400-e29b-41d4-a716-446655440116";
-    let operation = InventoryOperation::stock_entry(1, request(request_id), 2, None).unwrap();
+    let operation = InventoryOperation::stock_entry_with_prices(1, request(request_id), 2, 1_250, None, None, None).unwrap();
     let identity = operation.identity();
     let canonical_payload = identity.canonical_payload();
     assert!(canonical_payload.starts_with(b"12:"));
@@ -337,10 +402,13 @@ fn adjustment_uses_current_balance_and_invalid_requests_leave_no_movement() {
     );
     assert_eq!(
         repository.confirm(
-            InventoryOperation::stock_entry(
+            InventoryOperation::stock_entry_with_prices(
                 2,
                 request("550e8400-e29b-41d4-a716-446655440106"),
                 1,
+                1_250,
+                None,
+                None,
                 None
             )
             .unwrap()
@@ -355,10 +423,13 @@ fn adjustment_uses_current_balance_and_invalid_requests_leave_no_movement() {
         .unwrap();
     assert_eq!(
         SqliteInventoryRepository::new(&mut connection).confirm(
-            InventoryOperation::stock_entry(
+            InventoryOperation::stock_entry_with_prices(
                 1,
                 request("550e8400-e29b-41d4-a716-446655440108"),
                 1,
+                1_250,
+                None,
+                None,
                 None
             )
             .unwrap()
@@ -380,10 +451,13 @@ fn retry_returns_original_result_and_alerts_are_active_ordered_and_indexed() {
     let _ = std::fs::remove_dir_all(&directory);
     let config = production_database_config(&directory);
     let mut connection = open_database(&config).unwrap();
-    let operation = InventoryOperation::stock_entry(
+    let operation = InventoryOperation::stock_entry_with_prices(
         1,
         request("550e8400-e29b-41d4-a716-446655440107"),
         1,
+        1_250,
+        None,
+        None,
         None,
     )
     .unwrap();
@@ -394,10 +468,13 @@ fn retry_returns_original_result_and_alerts_are_active_ordered_and_indexed() {
     let mut connection = open_database(&config).unwrap();
     let retry = SqliteInventoryRepository::new(&mut connection)
         .confirm(
-            InventoryOperation::stock_entry(
+            InventoryOperation::stock_entry_with_prices(
                 1,
                 request("550e8400-e29b-41d4-a716-446655440107"),
                 1,
+                1_250,
+                None,
+                None,
                 None,
             )
             .unwrap(),
@@ -434,10 +511,13 @@ fn post_insert_balance_failure_rolls_back_the_inventory_operation() {
     connection
         .execute_batch("CREATE TRIGGER reject_inventory_balance_update BEFORE UPDATE ON stock_balances WHEN new.product_id = 1 BEGIN SELECT RAISE(ABORT, 'forced failure'); END;")
         .unwrap();
-    let operation = InventoryOperation::stock_entry(
+    let operation = InventoryOperation::stock_entry_with_prices(
         1,
         request("550e8400-e29b-41d4-a716-446655440109"),
         2,
+        1_250,
+        None,
+        None,
         None,
     )
     .unwrap();
@@ -478,6 +558,28 @@ fn post_insert_balance_failure_rolls_back_the_inventory_operation() {
 }
 
 #[test]
+fn product_price_update_failure_rolls_back_movement_and_balance() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_product_price_update BEFORE UPDATE ON products WHEN new.id = 1 BEGIN SELECT RAISE(ABORT, 'forced failure'); END;").unwrap();
+    let previous_purchase: Option<i64> = connection.query_row("SELECT purchase_price_centavos FROM products WHERE id = 1", [], |row| row.get(0)).unwrap();
+    let previous_sale = scalar(&connection, "SELECT list_price_centavos FROM products WHERE id = 1");
+    let previous_minimum = scalar(&connection, "SELECT minimum_unit_price_centavos FROM products WHERE id = 1");
+
+    assert_eq!(
+        SqliteInventoryRepository::new(&mut connection).confirm(
+            InventoryOperation::stock_entry_with_prices(1, request("550e8400-e29b-41d4-a716-446655440123"), 2, 1_750, None, None, None).unwrap(),
+        ),
+        Err(InventoryError::PERSISTENCE_FAILURE)
+    );
+    assert_eq!(scalar(&connection, "SELECT quantity FROM stock_balances WHERE product_id = 1"), 8);
+    assert_eq!(scalar(&connection, "SELECT COUNT(*) FROM inventory_movements WHERE request_id = '550e8400-e29b-41d4-a716-446655440123'"), 0);
+    let purchase_after: Option<i64> = connection.query_row("SELECT purchase_price_centavos FROM products WHERE id = 1", [], |row| row.get(0)).unwrap();
+    assert_eq!(purchase_after, previous_purchase);
+    assert_eq!(scalar(&connection, "SELECT list_price_centavos FROM products WHERE id = 1"), previous_sale);
+    assert_eq!(scalar(&connection, "SELECT minimum_unit_price_centavos FROM products WHERE id = 1"), previous_minimum);
+}
+
+#[test]
 fn archived_categories_exclude_active_products_from_operations_and_alerts_without_mutation() {
     let mut connection = open_seeded_catalog().unwrap();
     connection
@@ -487,10 +589,13 @@ fn archived_categories_exclude_active_products_from_operations_and_alerts_withou
         &connection,
         "SELECT quantity FROM stock_balances WHERE product_id = 1",
     );
-    let operation = InventoryOperation::stock_entry(
+    let operation = InventoryOperation::stock_entry_with_prices(
         1,
         request("550e8400-e29b-41d4-a716-446655440110"),
         1,
+        1_250,
+        None,
+        None,
         None,
     )
     .unwrap();

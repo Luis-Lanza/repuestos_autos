@@ -8,6 +8,7 @@ pub struct InventoryError(&'static str);
 impl InventoryError {
     pub const INVALID_REQUEST: Self = Self("invalid_request");
     pub const INVALID_QUANTITY: Self = Self("invalid_quantity");
+    pub const INVALID_PRICE: Self = Self("invalid_price");
     pub const INVALID_COUNT: Self = Self("invalid_count");
     pub const REASON_REQUIRED: Self = Self("reason_required");
     pub const UNCHANGED_COUNT: Self = Self("unchanged_count");
@@ -30,6 +31,20 @@ impl StockEntryQuantity {
             .then_some(Self(value))
             .ok_or(InventoryError::INVALID_QUANTITY)
     }
+    pub fn value(self) -> i64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnitPurchasePrice(i64);
+impl UnitPurchasePrice {
+    pub fn new(value: i64) -> Result<Self, InventoryError> {
+        (value > 0 && value <= 9_007_199_254_740_991)
+            .then_some(Self(value))
+            .ok_or(InventoryError::INVALID_PRICE)
+    }
+
     pub fn value(self) -> i64 {
         self.0
     }
@@ -86,12 +101,13 @@ pub struct InventoryIdentity {
 }
 
 impl InventoryIdentity {
-    pub const PAYLOAD_VERSION: i64 = 1;
+    pub const PAYLOAD_VERSION: i64 = 2;
 
     fn new(operation_kind: OperationKind, payload: Vec<u8>) -> Self {
+        let payload_version = if payload.starts_with(b"12:inventory/v2") { 2 } else { 1 };
         Self {
             operation_kind: operation_kind.as_str().into(),
-            payload_version: Self::PAYLOAD_VERSION,
+            payload_version,
             payload_sha256: format!("{:x}", Sha256::digest(&payload)),
             canonical_payload: payload,
         }
@@ -149,7 +165,12 @@ impl InventoryIdentity {
         else {
             return Err(InventoryError::PERSISTENCE_FAILURE);
         };
-        if payload_version != Self::PAYLOAD_VERSION
+        let version_marker_matches = match payload_version {
+            1 => canonical_payload.starts_with(b"12:inventory/v1"),
+            2 => canonical_payload.starts_with(b"12:inventory/v2"),
+            _ => false,
+        };
+        if !version_marker_matches
             || payload_sha256.len() != 64
             || !payload_sha256
                 .bytes()
@@ -179,7 +200,7 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
         .ok()?
         .parse::<i64>()
         .ok()?;
-    if marker != b"inventory/v1" || stored_kind != kind.as_str().as_bytes() {
+    if (marker != b"inventory/v1" && marker != b"inventory/v2") || stored_kind != kind.as_str().as_bytes() {
         return None;
     }
 
@@ -188,6 +209,15 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
             if requested_value <= 0 {
                 return None;
             }
+            let (purchase, sale, minimum) = if marker == b"inventory/v2" {
+                let purchase = read_number(payload, &mut cursor)?;
+                if purchase <= 0 || purchase > 9_007_199_254_740_991 { return None; }
+                let sale = read_optional_number(payload, &mut cursor)?;
+                let minimum = read_optional_number(payload, &mut cursor)?;
+                if sale.into_iter().chain(minimum).any(|price| price <= 0 || price > 9_007_199_254_740_991)
+                    || matches!((sale, minimum), (Some(sale), Some(minimum)) if minimum > sale) { return None; }
+                (Some(purchase), sale, minimum)
+            } else { (None, None, None) };
             let note_state = read_field(payload, &mut cursor)?;
             let note = match note_state {
                 b"null" => None,
@@ -200,6 +230,9 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
             InventoryPayload::StockEntry {
                 product_id,
                 quantity: requested_value,
+                purchase,
+                sale,
+                minimum,
                 note,
             }
         }
@@ -211,6 +244,7 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
             if reason.is_empty() || reason != reason.trim() || cursor != payload.len() {
                 return None;
             }
+            if marker != b"inventory/v1" { return None; }
             InventoryPayload::PhysicalCount {
                 product_id,
                 count: requested_value,
@@ -225,6 +259,9 @@ enum InventoryPayload<'a> {
     StockEntry {
         product_id: i64,
         quantity: i64,
+        purchase: Option<i64>,
+        sale: Option<i64>,
+        minimum: Option<i64>,
         note: Option<&'a str>,
     },
     PhysicalCount {
@@ -236,16 +273,25 @@ enum InventoryPayload<'a> {
 
 fn encode_payload(payload: InventoryPayload<'_>) -> (OperationKind, Vec<u8>) {
     let mut encoded = Vec::new();
-    append_field(&mut encoded, b"inventory/v1");
     match payload {
         InventoryPayload::StockEntry {
             product_id,
             quantity,
+            purchase,
+            sale,
+            minimum,
             note,
         } => {
+            let version = if purchase.is_some() { 2 } else { 1 };
+            append_field(&mut encoded, if version == 2 { b"inventory/v2" } else { b"inventory/v1" });
             append_field(&mut encoded, OperationKind::StockEntry.as_str().as_bytes());
             append_number(&mut encoded, product_id);
             append_number(&mut encoded, quantity);
+            if let Some(purchase) = purchase {
+                append_number(&mut encoded, purchase);
+                append_optional_number(&mut encoded, sale);
+                append_optional_number(&mut encoded, minimum);
+            }
             append_nullable_text(&mut encoded, note);
             (OperationKind::StockEntry, encoded)
         }
@@ -254,6 +300,7 @@ fn encode_payload(payload: InventoryPayload<'_>) -> (OperationKind, Vec<u8>) {
             count,
             reason,
         } => {
+            append_field(&mut encoded, b"inventory/v1");
             append_field(
                 &mut encoded,
                 OperationKind::PhysicalCount.as_str().as_bytes(),
@@ -263,6 +310,23 @@ fn encode_payload(payload: InventoryPayload<'_>) -> (OperationKind, Vec<u8>) {
             append_field(&mut encoded, reason.as_bytes());
             (OperationKind::PhysicalCount, encoded)
         }
+    }
+}
+
+fn read_number(payload: &[u8], cursor: &mut usize) -> Option<i64> {
+    std::str::from_utf8(read_field(payload, cursor)?).ok()?.parse().ok()
+}
+fn read_optional_number(payload: &[u8], cursor: &mut usize) -> Option<Option<i64>> {
+    match read_field(payload, cursor)? {
+        b"null" => Some(None),
+        b"value" => Some(Some(read_number(payload, cursor)?)),
+        _ => None,
+    }
+}
+fn append_optional_number(payload: &mut Vec<u8>, value: Option<i64>) {
+    match value {
+        Some(value) => { append_field(payload, b"value"); append_number(payload, value); }
+        None => append_field(payload, b"null"),
     }
 }
 
@@ -294,6 +358,9 @@ pub enum InventoryOperation {
         product_id: i64,
         request_id: RequestId,
         quantity: StockEntryQuantity,
+        unit_purchase_price: UnitPurchasePrice,
+        sale_price_centavos: Option<i64>,
+        minimum_sale_price_centavos: Option<i64>,
         note: Option<String>,
     },
     PhysicalCount {
@@ -310,11 +377,17 @@ impl InventoryOperation {
             Self::StockEntry {
                 product_id,
                 quantity,
+                unit_purchase_price,
+                sale_price_centavos,
+                minimum_sale_price_centavos,
                 note,
                 ..
             } => encode_payload(InventoryPayload::StockEntry {
                 product_id: *product_id,
                 quantity: quantity.value(),
+                purchase: Some(unit_purchase_price.value()),
+                sale: *sale_price_centavos,
+                minimum: *minimum_sale_price_centavos,
                 note: note.as_deref(),
             }),
             Self::PhysicalCount {
@@ -331,16 +404,28 @@ impl InventoryOperation {
         InventoryIdentity::new(kind, payload)
     }
 
-    pub fn stock_entry(
+    pub fn stock_entry_with_prices(
         product_id: i64,
         request_id: RequestId,
         quantity: i64,
+        unit_purchase_price_centavos: i64,
+        sale_price_centavos: Option<i64>,
+        minimum_sale_price_centavos: Option<i64>,
         note: Option<String>,
     ) -> Result<Self, InventoryError> {
+        for price in [sale_price_centavos, minimum_sale_price_centavos].into_iter().flatten() {
+            if price <= 0 || price > 9_007_199_254_740_991 { return Err(InventoryError::INVALID_PRICE); }
+        }
+        if matches!((sale_price_centavos, minimum_sale_price_centavos), (Some(sale), Some(minimum)) if minimum > sale) {
+            return Err(InventoryError::INVALID_PRICE);
+        }
         Ok(Self::StockEntry {
             product_id,
             request_id,
             quantity: StockEntryQuantity::new(quantity)?,
+            unit_purchase_price: UnitPurchasePrice::new(unit_purchase_price_centavos)?,
+            sale_price_centavos,
+            minimum_sale_price_centavos,
             note,
         })
     }

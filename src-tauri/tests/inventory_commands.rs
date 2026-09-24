@@ -9,6 +9,9 @@ fn entry(request_id: &str) -> StockEntryRequest {
         request_id: request_id.into(),
         product_id: 1,
         quantity: 2,
+        unit_purchase_price_centavos: 1_250,
+        sale_price_centavos: None,
+        minimum_sale_price_centavos: None,
         note: Some("delivery".into()),
     }
 }

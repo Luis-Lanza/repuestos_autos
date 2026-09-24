@@ -1,6 +1,6 @@
 use repuestos_autos::domain::inventory::{
     AdjustmentReason, AlertClassification, InventoryAlert, InventoryError, InventoryOperation,
-    OperationKind, PersistedInventoryOperation, PhysicalCount, StockEntryQuantity,
+    OperationKind, PersistedInventoryOperation, PhysicalCount, StockEntryQuantity, UnitPurchasePrice,
 };
 use repuestos_autos::domain::RequestId;
 
@@ -20,6 +20,8 @@ fn persisted(
 #[test]
 fn domain_value_objects_enforce_inputs_and_persisted_results() {
     assert_eq!(StockEntryQuantity::new(1).unwrap().value(), 1);
+    assert_eq!(UnitPurchasePrice::new(1).unwrap().value(), 1);
+    assert_eq!(UnitPurchasePrice::new(0), Err(InventoryError::INVALID_PRICE));
     assert_eq!(
         StockEntryQuantity::new(0),
         Err(InventoryError::INVALID_QUANTITY)
@@ -43,36 +45,46 @@ fn domain_value_objects_enforce_inputs_and_persisted_results() {
 
 #[test]
 fn inventory_identity_is_stable_and_excludes_request_id() {
-    let first = InventoryOperation::stock_entry(
+    let first = InventoryOperation::stock_entry_with_prices(
         1,
         RequestId::parse("550e8400-e29b-41d4-a716-446655440101").unwrap(),
         2,
+        1_250,
+        None,
+        None,
         Some("delivery".into()),
     )
     .unwrap()
     .identity();
-    let retry = InventoryOperation::stock_entry(
+    let retry = InventoryOperation::stock_entry_with_prices(
         1,
         RequestId::parse("550e8400-e29b-41d4-a716-446655440102").unwrap(),
         2,
+        1_250,
+        None,
+        None,
         Some("delivery".into()),
     )
     .unwrap()
     .identity();
 
     assert_eq!(first, retry);
+    let changed_cost = InventoryOperation::stock_entry_with_prices(
+        1, request_id(), 2, 1_251, None, None, Some("delivery".into()),
+    ).unwrap().identity();
+    assert_ne!(first, changed_cost);
     assert_eq!(first.operation_kind(), "stock_entry");
-    assert_eq!(first.payload_version(), 1);
+    assert_eq!(first.payload_version(), 2);
     assert_eq!(first.payload_sha256().len(), 64);
 }
 
 #[test]
 fn inventory_identity_preserves_optional_note_state_and_normalizes_reason() {
     let request_id = request_id();
-    let without_note = InventoryOperation::stock_entry(1, request_id.clone(), 2, None)
+    let without_note = InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, 1_250, None, None, None)
         .unwrap()
         .identity();
-    let empty_note = InventoryOperation::stock_entry(1, request_id.clone(), 2, Some(String::new()))
+    let empty_note = InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, 1_250, None, None, Some(String::new()))
         .unwrap()
         .identity();
     assert_ne!(without_note, empty_note);
