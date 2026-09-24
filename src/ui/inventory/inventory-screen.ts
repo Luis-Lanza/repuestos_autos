@@ -4,7 +4,7 @@ import { browseProducts, type ProductBrowseResult, type ProductSearchResult, typ
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { createInventoryFlow, initialInventoryState, projectedBalance, type InventoryState } from "./inventory-flow.ts";
+import { createInventoryFlow, initialInventoryState, projectedBalance, stockEntryPrices, type InventoryState } from "./inventory-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
 
 export const inventoryScreenDescription = "Operaciones de entrada de stock y conteo físico.";
@@ -90,7 +90,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     const request_id = state.request_id ?? crypto.randomUUID();
     dispatch({ type: "confirmation_started", request_id });
     const response: InventoryResponse = state.operation === "stock_entry"
-      ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), note: state.note || null })
+      ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), unit_purchase_price_centavos: stockEntryPrices(state).purchase ?? 0, ...(stockEntryPrices(state).sale === undefined ? {} : { sale_price_centavos: stockEntryPrices(state).sale! }), ...(stockEntryPrices(state).minimum === undefined ? {} : { minimum_sale_price_centavos: stockEntryPrices(state).minimum! }), note: state.note || null })
       : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason });
     if (!mounted.current) return;
     confirmLocked.current = false;
@@ -105,7 +105,8 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const pending = state.confirmation === "pending";
   const value = state.operation === "stock_entry" ? state.entry_quantity : state.physical_count;
   const whole = value.trim() !== "" && Number.isSafeInteger(Number(value)) && (state.operation === "stock_entry" ? Number(value) > 0 : Number(value) >= 0);
-  const valid = whole && (state.operation !== "physical_count" || Boolean(state.reason.trim()));
+  const prices = stockEntryPrices(state);
+  const valid = whole && (state.operation === "physical_count" ? Boolean(state.reason.trim()) : prices.valid);
   const sortedAlerts = [...state.alerts].sort((a, b) => a.classification === b.classification ? 0 : a.classification === "out_of_stock" ? -1 : 1);
 
   return createElement("main", {
@@ -127,6 +128,11 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
           createElement("div", { "data-ui-inventory-fields": true }, state.operation === "stock_entry"
             ? createElement(Field, { kind: "quantity", label: "Cantidad (unidades enteras)", hint: "Solo unidades enteras positivas.", error: value && !whole ? "Ingresá una cantidad entera mayor que cero." : undefined, control: createElement("input", { min: 1, value, disabled: pending, onChange: (event) => dispatch({ type: "entry_quantity_changed", value: event.target.value }) }) } as never)
             : createElement(Field, { kind: "quantity", label: "Conteo físico (unidades enteras)", error: value && !whole ? "Ingresá un conteo entero igual o mayor que cero." : undefined, control: createElement("input", { min: 0, value, disabled: pending, onChange: (event) => dispatch({ type: "physical_count_changed", value: event.target.value }) }) } as never),
+            ...(state.operation === "stock_entry" ? [
+              createElement(Field, { kind: "money", label: "Precio de compra (Bs)", error: state.purchase_price && prices.purchase === null ? "Ingresá un precio de compra positivo y válido." : undefined, control: createElement("input", { value: state.purchase_price, disabled: pending, onChange: (event) => dispatch({ type: "purchase_price_changed", value: event.target.value }) }) } as never),
+              createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.sale_price && prices.sale === null ? "Ingresá un precio de venta positivo y válido." : undefined, control: createElement("input", { value: state.sale_price, disabled: pending, onChange: (event) => dispatch({ type: "sale_price_changed", value: event.target.value }) }) } as never),
+              createElement(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", error: state.minimum_sale_price && prices.minimum === null ? "Ingresá un precio mínimo de venta positivo y válido." : prices.valid || (!state.minimum_sale_price && !state.sale_price) ? undefined : "El precio mínimo no puede superar el precio de venta." , control: createElement("input", { value: state.minimum_sale_price, disabled: pending, onChange: (event) => dispatch({ type: "minimum_sale_price_changed", value: event.target.value }) }) } as never),
+            ] : []),
             createElement(Field, { kind: "text", label: state.operation === "stock_entry" ? "Nota (opcional)" : "Motivo", error: state.operation === "physical_count" && !state.reason.trim() ? "Ingresá el motivo del conteo físico." : undefined, control: createElement("input", { required: state.operation === "physical_count", value: state.operation === "stock_entry" ? state.note : state.reason, disabled: pending, onChange: (event) => dispatch({ type: state.operation === "stock_entry" ? "note_changed" : "reason_changed", value: event.target.value } as Parameters<typeof dispatch>[0]) }) } as never)),
           projection !== null ? createElement("p", { "data-ui-inventory-projection": true }, `Saldo proyectado: ${projection}`) : null,
           state.advisory_notice ? createElement(Feedback, { kind: "stale" } as never, "Saldo proyectado desactualizado. Revisá el stock actual.") : null,

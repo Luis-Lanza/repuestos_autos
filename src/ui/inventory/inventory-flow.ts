@@ -1,15 +1,19 @@
 import type { InventoryAlert, PersistedInventoryOperation } from "../../commands/inventory.ts";
+import { parseBsToCentavos } from "../onboarding/onboarding-form.ts";
 
 const CONFIRMATION = { IDLE: "idle", PENDING: "pending", ERROR: "error", CONFIRMED: "confirmed" } as const;
 const OPERATION = { STOCK_ENTRY: "stock_entry", PHYSICAL_COUNT: "physical_count" } as const;
-export interface InventoryProduct { product_id: number; name: string; available_quantity: number; }
-export interface InventoryState { product: InventoryProduct | null; operation: (typeof OPERATION)[keyof typeof OPERATION]; entry_quantity: string; physical_count: string; note: string; reason: string; request_id: string | null; confirmation: (typeof CONFIRMATION)[keyof typeof CONFIRMATION]; result: PersistedInventoryOperation | null; feedback: string | null; advisory_notice: string | null; alerts: InventoryAlert[]; }
-export const initialInventoryState: InventoryState = { product: null, operation: OPERATION.STOCK_ENTRY, entry_quantity: "", physical_count: "", note: "", reason: "", request_id: null, confirmation: CONFIRMATION.IDLE, result: null, feedback: null, advisory_notice: null, alerts: [] };
+export interface InventoryProduct { product_id: number; name: string; available_quantity: number; sale_price_centavos?: number; minimum_sale_price_centavos?: number; }
+export interface InventoryState { product: InventoryProduct | null; operation: (typeof OPERATION)[keyof typeof OPERATION]; entry_quantity: string; physical_count: string; purchase_price: string; sale_price: string; minimum_sale_price: string; note: string; reason: string; request_id: string | null; confirmation: (typeof CONFIRMATION)[keyof typeof CONFIRMATION]; result: PersistedInventoryOperation | null; feedback: string | null; advisory_notice: string | null; alerts: InventoryAlert[]; }
+export const initialInventoryState: InventoryState = { product: null, operation: OPERATION.STOCK_ENTRY, entry_quantity: "", physical_count: "", purchase_price: "", sale_price: "", minimum_sale_price: "", note: "", reason: "", request_id: null, confirmation: CONFIRMATION.IDLE, result: null, feedback: null, advisory_notice: null, alerts: [] };
 export type InventoryAction =
   | { type: "product_selected"; product: InventoryProduct }
   | { type: "operation_changed"; operation: InventoryState["operation"] }
   | { type: "entry_quantity_changed"; value: string }
   | { type: "physical_count_changed"; value: string }
+  | { type: "purchase_price_changed"; value: string }
+  | { type: "sale_price_changed"; value: string }
+  | { type: "minimum_sale_price_changed"; value: string }
   | { type: "note_changed"; value: string }
   | { type: "reason_changed"; value: string }
   | { type: "confirmation_started"; request_id: string }
@@ -24,6 +28,9 @@ export function createInventoryFlow(state: InventoryState, action: InventoryActi
     case "operation_changed": return state.operation === action.operation ? state : { ...resetIntent(state), operation: action.operation };
     case "entry_quantity_changed": return state.entry_quantity === action.value ? state : { ...resetIntent(state), entry_quantity: action.value };
     case "physical_count_changed": return state.physical_count === action.value ? state : { ...resetIntent(state), physical_count: action.value };
+    case "purchase_price_changed": return state.purchase_price === action.value ? state : { ...resetIntent(state), purchase_price: action.value };
+    case "sale_price_changed": return state.sale_price === action.value ? state : { ...resetIntent(state), sale_price: action.value };
+    case "minimum_sale_price_changed": return state.minimum_sale_price === action.value ? state : { ...resetIntent(state), minimum_sale_price: action.value };
     case "note_changed": return state.note === action.value ? state : { ...resetIntent(state), note: action.value };
     case "reason_changed": return state.reason === action.value ? state : { ...resetIntent(state), reason: action.value };
     case "confirmation_started": return { ...state, request_id: state.request_id ?? action.request_id, confirmation: CONFIRMATION.PENDING, feedback: null };
@@ -32,6 +39,21 @@ export function createInventoryFlow(state: InventoryState, action: InventoryActi
     case "alerts_refreshed": return { ...state, alerts: action.alerts };
     case "discard": return initialInventoryState;
   }
+}
+
+export function stockEntryPrices(state: InventoryState) {
+  const purchase = parseBsToCentavos(state.purchase_price);
+  const sale = state.sale_price.trim() === "" ? undefined : parseBsToCentavos(state.sale_price);
+  const minimum = state.minimum_sale_price.trim() === "" ? undefined : parseBsToCentavos(state.minimum_sale_price);
+  const effectiveSale = sale ?? state.product?.sale_price_centavos;
+  const effectiveMinimum = minimum ?? state.product?.minimum_sale_price_centavos;
+  return {
+    purchase,
+    sale,
+    minimum,
+    valid: purchase !== null && (state.sale_price.trim() === "" || sale !== null) && (state.minimum_sale_price.trim() === "" || minimum !== null)
+      && (effectiveSale === undefined || effectiveMinimum === undefined || effectiveMinimum <= effectiveSale),
+  };
 }
 
 export function projectedBalance(state: InventoryState): number | null {
