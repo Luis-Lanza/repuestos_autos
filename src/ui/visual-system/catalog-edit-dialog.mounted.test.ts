@@ -29,6 +29,28 @@ function view(recoveryRequired: boolean, onReload = () => undefined) {
   }));
 }
 
+test("current purchase price is exposed as required in the rendered product form", () => {
+  render(createElement(CatalogEditDialog, {
+    record: { ...record, target: "product", label: "Filtro" },
+    detail: { ...detail, target: "product", name: "Filtro", category_id: 2, attribute_definitions: [] },
+    form: { ...form, sku: "FLT", purchase_price_centavos: "2000", sale_price_centavos: "3000", minimum_sale_price_centavos: "2500" },
+    loading: false,
+    pending: false,
+    feedback: null,
+    lifecycleFeedback: null,
+    recoveryRequired: false,
+    fieldErrors: {},
+    onChange: () => undefined,
+    onSubmit: () => undefined,
+    onLifecycle: () => undefined,
+    onReload: () => undefined,
+    onCancel: () => undefined,
+  }));
+
+  const dialog = screen.getByRole("dialog", { name: "Editar Filtro" });
+  assert.equal(within(dialog).getByRole("textbox", { name: "Precio actual de compra (Bs)" }).getAttribute("aria-required"), "true");
+});
+
 test("recovery preserves the detail while disabling incompatible actions and exposing retry", async () => {
   let reloads = 0;
   const rendered = view(true, () => { reloads += 1; });

@@ -72,9 +72,10 @@ pub enum CatalogValidationError {
     InvalidCategory,
     InvalidFieldDefinition,
     InvalidProduct,
-    InvalidListPrice,
+    InvalidPurchasePrice,
+    InvalidSalePrice,
     InvalidMinimumSalePrice,
-    MinimumSalePriceExceedsListPrice,
+    MinimumSalePriceExceedsSalePrice,
     InvalidOpeningQuantity,
     MissingRequiredField,
     InvalidAttributeValue,
@@ -117,9 +118,10 @@ pub struct TransitionPlan {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaintenanceError {
     InvalidProduct,
-    InvalidListPrice,
+    InvalidPurchasePrice,
+    InvalidSalePrice,
     InvalidMinimumSalePrice,
-    MinimumSalePriceExceedsListPrice,
+    MinimumSalePriceExceedsSalePrice,
     InvalidAttributeValue,
     LifecycleBlocked,
 }
@@ -141,7 +143,8 @@ pub fn normalize_identity(value: &str) -> String {
 pub fn validate_maintenance_product(
     sku: &str,
     name: &str,
-    list_price_centavos: i64,
+    purchase_price_centavos: i64,
+    sale_price_centavos: i64,
     minimum_sale_price_centavos: i64,
     definitions: &[AttributeDefinition],
     values: &[AttributeValueDraft],
@@ -149,17 +152,13 @@ pub fn validate_maintenance_product(
     if sku.trim().is_empty() || name.trim().is_empty() {
         return Err(MaintenanceError::InvalidProduct);
     }
-    if list_price_centavos <= 0 || list_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
-        return Err(MaintenanceError::InvalidListPrice);
-    }
-    if minimum_sale_price_centavos <= 0
-        || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
-    {
-        return Err(MaintenanceError::InvalidMinimumSalePrice);
-    }
-    if minimum_sale_price_centavos > list_price_centavos {
-        return Err(MaintenanceError::MinimumSalePriceExceedsListPrice);
-    }
+    validate_current_prices(purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos)
+        .map_err(|error| match error {
+            CatalogValidationError::InvalidPurchasePrice => MaintenanceError::InvalidPurchasePrice,
+            CatalogValidationError::InvalidSalePrice => MaintenanceError::InvalidSalePrice,
+            CatalogValidationError::InvalidMinimumSalePrice => MaintenanceError::InvalidMinimumSalePrice,
+            _ => MaintenanceError::MinimumSalePriceExceedsSalePrice,
+        })?;
     validate_attribute_values(definitions, values)
         .map_err(|_| MaintenanceError::InvalidAttributeValue)
 }
@@ -220,7 +219,7 @@ pub fn validate_category(
 pub fn validate_product(
     sku: &str,
     name: &str,
-    list_price_centavos: i64,
+    sale_price_centavos: i64,
     minimum_sale_price_centavos: i64,
     opening_quantity: i64,
     definitions: &[AttributeDefinition],
@@ -229,22 +228,42 @@ pub fn validate_product(
     if sku.trim().is_empty() || name.trim().is_empty() {
         return Err(CatalogValidationError::InvalidProduct);
     }
-    if list_price_centavos <= 0 || list_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
-        return Err(CatalogValidationError::InvalidListPrice);
+    if sale_price_centavos <= 0 || sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+        return Err(CatalogValidationError::InvalidSalePrice);
     }
     if minimum_sale_price_centavos <= 0
         || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
     {
         return Err(CatalogValidationError::InvalidMinimumSalePrice);
     }
-    if minimum_sale_price_centavos > list_price_centavos {
-        return Err(CatalogValidationError::MinimumSalePriceExceedsListPrice);
+    if minimum_sale_price_centavos > sale_price_centavos {
+        return Err(CatalogValidationError::MinimumSalePriceExceedsSalePrice);
     }
     if opening_quantity <= 0 {
         return Err(CatalogValidationError::InvalidOpeningQuantity);
     }
 
     validate_attribute_values(definitions, values)
+}
+
+pub fn validate_current_prices(
+    purchase_price_centavos: i64,
+    sale_price_centavos: i64,
+    minimum_sale_price_centavos: i64,
+) -> Result<(), CatalogValidationError> {
+    if purchase_price_centavos <= 0 || purchase_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+        return Err(CatalogValidationError::InvalidPurchasePrice);
+    }
+    if sale_price_centavos <= 0 || sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+        return Err(CatalogValidationError::InvalidSalePrice);
+    }
+    if minimum_sale_price_centavos <= 0 || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+        return Err(CatalogValidationError::InvalidMinimumSalePrice);
+    }
+    if minimum_sale_price_centavos > sale_price_centavos {
+        return Err(CatalogValidationError::MinimumSalePriceExceedsSalePrice);
+    }
+    Ok(())
 }
 
 fn validate_attribute_values(

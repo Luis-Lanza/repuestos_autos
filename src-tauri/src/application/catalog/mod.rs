@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension, Result, TransactionBehavio
 use serde::{Deserialize, Serialize};
 
 use crate::domain::catalog::{
-    plan_transition, validate_category, validate_product, AttributeValueDraft, CatalogIntent,
+    plan_transition, validate_category, validate_current_prices, validate_product, AttributeValueDraft, CatalogIntent,
     CatalogSnapshot, CatalogTarget, CatalogValidationError, CategoryFieldDraft, FieldType,
     MaintenanceError,
 };
@@ -48,6 +48,7 @@ impl MaintainCatalogInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaintainCatalogError {
     MissingCatalogRecord,
+    InvalidPricing,
     LifecycleBlocked,
     StaleCatalogRecord,
     PersistenceFailure,
@@ -65,7 +66,8 @@ pub enum EditCatalogInput {
         expected_revision: i64,
         sku: String,
         name: String,
-        list_price_centavos: i64,
+        purchase_price_centavos: i64,
+        sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         attribute_values: Vec<AttributeValueInput>,
     },
@@ -83,7 +85,8 @@ impl EditCatalogInput {
         expected_revision: i64,
         sku: impl Into<String>,
         name: impl Into<String>,
-        list_price_centavos: i64,
+        purchase_price_centavos: i64,
+        sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         attribute_values: Vec<AttributeValueInput>,
     ) -> Self {
@@ -92,7 +95,8 @@ impl EditCatalogInput {
             expected_revision,
             sku: sku.into(),
             name: name.into(),
-            list_price_centavos,
+            purchase_price_centavos,
+            sale_price_centavos,
             minimum_sale_price_centavos,
             attribute_values,
         }
@@ -158,7 +162,8 @@ where
             EditCatalogInput::Product {
                 sku,
                 name,
-                list_price_centavos,
+                purchase_price_centavos,
+                sale_price_centavos,
                 minimum_sale_price_centavos,
                 attribute_values,
                 ..
@@ -183,12 +188,13 @@ where
                 let validated = crate::domain::catalog::validate_maintenance_product(
                     &sku,
                     &name,
-                    list_price_centavos,
+                    purchase_price_centavos,
+                    sale_price_centavos,
                     minimum_sale_price_centavos,
                     &metadata.definitions,
                     &values,
                 )
-                .map_err(|_| MaintainCatalogError::MissingCatalogRecord)?;
+                .map_err(|_| MaintainCatalogError::InvalidPricing)?;
                 if metadata.duplicate_normalized_identity {
                     return Err(MaintainCatalogError::MissingCatalogRecord);
                 }
@@ -198,7 +204,8 @@ where
                     revision,
                     sku.trim(),
                     name.trim(),
-                    list_price_centavos,
+                    purchase_price_centavos,
+                    sale_price_centavos,
                     minimum_sale_price_centavos,
                     &validated,
                 )
@@ -552,8 +559,8 @@ pub struct ProductSearchResult {
     pub name: String,
     pub category_name: String,
     pub available_quantity: i64,
-    pub catalog_unit_price_centavos: i64,
-    pub list_price_centavos: i64,
+    pub purchase_price_centavos: Option<i64>,
+    pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
     pub revision: i64,
 }
@@ -592,8 +599,8 @@ pub struct ProductBrowseResult {
     pub name: String,
     pub category_name: String,
     pub available_quantity: i64,
-    pub catalog_unit_price_centavos: i64,
-    pub list_price_centavos: i64,
+    pub purchase_price_centavos: Option<i64>,
+    pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
     pub revision: i64,
 }
@@ -664,7 +671,7 @@ pub fn browse_active_products(
     let offset_index = limit_index + 1;
     let products_sql = format!(
         "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
-                p.list_price_centavos, p.minimum_unit_price_centavos, p.revision
+                p.purchase_price_centavos, p.list_price_centavos, p.minimum_unit_price_centavos, p.revision
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
@@ -691,10 +698,10 @@ pub fn browse_active_products(
                     name: row.get(3)?,
                     category_name: row.get(4)?,
                     available_quantity: row.get(5)?,
-                    catalog_unit_price_centavos: row.get(6)?,
-                    list_price_centavos: row.get(6)?,
-                    minimum_sale_price_centavos: row.get(7)?,
-                    revision: row.get(8)?,
+                    purchase_price_centavos: row.get(6)?,
+                    sale_price_centavos: row.get(7)?,
+                    minimum_sale_price_centavos: row.get(8)?,
+                    revision: row.get(9)?,
                 })
             },
         )?
@@ -789,7 +796,9 @@ pub struct CreateProductInput {
     pub sku: String,
     pub name: String,
     pub category_id: i64,
-    pub list_price_centavos: i64,
+    pub purchase_price_centavos: i64,
+    #[serde(alias = "list_price_centavos")]
+    pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
     pub opening_quantity: i64,
     pub attribute_values: Vec<AttributeValueInput>,
@@ -802,7 +811,8 @@ pub struct CreatedProduct {
     pub name: String,
     pub category_id: i64,
     pub category_name: String,
-    pub list_price_centavos: i64,
+    pub purchase_price_centavos: i64,
+    pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
     pub available_quantity: i64,
     pub active: bool,
@@ -823,7 +833,8 @@ pub enum CatalogMetadataDetail {
         category_id: i64,
         sku: String,
         name: String,
-        list_price_centavos: i64,
+        purchase_price_centavos: Option<i64>,
+        sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         activity: &'static str,
         revision: i64,
@@ -837,9 +848,10 @@ pub enum CreateProductError {
     InvalidProduct,
     MissingCategory,
     DuplicateSku,
-    InvalidListPrice,
+    InvalidPurchasePrice,
+    InvalidSalePrice,
     InvalidMinimumSalePrice,
-    MinimumSalePriceExceedsListPrice,
+    MinimumSalePriceExceedsSalePrice,
     InvalidOpeningQuantity,
     MissingRequiredField,
     InvalidAttributeValue,
@@ -887,10 +899,16 @@ where
                 value: value.value.clone(),
             })
             .collect::<Vec<_>>();
+        validate_current_prices(
+            input.purchase_price_centavos,
+            input.sale_price_centavos,
+            input.minimum_sale_price_centavos,
+        )
+        .map_err(map_product_validation)?;
         let validated = validate_product(
             &input.sku,
             &input.name,
-            input.list_price_centavos,
+            input.sale_price_centavos,
             input.minimum_sale_price_centavos,
             input.opening_quantity,
             &definitions,
@@ -917,7 +935,8 @@ where
             name: input.name.trim().into(),
             category_id: input.category_id,
             category_name,
-            list_price_centavos: input.list_price_centavos,
+            purchase_price_centavos: input.purchase_price_centavos,
+            sale_price_centavos: input.sale_price_centavos,
             minimum_sale_price_centavos: input.minimum_sale_price_centavos,
             available_quantity: input.opening_quantity,
             active: true,
@@ -1038,12 +1057,12 @@ pub fn read_catalog_metadata_detail(
             .transpose(),
         CatalogTarget::Product => connection
             .query_row(
-                "SELECT category_id, sku, name, list_price_centavos, minimum_unit_price_centavos, active, revision FROM products WHERE id = ?1",
+                "SELECT category_id, sku, name, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, active, revision FROM products WHERE id = ?1",
                 [entity_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
             )
             .optional()?
-            .map(|(category_id, sku, name, list_price_centavos, minimum_sale_price_centavos, active, revision)| {
+            .map(|(category_id, sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, active, revision)| {
                 let mut statement = connection.prepare("SELECT definition_id, searchable_value FROM product_attribute_values WHERE product_id = ?1 ORDER BY definition_id")?;
                 let attribute_values = statement.query_map([entity_id], |row| Ok(AttributeValueInput { definition_id: row.get(0)?, value: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
                 Ok(CatalogMetadataDetail::Product {
@@ -1051,7 +1070,8 @@ pub fn read_catalog_metadata_detail(
                     category_id,
                     sku,
                     name,
-                    list_price_centavos,
+                    purchase_price_centavos,
+                    sale_price_centavos,
                     minimum_sale_price_centavos,
                     activity: if active { "active" } else { "archived" },
                     revision,
@@ -1105,12 +1125,13 @@ fn map_category_validation(error: CatalogValidationError) -> CreateCategoryError
 fn map_product_validation(error: CatalogValidationError) -> CreateProductError {
     match error {
         CatalogValidationError::InvalidProduct => CreateProductError::InvalidProduct,
-        CatalogValidationError::InvalidListPrice => CreateProductError::InvalidListPrice,
+        CatalogValidationError::InvalidPurchasePrice => CreateProductError::InvalidPurchasePrice,
+        CatalogValidationError::InvalidSalePrice => CreateProductError::InvalidSalePrice,
         CatalogValidationError::InvalidMinimumSalePrice => {
             CreateProductError::InvalidMinimumSalePrice
         }
-        CatalogValidationError::MinimumSalePriceExceedsListPrice => {
-            CreateProductError::MinimumSalePriceExceedsListPrice
+        CatalogValidationError::MinimumSalePriceExceedsSalePrice => {
+            CreateProductError::MinimumSalePriceExceedsSalePrice
         }
         CatalogValidationError::InvalidOpeningQuantity => {
             CreateProductError::InvalidOpeningQuantity
@@ -1130,7 +1151,7 @@ pub fn search_active_products(
     };
     let mut statement = connection.prepare(
         "SELECT p.id, p.sku, p.name, c.name, s.quantity,
-         p.list_price_centavos,
+         p.purchase_price_centavos, p.list_price_centavos,
          p.minimum_unit_price_centavos, p.revision
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
@@ -1148,10 +1169,10 @@ pub fn search_active_products(
                 name: row.get(2)?,
                 category_name: row.get(3)?,
                 available_quantity: row.get(4)?,
-                catalog_unit_price_centavos: row.get(5)?,
-                list_price_centavos: row.get(5)?,
-                minimum_sale_price_centavos: row.get(6)?,
-                revision: row.get(7)?,
+                purchase_price_centavos: row.get(5)?,
+                sale_price_centavos: row.get(6)?,
+                minimum_sale_price_centavos: row.get(7)?,
+                revision: row.get(8)?,
             })
         })?
         .collect();

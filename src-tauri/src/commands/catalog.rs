@@ -156,7 +156,9 @@ pub enum EditCatalogRequest {
         expected_revision: i64,
         sku: String,
         name: String,
-        list_price_centavos: i64,
+        purchase_price_centavos: i64,
+        #[serde(alias = "list_price_centavos")]
+        sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         attribute_values: Vec<EditAttributeValueRequest>,
     },
@@ -341,6 +343,7 @@ pub fn maintain_catalog(
                 active_product_count: None,
             }),
             Err(error) => CatalogMaintenanceResponse::Error(match error {
+                catalog::MaintainCatalogError::InvalidPricing => validation_error(),
                 catalog::MaintainCatalogError::LifecycleBlocked => CatalogMaintenanceError {
                     code: "lifecycle_blocked",
                     message: "This lifecycle change is not allowed.",
@@ -375,7 +378,8 @@ pub fn edit_catalog(
             expected_revision,
             sku,
             name,
-            list_price_centavos,
+            purchase_price_centavos,
+            sale_price_centavos,
             minimum_sale_price_centavos,
             attribute_values,
         } if entity_id > 0 && expected_revision >= 0 => (
@@ -386,7 +390,8 @@ pub fn edit_catalog(
                 expected_revision,
                 sku,
                 name,
-                list_price_centavos,
+                purchase_price_centavos,
+                sale_price_centavos,
                 minimum_sale_price_centavos,
                 attribute_values
                     .into_iter()
@@ -514,6 +519,7 @@ pub fn map_command_state_error(error: &str) -> CatalogMaintenanceError {
 }
 fn map_maintenance_error(error: catalog::MaintainCatalogError) -> CatalogMaintenanceError {
     match error {
+        catalog::MaintainCatalogError::InvalidPricing => validation_error(),
         catalog::MaintainCatalogError::LifecycleBlocked => CatalogMaintenanceError {
             code: "lifecycle_blocked",
             message: "This lifecycle change is not allowed.",

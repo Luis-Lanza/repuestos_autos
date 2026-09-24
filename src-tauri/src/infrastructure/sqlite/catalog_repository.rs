@@ -54,7 +54,8 @@ impl BootstrapDemoRepository for SqliteCatalogRepository {
                 sku: product.sku.clone(),
                 name: product.name.clone(),
                 category_id,
-                list_price_centavos: product.list_price_centavos,
+                purchase_price_centavos: 0,
+                sale_price_centavos: product.list_price_centavos,
                 minimum_sale_price_centavos: product.minimum_sale_price_centavos,
                 opening_quantity: product.opening_quantity,
                 attribute_values: Vec::new(),
@@ -65,6 +66,7 @@ impl BootstrapDemoRepository for SqliteCatalogRepository {
                 &[],
                 &plan.categories[product.category_index].name,
                 Some(BOOTSTRAP_DEMO_OCCURRED_AT),
+                false,
             )?;
         }
 
@@ -168,7 +170,7 @@ impl CreateProductRepository for SqliteCatalogRepository {
         values: &[ValidatedAttributeValue],
         category_name: &str,
     ) -> Result<i64> {
-        self.persist_product_with_opening_timestamp(transaction, input, values, category_name, None)
+        self.persist_product_with_opening_timestamp(transaction, input, values, category_name, None, true)
     }
 }
 
@@ -262,8 +264,9 @@ impl SqliteCatalogRepository {
         values: &[ValidatedAttributeValue],
         category_name: &str,
         occurred_at: Option<&str>,
+        has_purchase_price: bool,
     ) -> Result<i64> {
-        transaction.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (?1, ?2, ?3, 1, ?4, ?5)", params![input.category_id, input.sku.trim(), input.name.trim(), input.list_price_centavos, input.minimum_sale_price_centavos])?;
+        transaction.execute("INSERT INTO products (category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)", params![input.category_id, input.sku.trim(), input.name.trim(), has_purchase_price.then_some(input.purchase_price_centavos), input.sale_price_centavos, input.minimum_sale_price_centavos])?;
         let product_id = transaction.last_insert_rowid();
         for value in values {
             match value {
@@ -432,13 +435,14 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         revision: i64,
         sku: &str,
         name: &str,
-        list_price_centavos: i64,
+        purchase_price_centavos: i64,
+        sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
         values: &[ValidatedAttributeValue],
     ) -> Result<CatalogSnapshot> {
         let target = CatalogTarget::Product;
         let before = product_metadata_json(transaction, id)?;
-        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, list_price_centavos = ?3, minimum_unit_price_centavos = ?4, revision = revision + 1 WHERE id = ?5 AND revision = ?6", params![sku, name, list_price_centavos, minimum_sale_price_centavos, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
+        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, purchase_price_centavos = ?3, list_price_centavos = ?4, minimum_unit_price_centavos = ?5, revision = revision + 1 WHERE id = ?6 AND revision = ?7", params![sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
         transaction.execute(
             "DELETE FROM product_attribute_values WHERE product_id = ?1",
             [id],
@@ -784,7 +788,7 @@ fn category_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<Stri
 }
 
 fn product_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<String> {
-    transaction.query_row("SELECT json_object('sku', p.sku, 'name', p.name, 'list_price_centavos', p.list_price_centavos, 'minimum_sale_price_centavos', p.minimum_sale_price_centavos, 'revision', p.revision, 'attribute_values', json(COALESCE((SELECT json_group_array(json_object('definition_id', definition_id, 'text_value', text_value, 'number_value', number_value, 'option_value', option_value)) FROM product_attribute_values WHERE product_id = p.id), '[]'))) FROM products p WHERE p.id = ?1", [id], |row| row.get(0))
+    transaction.query_row("SELECT json_object('sku', p.sku, 'name', p.name, 'purchase_price_centavos', p.purchase_price_centavos, 'sale_price_centavos', p.list_price_centavos, 'minimum_sale_price_centavos', p.minimum_sale_price_centavos, 'revision', p.revision, 'attribute_values', json(COALESCE((SELECT json_group_array(json_object('definition_id', definition_id, 'text_value', text_value, 'number_value', number_value, 'option_value', option_value)) FROM product_attribute_values WHERE product_id = p.id), '[]'))) FROM products p WHERE p.id = ?1", [id], |row| row.get(0))
 }
 
 fn audit_metadata(

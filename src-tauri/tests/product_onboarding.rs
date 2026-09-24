@@ -37,7 +37,8 @@ fn valid_product(category_id: i64, definitions: &[(i64, &str)]) -> CreateProduct
         sku: "BEL-101".into(),
         name: "Accessory belt".into(),
         category_id,
-        list_price_centavos: 4_500,
+        purchase_price_centavos: 2_000,
+        sale_price_centavos: 4_500,
         minimum_sale_price_centavos: 3_500,
         opening_quantity: 6,
         attribute_values: definitions
@@ -78,15 +79,15 @@ fn creates_product_attributes_balance_and_opening_movement_atomically() {
 
     let persisted = connection
         .query_row(
-            "SELECT p.active, p.list_price_centavos, p.minimum_unit_price_centavos, b.quantity, m.quantity_delta, m.movement_type, length(m.occurred_at) > 0, m.sale_id IS NULL, COUNT(v.definition_id) FROM products p JOIN stock_balances b ON b.product_id = p.id JOIN inventory_movements m ON m.product_id = p.id LEFT JOIN product_attribute_values v ON v.product_id = p.id WHERE p.id = ?1 GROUP BY p.id",
+            "SELECT p.active, p.purchase_price_centavos, p.list_price_centavos, p.minimum_unit_price_centavos, b.quantity, m.quantity_delta, m.movement_type, length(m.occurred_at) > 0, m.sale_id IS NULL, COUNT(v.definition_id) FROM products p JOIN stock_balances b ON b.product_id = p.id JOIN inventory_movements m ON m.product_id = p.id LEFT JOIN product_attribute_values v ON v.product_id = p.id WHERE p.id = ?1 GROUP BY p.id",
             [result.product_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?, row.get::<_, bool>(6)?, row.get::<_, bool>(7)?, row.get::<_, i64>(8)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, String>(6)?, row.get::<_, bool>(7)?, row.get::<_, bool>(8)?, row.get::<_, i64>(9)?)),
         )
         .unwrap();
 
     assert_eq!(
         persisted,
-        (1, 4_500, 3_500, 6, 6, "opening_stock".into(), true, true, 2)
+        (1, 2_000, 4_500, 3_500, 6, 6, "opening_stock".into(), true, true, 2)
     );
     assert_eq!(
         connection
@@ -140,20 +141,22 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
         (
             CreateProductInput {
                 sku: "BEL-102".into(),
-                list_price_centavos: 0,
-                    minimum_sale_price_centavos: 0,
+                purchase_price_centavos: 0,
+                sale_price_centavos: 4_500,
+                minimum_sale_price_centavos: 0,
                 ..valid_product(category_id, &[(definitions[0], "1050")])
             },
-            CreateProductError::InvalidListPrice,
+            CreateProductError::InvalidPurchasePrice,
         ),
         (
             CreateProductInput {
                 sku: "BEL-106".into(),
-                list_price_centavos: 4_500,
+                purchase_price_centavos: 2_000,
+                sale_price_centavos: 4_500,
                 minimum_sale_price_centavos: 5_000,
                 ..valid_product(category_id, &[(definitions[0], "1050")])
             },
-            CreateProductError::MinimumSalePriceExceedsListPrice,
+            CreateProductError::MinimumSalePriceExceedsSalePrice,
         ),
         (
             CreateProductInput {
@@ -238,8 +241,9 @@ fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
         let results = repuestos_autos::catalog::search_active_products(&connection, query).unwrap();
         assert_eq!(results[0].product_id, product.product_id, "query {query}");
         assert_eq!(results[0].available_quantity, 6);
-        assert_eq!(results[0].list_price_centavos, 4_500);
+        assert_eq!(results[0].sale_price_centavos, 4_500);
             assert_eq!(results[0].minimum_sale_price_centavos, 3_500);
+        assert_eq!(results[0].purchase_price_centavos, Some(2_000));
     }
 
     let response = confirm_sale(

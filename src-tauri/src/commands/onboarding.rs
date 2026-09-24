@@ -91,17 +91,21 @@ fn map_product_error(error: CreateProductError) -> OnboardingError {
             ("missing_category", "The selected category was not found.")
         }
         CreateProductError::DuplicateSku => ("duplicate_sku", "SKU already exists."),
-        CreateProductError::InvalidListPrice => (
-            "invalid_list_price",
-            "List price must be a positive whole number of centavos.",
+        CreateProductError::InvalidPurchasePrice => (
+            "invalid_purchase_price",
+            "Purchase price must be a positive whole number of centavos.",
+        ),
+        CreateProductError::InvalidSalePrice => (
+            "invalid_sale_price",
+            "Sale price must be a positive whole number of centavos.",
         ),
         CreateProductError::InvalidMinimumSalePrice => (
             "invalid_minimum_sale_price",
             "Minimum sale price must be a positive whole number of centavos.",
         ),
-        CreateProductError::MinimumSalePriceExceedsListPrice => (
-            "minimum_sale_price_exceeds_list_price",
-            "Minimum sale price cannot exceed list price.",
+        CreateProductError::MinimumSalePriceExceedsSalePrice => (
+            "minimum_sale_price_exceeds_sale_price",
+            "Minimum sale price cannot exceed sale price.",
         ),
         CreateProductError::InvalidOpeningQuantity => (
             "invalid_opening_quantity",

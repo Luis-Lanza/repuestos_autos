@@ -13,22 +13,23 @@ fn finds_active_seeded_products_by_every_searchable_catalog_field() {
         let product = &results[0];
         assert_eq!(product.sku, "FLT-001");
         assert_eq!(product.available_quantity, 8);
-        assert_eq!(product.catalog_unit_price_centavos, 2_500);
+        assert_eq!(product.sale_price_centavos, 2_500);
+        assert_eq!(product.purchase_price_centavos, None);
     }
 }
 
 #[test]
-fn exposes_true_list_price_and_minimum_price_separately() {
+fn exposes_sale_minimum_and_purchase_prices_separately() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     connection
-        .execute("UPDATE products SET list_price_centavos = 5000, minimum_unit_price_centavos = 2500 WHERE id = 1", [])
+        .execute("UPDATE products SET purchase_price_centavos = 3200, list_price_centavos = 5000, minimum_unit_price_centavos = 2500 WHERE id = 1", [])
         .unwrap();
 
     let product = &repuestos_autos::catalog::search_active_products(&connection, "filtro")
         .unwrap()[0];
 
-    assert_eq!(product.catalog_unit_price_centavos, 5000);
-    assert_eq!(product.list_price_centavos, 5000);
+    assert_eq!(product.purchase_price_centavos, Some(3_200));
+    assert_eq!(product.sale_price_centavos, 5_000);
     assert_eq!(product.minimum_sale_price_centavos, 2500);
 }
 
