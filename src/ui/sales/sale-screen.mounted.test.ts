@@ -248,7 +248,16 @@ test("contains the product result viewport between search and pagination without
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-catalog-results\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-layout\][^}]*grid-template-rows:\s*auto auto;[^}]*align-content:\s*start;[^}]*flex:\s*0 0 auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*auto[^}]*flex:\s*0 0 auto[^}]*overflow-y:\s*visible/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*max-block-size:\s*min\(42vh, 32rem\)[^}]*flex:\s*0 1 auto[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] > \[data-ui-sales-product\][^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] \[data-ui-unit-price\][^}]*white-space:\s*nowrap/s);
+  assert.ok(within(list).getAllByRole("button", { name: "Agregar" }).length > 0);
+  await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-gallery="true"\][^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.equal(within(list).getAllByRole("listitem").length, 100);
+  assert.ok(within(catalog).getByRole("status"));
+  assert.ok(within(catalog).getByRole("button", { name: "Siguiente" }));
 });
 
 test("shows every discovery state and ignores reverse-order search completion", async () => {

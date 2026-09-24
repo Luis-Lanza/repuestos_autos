@@ -164,6 +164,34 @@ test("Sales table and gallery render ordered non-empty attribute summaries, thum
   assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
 });
 
+test("Sales browse modes retain distinct geometry and protect table price and Add content", async () => {
+  const state = { ...initialProductBrowserState, status: "results" as const, result: page };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar" };
+  const view = render(createElement(ProductBrowser, props));
+  const list = screen.getByRole("list", { name: "Resultados del catálogo" });
+  const row = within(list).getByRole("listitem");
+  assert.equal(list.getAttribute("data-ui-sales-table"), "true");
+  const actionArea = row.querySelector("[data-ui-product-action]")!;
+  assert.equal(actionArea.querySelector("[data-ui-unit-price] [data-ui-money]")?.textContent, "Bs 25,00");
+  assert.equal(within(actionArea).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
+
+  view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: "gallery" }));
+  assert.equal(list.getAttribute("data-ui-sales-table"), null);
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  const card = within(list).getByRole("listitem");
+  assert.equal(card.getAttribute("data-ui-sales-product-card"), "true");
+  assert.equal(card.querySelector("[data-ui-money]")?.textContent, "Bs 25,00");
+  assert.equal(within(card).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
+
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-sales-table="true"[^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
+  assert.match(css, /data-ui-sales-table="true"] \[data-ui-product-action\][^}]*white-space:\s*nowrap/s);
+  assert.match(css, /data-ui-sales-table="true"] \[data-ui-money\][^}]*word-break:\s*keep-all/s);
+  assert.match(css, /data-ui-sales-gallery="true"] [^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.match(css, /data-ui-sales-product-card\] > \[data-ui-money\][^}]*font-size:\s*var\(--type-h2-size\)/s);
+  assert.match(css, /data-ui-sales-product-card\] > \[data-ui-action\][^}]*inline-size:\s*100%[^}]*white-space:\s*nowrap/s);
+});
+
 test("Sales product identity opens an accessible read-only detail with every ordered attribute and restores focus", async () => {
   const product = { ...page.products[0], purchase_price_centavos: null, minimum_sale_price_centavos: 1_500, attribute_values: [
     { definition_id: 2, label: "Diámetro", value: "50 mm" },
