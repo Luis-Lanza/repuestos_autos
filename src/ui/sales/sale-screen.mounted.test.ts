@@ -117,9 +117,12 @@ test("contains the product result viewport between search and pagination without
   const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
   const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(list.getAttribute("data-ui-product-browser-list"), "true");
-  assert.equal(list.previousElementSibling?.getAttribute("data-ui-sales-catalog-status"), "true");
-  assert.equal(list.previousElementSibling?.previousElementSibling?.tagName, "FORM");
-  assert.equal(list.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
+  const results = list.parentElement!;
+  assert.equal(results.getAttribute("data-ui-catalog-results"), "true");
+  assert.equal(results.parentElement?.getAttribute("data-ui-product-browser"), "sales");
+  assert.equal(results.previousElementSibling?.getAttribute("data-ui-sales-catalog-status"), "true");
+  assert.equal(results.previousElementSibling?.previousElementSibling?.tagName, "FORM");
+  assert.equal(results.nextElementSibling?.getAttribute("data-ui-product-browser-pages"), "true");
   assert.equal(within(catalog).getAllByRole("listitem").length, 100);
   assert.ok(screen.getByRole("region", { name: "Resumen de venta" }));
   assert.equal(screen.queryByRole("region", { name: "Carrito" }), null);
@@ -128,6 +131,12 @@ test("contains the product result viewport between search and pagination without
   assert.match(style.textContent ?? "", /data-ui-product-browser-list[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
   assert.match(style.textContent ?? "", /data-ui-sale-layout[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(260px,\s*320px\)/s);
   assert.match(style.textContent ?? "", /data-ui-sale-layout[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-sale-layout\] > \[data-ui-panel\]:first-child[^}]*min-block-size:\s*0[^}]*display:\s*flex/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-sale-layout\] \[data-ui-product-browser="sales"\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-catalog-results\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto/s);
+  assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-layout\][^}]*grid-template-rows:\s*auto auto;[^}]*align-content:\s*start;[^}]*flex:\s*0 0 auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*auto[^}]*flex:\s*0 0 auto[^}]*overflow-y:\s*visible/s);
 });
 
 test("shows every discovery state and ignores reverse-order search completion", async () => {
