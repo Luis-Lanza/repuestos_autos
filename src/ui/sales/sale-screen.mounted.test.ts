@@ -109,8 +109,10 @@ test("Sales and checkout consume canonical sale price without changing submitted
   assert.equal(within(catalog).getByText("Bs 90,00").textContent, "Bs 90,00");
   const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   const line = within(dialog).getByRole("listitem");
-  assert.equal(within(line).getByText("Precio de venta: Bs 90,00").textContent, "Precio de venta: Bs 90,00");
-  assert.equal(within(line).getByText("Precio de compra (referencia): Bs 45,00").textContent, "Precio de compra (referencia): Bs 45,00");
+  assert.equal(within(line).getByText("Venta: Bs 90,00").textContent, "Venta: Bs 90,00");
+  assert.equal(within(line).getByText("Compra: Bs 45,00").textContent, "Compra: Bs 45,00");
+  assert.equal(within(line).getByText("Precio de venta: Bs 90,00").className, "sale-price-fact-accessible");
+  assert.equal(within(line).getByText("Precio de compra (referencia): Bs 45,00").className, "sale-price-fact-accessible");
   assert.equal((within(line).getByRole("textbox", { name: "Precio de venta (Bs)" }) as HTMLInputElement).value, "90,00");
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
@@ -276,11 +278,28 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.equal(row.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
     assert.ok(within(row).getByText(product.name));
     assert.ok(within(row).getByText(product.sku));
-    assert.equal(row.querySelector("[data-ui-sales-list-price]")?.textContent, `Precio de venta: ${product.sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
-    assert.equal(row.querySelector("[data-ui-sales-minimum-price]")?.textContent, `Precio mínimo de venta: ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
-    if (product.purchase_price_centavos === null) assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): No registrado");
-    else assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): Bs 32,00");
-    assert.equal(row.querySelectorAll("[data-ui-sale-price-facts] > span").length, 3);
+    const salePrice = `Bs ${product.sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
+    const minimumPrice = `Bs ${product.minimum_sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
+    const purchasePrice = product.purchase_price_centavos === null ? "No registrado" : "Bs 32,00";
+    assert.equal(row.querySelector("[data-ui-sales-list-price] > [aria-hidden='true']")?.textContent, `Venta: ${salePrice}`);
+    assert.equal(row.querySelector("[data-ui-sales-minimum-price] > [aria-hidden='true']")?.textContent, `Mín.: ${minimumPrice}`);
+    assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference] > [aria-hidden='true']")?.textContent, `Compra: ${purchasePrice}`);
+    for (const fullFact of [
+      `Precio de compra (referencia): ${purchasePrice}`,
+      `Precio de venta: ${salePrice}`,
+      `Precio mínimo de venta: ${minimumPrice}`,
+    ]) {
+      const accessibleText = within(row).getByText(fullFact);
+      assert.equal(accessibleText.className, "sale-price-fact-accessible");
+      assert.equal(accessibleText.parentElement?.hasAttribute("aria-label"), false);
+      assert.equal(accessibleText.previousElementSibling?.getAttribute("aria-hidden"), "true");
+    }
+    assert.deepEqual(
+      Array.from(row.querySelectorAll("[data-ui-sale-price-facts] [aria-hidden='true']"), (node) => node.textContent),
+      [`Compra: ${purchasePrice}`, " · ", `Venta: ${salePrice}`, " · ", `Mín.: ${minimumPrice}`],
+    );
+    assert.equal(row.querySelector("[data-ui-sale-price-facts]")?.querySelectorAll(".sale-price-fact-accessible").length, 3);
+    assert.equal(row.querySelectorAll("[data-ui-sale-price-facts] > [data-ui-sales-purchase-price-reference], [data-ui-sale-price-facts] > [data-ui-sales-list-price], [data-ui-sale-price-facts] > [data-ui-sales-minimum-price]").length, 3);
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
     assert.ok(within(row).getByRole("textbox", { name: "Precio de venta (Bs)" }));
