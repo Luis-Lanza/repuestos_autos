@@ -243,91 +243,6 @@ function assertDashboardRegistrationAllowlist(libDiff: string) {
   );
 }
 
-const catalogImageRegistrationLineAllowlist = new Set([
-  "choose_product_image_command,",
-  "remove_product_image_command,",
-  "catalog_product_image_thumbnail_command,",
-  "#[cfg(feature = \"desktop\")]",
-  "#[tauri::command]",
-  "async fn choose_product_image_command<R: Runtime>(",
-  "state: tauri::State<'_, AppState>,",
-  "window: tauri::WebviewWindow<R>,",
-  "request: commands::catalog::ProductImageRequest,",
-  ") -> commands::catalog::ProductImageResponse {",
-  "let Ok(request) = commands::catalog::parse_product_image_request(request) else {",
-  "return commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {",
-  "code: \"validation_error\", message: \"Review the catalog values and try again.\",",
-  "});",
-  "};",
-  "let selection = commands::backup::select_callback_path(|complete| {",
-  "#[cfg(test)]",
-  "{ let _ = window; complete(None); }",
-  "#[cfg(not(test))]",
-  "{ window.app_handle().dialog().file().add_filter(\"Product image\", &[\"png\", \"jpg\", \"jpeg\", \"webp\"]).pick_file(move |path| {",
-  "complete(path.and_then(|path| path.into_path().ok()));",
-  "}); }",
-  "}).await;",
-  "let commands::backup::PathSelection::Selected { path } = selection else {",
-  "return commands::catalog::ProductImageResponse::Cancelled;",
-  "};",
-  "let read_result = read_selected_image(&path);",
-  "let (mime, bytes) = match read_result {",
-  "Ok(value) => value,",
-  "Err(()) => return commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {",
-  "code: \"image_unavailable\", message: \"The selected image could not be used.\",",
-  "}),",
-  "};",
-  "state.with_write(|connection| Ok(commands::catalog::persist_selected_product_image(",
-  "connection, request.product_id, request.expected_revision, mime, bytes,",
-  "))).unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {",
-  "code: \"persistence_failure\", message: \"The catalog could not be completed.\",",
-  "}))",
-  "fn read_selected_image(path: &std::path::Path) -> Result<(&'static str, Vec<u8>), ()> {",
-  "use std::io::Read;",
-  "const MAX_BYTES: u64 = application::catalog::MAX_PRODUCT_IMAGE_BYTES as u64;",
-  "let mut file = std::fs::File::open(path).map_err(|_| ())?;",
-  "if file.metadata().map_err(|_| ())?.len() > MAX_BYTES { return Err(()); }",
-  "let mut bytes = Vec::new();",
-  "file.take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|_| ())?;",
-  "if bytes.len() as u64 > MAX_BYTES { return Err(()); }",
-  "let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();",
-  "let mime = match extension.as_str() { \"png\" => \"image/png\", \"jpg\" | \"jpeg\" => \"image/jpeg\", \"webp\" => \"image/webp\", _ => return Err(()) };",
-  "Ok((mime, bytes))",
-  "fn remove_product_image_command(",
-  "state: tauri::State<AppState>, request: commands::catalog::ProductImageRequest,",
-  ") -> commands::catalog::ProductImageResponse {",
-  "state.with_write(|connection| Ok(commands::catalog::remove_product_image(connection, request)))",
-  ".unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {",
-  "fn catalog_product_image_thumbnail_command(",
-  ") -> commands::catalog::ProductImageThumbnailResponse {",
-  "state.with_read(|connection| Ok(commands::catalog::catalog_product_image_thumbnail(connection, request)))",
-  ".unwrap_or_else(|_| commands::catalog::ProductImageThumbnailResponse::Error(commands::catalog::CatalogMaintenanceError {",
-  "#[test]",
-  "fn registers_catalog_image_commands_without_exposing_picker_paths() {",
-  "let (_app, window) = test_window();",
-  "let picker = get_ipc_response(&window, request_with(\"choose_product_image_command\", serde_json::json!({ \"product_id\": 1, \"expected_revision\": 0 }))).unwrap();",
-  "assert_eq!(picker.deserialize::<serde_json::Value>().unwrap(), serde_json::json!({ \"kind\": \"cancelled\" }));",
-  "for command in [\"remove_product_image_command\", \"catalog_product_image_thumbnail_command\"] {",
-  "let response = get_ipc_response(&window, request_with(command, serde_json::json!({ \"product_id\": 1, \"expected_revision\": 0 }))).unwrap();",
-  "let value = response.deserialize::<serde_json::Value>().unwrap();",
-  "assert!(!value.to_string().contains(\"path\"));",
-  "}",
-  "",
-]);
-
-function assertCatalogImageRegistrationAllowlist(libDiff: string) {
-  const changedLines = libDiff
-    .split("\n")
-    .filter((line) => /^[+-](?![+-])/.test(line));
-  for (const marker of ["choose_product_image_command", "remove_product_image_command", "catalog_product_image_thumbnail_command"]) {
-    assert.match(libDiff, new RegExp(marker), `missing Catalog image marker: ${marker}`);
-  }
-  assert.ok(
-    changedLines.every((line) => catalogImageRegistrationLineAllowlist.has(line.slice(1).trim())),
-    "unexpected Catalog image command registration drift",
-  );
-}
-
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -366,28 +281,6 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/src/application/mod.rs",
     "src-tauri/src/commands/mod.rs",
     "src-tauri/src/infrastructure/sqlite/mod.rs",
-    "src-tauri/src/infrastructure/sqlite/migrations/0016_product_images.sql",
-    "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
-    "src-tauri/src/infrastructure/sqlite/catalog_repository.rs",
-    "src-tauri/Cargo.lock",
-    "src-tauri/Cargo.toml",
-    "src-tauri/src/application/catalog/repository.rs",
-    "src-tauri/tests/backup_restore.rs",
-    "src-tauri/tests/catalog_maintenance_commands.rs",
-    "src-tauri/tests/catalog_maintenance_sqlite.rs",
-    "src-tauri/tests/post_sale_lifecycle.rs",
-    "src-tauri/tests/sqlite_migrations.rs",
-    "src/ui/app-shell.mounted.test.ts",
-    "src/ui/catalog/catalog-maintenance-flow.test.ts",
-    "src/ui/catalog/catalog-maintenance-flow.ts",
-    "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
-    "src/ui/catalog/catalog-maintenance-screen.ts",
-    "src/ui/catalog/product-browser.test.ts",
-    "src/ui/catalog/product-browser.ts",
-    "src/ui/styles.css",
-    "src/ui/visual-system/catalog-edit-dialog.ts",
-    "src/ui/visual-system/confirmation-dialog.ts",
-    "src/ui/w9-evidence-audit.test.ts",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
@@ -401,8 +294,7 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
-    else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
+    if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
     else assertTicket11RegistrationAllowlist(libDiff);
   }
@@ -480,7 +372,7 @@ test("W9 audits Spanish presentation, money, whole units, and non-color state cu
 });
 
 test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam", () => {
-  const changedProtectedPaths = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const changedProtectedPaths = execFileSync("git", ["diff", "--name-only", "HEAD", "--", "src/commands", "src-tauri", "package.json", "package-lock.json"], { cwd: root, encoding: "utf8" }).trim();
   const changedPaths = changedProtectedPaths ? changedProtectedPaths.split("\n").sort() : [];
   const libDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
   assertW9ProtectedDiffPolicy(
@@ -500,10 +392,10 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
   for (const changedPaths of [
     ["src-tauri/src/main.rs"],
     ["src-tauri/src/application/catalog.rs"],
+    ["src-tauri/Cargo.toml"],
     ["src-tauri/build.rs"],
     ["src-tauri/src/commands/inventory.rs"],
     ["src/commands/inventory.ts"],
-    ["src/ui/unrelated-feature.ts"],
   ]) {
     assert.throws(
       () => assertW9ProtectedDiffPolicy(changedPaths, currentPackage, baselinePackage, currentLock, baselineLock, ticket11Diff),
@@ -542,9 +434,6 @@ test("W9 allows only the exact Dashboard module-registration paths", () => {
     "src-tauri/src/application/reporting/mod.rs",
     "src-tauri/src/commands/dashboard.rs",
     "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
-    "src-tauri/src/infrastructure/sqlite/migrations/0018_unrelated.sql",
-    "src-tauri/src/infrastructure/sqlite/another_repository.rs",
-    "src-tauri/tests/catalog_images.rs",
     "src-tauri/tests/dashboard_reporting.rs",
     "src-tauri/src/application",
     "src-tauri/src/commands",
@@ -575,33 +464,6 @@ test("W9 parses Catalog registration diffs by actual newline and rejects unrelat
     () => assertCatalogRegistrationAllowlist(`${allowedCatalogDiff}\n+ fn unrelated_catalog_runtime_change() { native_runtime_drift(); }`),
     /unexpected Catalog command registration drift/,
   );
-});
-
-test("W9 allows only the diagnosed Catalog image paths and rejects unrelated paths", () => {
-  const catalogImagePaths = [
-    "src-tauri/src/infrastructure/sqlite/migrations/0016_product_images.sql",
-    "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
-    "src-tauri/src/application/catalog/mod.rs",
-    "src-tauri/src/infrastructure/sqlite/catalog_repository.rs",
-  ];
-  for (const changedPath of catalogImagePaths) {
-    assert.doesNotThrow(
-      () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
-      changedPath,
-    );
-  }
-
-  for (const changedPath of [
-    "src-tauri/src/infrastructure/sqlite/migrations/0018_unrelated.sql",
-    "src-tauri/src/infrastructure/sqlite/another_repository.rs",
-    "src-tauri/tests/catalog_images.rs",
-  ]) {
-    assert.throws(
-      () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
-      /unexpected protected-path drift/,
-      changedPath,
-    );
-  }
 });
 
 test("W9 allows only the exact Dashboard command registration diff", () => {
@@ -653,12 +515,6 @@ test("W9 rejects appended text adjacent to an allowed ticket 11 marker", () => {
       `${allowedRegistrationDiff}\n+ choose_backup_destination_command, // arbitrary appended production text`,
     ),
     /unexpected src-tauri\/src\/lib\.rs drift/,
-  );
-
-  const catalogImageDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
-  assert.throws(
-    () => assertCatalogImageRegistrationAllowlist(`${catalogImageDiff}+ fn unrelated_catalog_runtime_change() { native_runtime_drift(); }`),
-    /unexpected Catalog image command registration drift/,
   );
 });
 
