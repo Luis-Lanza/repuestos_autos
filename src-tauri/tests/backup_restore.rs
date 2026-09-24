@@ -30,7 +30,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 16] = [
+const MIGRATIONS: [&str; 17] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -57,6 +57,7 @@ const MIGRATIONS: [&str; 16] = [
     ),
     include_str!("../src/infrastructure/sqlite/migrations/0016_product_images.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
@@ -562,11 +563,11 @@ fn rejects_invalid_and_unsupported_candidates_without_source_mutation() {
 }
 
 #[test]
-fn v16_product_images_remain_thumbnail_free_when_staged_under_v17() {
+fn v16_product_images_remain_thumbnail_free_when_staged_under_v18() {
     let directory = temporary_directory("v16-product-image-upgrade");
     fs::create_dir_all(&directory).unwrap();
     let source = directory.join("v16.sqlite3");
-    let stage = directory.join("staging/v17.sqlite3");
+    let stage = directory.join("staging/v18.sqlite3");
     versioned_database(&source, 16);
     Connection::open(&source)
         .unwrap()
@@ -578,7 +579,7 @@ fn v16_product_images_remain_thumbnail_free_when_staged_under_v17() {
         .unwrap();
 
     let metadata = stage_and_validate(&source, &stage).unwrap();
-    assert_eq!(metadata.schema_version, 17);
+    assert_eq!(metadata.schema_version, 18);
     assert_eq!(
         Connection::open(&stage)
             .unwrap()
@@ -590,6 +591,191 @@ fn v16_product_images_remain_thumbnail_free_when_staged_under_v17() {
             .unwrap(),
         (None, None),
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stages_v17_backup_to_v18_without_fabricating_historical_purchase_prices() {
+    let directory = temporary_directory("v17-purchase-price-upgrade");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("v17.sqlite3");
+    let stage = directory.join("staging/v18.sqlite3");
+    versioned_database(&source, 17);
+    let source_before = fs::read(&source).unwrap();
+
+    let metadata = stage_and_validate(&source, &stage).unwrap();
+
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(fs::read(&source).unwrap(), source_before);
+    let restored = Connection::open(&stage).unwrap();
+    assert_eq!(
+        restored.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    assert_eq!(
+        restored.query_row(
+            "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE id = 40",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn restored_database_validation_rejects_v17_without_purchase_price_columns() {
+    let directory = temporary_directory("missing-v18-purchase-price-columns");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("v17.sqlite3");
+    versioned_database(&source, 17);
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(
+            &Connection::open(&source).unwrap(),
+        ),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn restored_validation_rejects_v18_purchase_price_columns_without_required_checks() {
+    let directory = temporary_directory("missing-v18-purchase-price-check");
+    fs::create_dir_all(&directory).unwrap();
+
+    for (table, column) in [
+        ("products", "purchase_price_centavos"),
+        ("inventory_movements", "unit_purchase_price_centavos"),
+    ] {
+        let source = directory.join(format!("{table}.sqlite3"));
+        versioned_database(&source, CURRENT_SCHEMA_VERSION);
+        let connection = Connection::open(&source).unwrap();
+        let mut ddl = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let column_start = ddl.find(column).unwrap();
+        let check_start = ddl[column_start..].find("CHECK (").unwrap() + column_start;
+        let opening_paren = ddl[check_start..].find('(').unwrap() + check_start;
+        let mut depth = 0;
+        let check_end = ddl[opening_paren..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                match character {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(opening_paren + offset + 1)
+            })
+            .unwrap();
+        ddl.replace_range(check_start..check_end, "");
+        connection.execute_batch("PRAGMA writable_schema = ON;").unwrap();
+        connection
+            .execute(
+                "UPDATE sqlite_master SET sql = ?1 WHERE type = 'table' AND name = ?2",
+                params![ddl, table],
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA schema_version = 1000; PRAGMA writable_schema = OFF;")
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(
+            repuestos_autos::infrastructure::sqlite::validate_restored_database(
+                &Connection::open(&source).unwrap()
+            ),
+            Err(BackupValidationError::InvalidBackup),
+            "missing required CHECK must be rejected for {table}.{column}"
+        );
+        assert_eq!(
+            stage_and_validate(&source, &directory.join(format!("{table}-stage.sqlite3"))),
+            Err(BackupValidationError::InvalidBackup),
+            "backup staging must reject missing required CHECK for {table}.{column}"
+        );
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn backup_restore_preserves_v18_purchase_prices_and_rejects_malformed_backup_data() {
+    let directory = temporary_directory("purchase-price-backup-restore");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.sqlite3");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let stage = directory.join("staging/restored.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    let live = Connection::open(&source).unwrap();
+    live.execute(
+        "UPDATE products SET purchase_price_centavos = 3750 WHERE id = 1",
+        [],
+    ).unwrap();
+    live.execute(
+        "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, request_id, resulting_quantity, unit_purchase_price_centavos) VALUES (1, 'stock_entry', 1, 'backup-cost-entry', 9, 3750)",
+        [],
+    ).unwrap();
+
+    let metadata = create_snapshot(&live, &snapshot).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        stage_and_validate(&snapshot, &stage).unwrap().schema_version,
+        CURRENT_SCHEMA_VERSION,
+    );
+    let restored = Connection::open(&stage).unwrap();
+    assert_eq!(
+        restored.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap(),
+        3750,
+    );
+    assert_eq!(
+        restored.query_row(
+            "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE request_id = 'backup-cost-entry'",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap(),
+        3750,
+    );
+    drop(restored);
+    drop(live);
+
+    let malformed = directory.join("malformed.sqlite3");
+    versioned_database(&malformed, CURRENT_SCHEMA_VERSION);
+    Connection::open(&malformed).unwrap().execute_batch(
+        "PRAGMA ignore_check_constraints = ON;
+         UPDATE products SET purchase_price_centavos = 0 WHERE id = 1;",
+    ).unwrap();
+    let malformed_before = fs::read(&malformed).unwrap();
+    assert_eq!(
+        stage_and_validate(&malformed, &directory.join("malformed-stage.sqlite3")),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    assert_eq!(fs::read(&malformed).unwrap(), malformed_before);
+    Connection::open(&malformed).unwrap().execute_batch(
+        "PRAGMA ignore_check_constraints = ON;
+         UPDATE products SET purchase_price_centavos = NULL WHERE id = 1;
+         INSERT INTO inventory_movements (
+             product_id, movement_type, quantity_delta, unit_purchase_price_centavos
+         ) VALUES (1, 'opening_stock', 1, 0);",
+    ).unwrap();
+    let malformed_before = fs::read(&malformed).unwrap();
+    assert_eq!(
+        stage_and_validate(&malformed, &directory.join("malformed-movement-stage.sqlite3")),
+        Err(BackupValidationError::InvalidBackup),
+    );
+    assert_eq!(fs::read(&malformed).unwrap(), malformed_before);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -704,7 +890,7 @@ fn rejects_current_schema_backup_missing_thumbnail_integrity_configuration() {
 }
 
 #[test]
-fn rejects_v17_backup_with_product_image_constraints_only_in_comments() {
+fn rejects_v18_backup_with_product_image_constraints_only_in_comments() {
     let directory = temporary_directory("comment-only-product-image-constraints");
     fs::create_dir_all(&directory).unwrap();
     let source = directory.join("comment-only.sqlite3");

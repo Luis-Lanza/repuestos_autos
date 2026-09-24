@@ -47,6 +47,11 @@ const VERSION_FOURTEEN_MIGRATION: &str = include_str!(
 const VERSION_FIFTEEN_MIGRATION: &str = include_str!(
     "../src/infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"
 );
+const VERSION_SIXTEEN_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0016_product_images.sql");
+const VERSION_SEVENTEEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"
+);
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "repuestos-autos-{name}-{}-{}",
@@ -802,5 +807,108 @@ fn rejects_duplicate_normalized_v7_names_before_schema_advancement() {
     assert!(open_database(&production_database_config(&directory)).is_err());
     assert_eq!(user_version(&path), 7);
     assert_eq!(legacy_facts(&path), before);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn v18_adds_nullable_purchase_prices_and_preserves_unknown_history_on_v17_upgrade() {
+    let directory = temporary_directory("migration-v18-purchase-prices");
+    let path = create_version_twelve_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_THIRTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 13).unwrap();
+    connection.execute_batch(VERSION_FOURTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 14).unwrap();
+    connection.execute_batch(VERSION_FIFTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 15).unwrap();
+    connection.execute_batch(VERSION_SIXTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 16).unwrap();
+    connection.execute_batch(VERSION_SEVENTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 17).unwrap();
+    drop(connection);
+
+    let config = production_database_config(&directory);
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 18);
+    assert_eq!(
+        connection.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    assert_eq!(
+        connection.query_row(
+            "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE id = 40",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    assert!(connection.execute(
+        "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos, purchase_price_centavos) VALUES (1, 'COST-001', 'Cost', 1, 100, 100, 0)",
+        [],
+    ).is_err());
+    drop(connection);
+
+    let reopened = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 18);
+    assert_eq!(
+        reopened.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn fresh_v18_schema_has_nullable_price_columns_and_rejects_malformed_costs() {
+    let directory = temporary_directory("migration-v18-fresh-schema");
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+    assert_eq!(user_version(&directory.join("repuestos-autos.sqlite3")), 18);
+    connection.execute(
+        "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'FRESH-001', 'Fresh product', 1, 100, 100)",
+        [],
+    ).unwrap();
+    let product_id = connection.last_insert_rowid();
+    assert_eq!(
+        connection.query_row(
+            "SELECT purchase_price_centavos FROM products WHERE id = ?1",
+            [product_id],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    assert!(connection.execute(
+        "UPDATE products SET purchase_price_centavos = -1 WHERE id = ?1",
+        [product_id],
+    ).is_err());
+    connection.execute(
+        "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, unit_purchase_price_centavos) VALUES (?1, 'opening_stock', 1, NULL)",
+        [product_id],
+    ).unwrap();
+    let movement_id = connection.last_insert_rowid();
+    assert_eq!(
+        connection.query_row(
+            "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE id = ?1",
+            [movement_id],
+            |row| row.get::<_, Option<i64>>(0),
+        ).unwrap(),
+        None,
+    );
+    assert!(connection.execute(
+        "UPDATE inventory_movements SET unit_purchase_price_centavos = 100 WHERE id = ?1",
+        [movement_id],
+    ).is_err());
+    assert!(connection.execute(
+        "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, unit_purchase_price_centavos) VALUES (?1, 'opening_stock', 1, 0)",
+        [product_id],
+    ).is_err());
+    drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
 }

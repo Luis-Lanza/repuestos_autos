@@ -20,7 +20,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 17;
+pub const CURRENT_SCHEMA_VERSION: i64 = 18;
 const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
@@ -305,8 +305,19 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         version = 17;
     }
 
+    if version == 17 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!(
+            "migrations/0018_global_product_purchase_price.sql"
+        ))?;
+        validate_version_eighteen_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 18)?;
+        transaction.commit()?;
+        version = 18;
+    }
+
     if version == CURRENT_SCHEMA_VERSION {
-        validate_version_fifteen_schema(connection)?;
+        validate_version_eighteen_schema(connection)?;
     }
 
     Ok(())
@@ -947,6 +958,63 @@ fn normalize_product_images_ddl(sql: &str) -> String {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
+}
+
+fn validate_version_eighteen_schema(connection: &Connection) -> Result<()> {
+    validate_version_fifteen_schema(connection)?;
+    for (table, column) in [
+        ("products", "purchase_price_centavos"),
+        ("inventory_movements", "unit_purchase_price_centavos"),
+    ] {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+        let column_info = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        if !column_info.iter().any(|(name, data_type, not_null)| {
+            name == column && data_type.eq_ignore_ascii_case("INTEGER") && !not_null
+        }) {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+
+        let sql = connection.query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get::<_, String>(0),
+        )?;
+        let required_check = normalize_product_images_ddl(&format!(
+            "CHECK ({column} IS NULL OR (typeof({column}) = 'integer' AND {column} BETWEEN 1 AND 9007199254740991))"
+        ));
+        if !normalize_product_images_ddl(&sql).contains(&required_check) {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+
+    if connection.query_row(
+        "SELECT EXISTS (
+            SELECT 1 FROM products
+            WHERE purchase_price_centavos IS NOT NULL
+              AND (typeof(purchase_price_centavos) <> 'integer'
+                   OR purchase_price_centavos <= 0
+                   OR purchase_price_centavos > 9007199254740991)
+            UNION ALL
+            SELECT 1 FROM inventory_movements
+            WHERE unit_purchase_price_centavos IS NOT NULL
+              AND (typeof(unit_purchase_price_centavos) <> 'integer'
+                   OR unit_purchase_price_centavos <= 0
+                   OR unit_purchase_price_centavos > 9007199254740991)
+        )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
 }
 
 fn validate_catalog_price_data(connection: &Connection) -> Result<()> {
