@@ -280,6 +280,7 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.equal(row.querySelector("[data-ui-sales-minimum-price]")?.textContent, `Precio mínimo de venta: ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
     if (product.purchase_price_centavos === null) assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): No registrado");
     else assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): Bs 32,00");
+    assert.equal(row.querySelectorAll("[data-ui-sale-price-facts] > span").length, 3);
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
     assert.ok(within(row).getByRole("textbox", { name: "Precio de venta (Bs)" }));
@@ -453,7 +454,10 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.equal(document.getElementById(errorId)?.textContent, "El precio de venta no puede ser menor que el precio mínimo de Bs 85,50.");
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart\]\s*\{[^}]*display:\s*grid[^}]*list-style:\s*none/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-row\]\s*\{[^}]*display:\s*grid[^}]*border:\s*1px solid/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-product\]\s*\{[^}]*grid-column:\s*1/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\] \[data-ui-action\]\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 2[^}]*justify-self:\s*end/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(9rem,\s*max-content\)[^}]*column-gap:\s*var\(--space-4\)/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-subtotal\]\s*\{[^}]*min-inline-size:\s*9rem[^}]*justify-self:\s*end[^}]*text-align:\s*end[^}]*white-space:\s*nowrap/s);
   assert.doesNotMatch(style.textContent ?? "", /^\[data-ui-checkout-content\]/m);
@@ -461,6 +465,8 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*data-ui-sales-checkout-settlement[\s\S]*grid-column:\s*2/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(520px,\s*100%\)[\s\S]*overflow:\s*auto[\s\S]*padding:\s*var\(--space-4\)/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-product\], \[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[^}]*data-ui-action[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 2[^}]*justify-self:\s*end/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-controls[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart\][^{]*\{[^}]*max-block-size:\s*none[^}]*overflow-y:\s*visible/s);
 });
