@@ -149,7 +149,7 @@ test("production CSS declares the desktop and compact shell width contracts", as
   assert.match(source, /data-ui-shell-content[^}]*overflow:\s*auto/);
   assert.match(source, /data-ui-product-browser-list[^}]*overflow-y:\s*auto/);
   assert.match(source, /(?:^|\n)\[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
-  assert.match(source, /\[data-ui-product-browser="sales"\] \[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(10rem,\s*13rem\) auto/s);
+  assert.match(source, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(12rem,\s*1\.6fr\) minmax\(10rem,\s*1fr\) auto auto/s);
   assert.match(source, /(?:^|\n)\[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /\[data-ui-product-browser="sales"\] \[data-ui-sale-list\] > li\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
   assert.match(source, /data-ui-product-browser-pages[^}]*flex:\s*0 0 auto/);

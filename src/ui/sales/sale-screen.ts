@@ -1,11 +1,11 @@
 import { createElement, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
-import { browseProducts, type ProductBrowseResult } from "../../commands/catalog.ts";
+import { browseProducts, catalogProductImageCommands, type ProductBrowseResult } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sale.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
 import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readSalesViewMode, writeSalesViewMode, type CatalogViewMode, type ProductBrowserState } from "../catalog/product-browser.ts";
 import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
 
 const INVALID_BS = "Ingresá un monto válido en Bs, con hasta dos decimales.";
@@ -26,12 +26,29 @@ function finalPriceError(line: DraftLine): string | undefined {
 export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}) {
   const [state, dispatch] = useReducer(createSaleFlow, initialSaleState);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, initialProductBrowserState);
+  const [salesViewMode, setSalesViewMode] = useState<CatalogViewMode>(readSalesViewMode);
+  const [browseThumbnails, setBrowseThumbnails] = useState<Record<number, string>>({});
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
   const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null), headingRef = useRef<HTMLHeadingElement>(null);
-  const searchSequence = useRef(0), confirmationSequence = useRef(0), confirming = useRef(false), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
-  useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; }, []);
+  const searchSequence = useRef(0), confirmationSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), confirming = useRef(false), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
+  browserRef.current = browser;
+  useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; browseThumbnailAttempt.current += 1; }, []);
+  useEffect(() => {
+    const result = browser.result;
+    if (!result || browser.status !== "results") { browseThumbnailAttempt.current += 1; setBrowseThumbnails({}); return; }
+    const current = ++browseThumbnailAttempt.current;
+    const requestId = browser.request_id;
+    setBrowseThumbnails({});
+    void Promise.all(result.products.map(async (product) => {
+      const response = await catalogProductImageCommands.thumbnail({ product_id: product.product_id, expected_revision: product.revision });
+      return response.kind === "success" && response.product_id === product.product_id && response.revision === product.revision ? [product.product_id, response.src] as const : null;
+    })).then((thumbnails) => {
+      if (!mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
+      setBrowseThumbnails(Object.fromEntries(thumbnails.filter((item): item is readonly [number, string] => item !== null)));
+    });
+  }, [browser.result, browser.status]);
   useEffect(() => {
     if (state.focus_price_product_id === null || !mounted.current) return;
     draftRef.current?.querySelector<HTMLInputElement>(`#sale-final-price-${state.focus_price_product_id}`)?.focus();
@@ -177,7 +194,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     createElement("div", { "data-ui-sale-layout": true },
       createElement(Panel, { label: "Catálogo de repuestos" } as never,
         createElement("p", { "data-ui-panel-subtitle": true }, "Búsqueda y despacho inmediato de repuestos en mostrador"),
-        createElement(ProductBrowser, { state: browser, presentation: "sales", loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
+        createElement(ProductBrowser, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Resumen de venta" } as never,
         createElement("div", { "data-ui-sale-summary": true },
           createElement("div", { "data-ui-sale-summary-heading": true },

@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, writeCatalogViewMode } from "./product-browser.ts";
+import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
 
 const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
@@ -56,7 +56,11 @@ test("keeps unavailable selection disabled and leaves Agregar and Editar names u
     const name = actionLabel === "Seleccionar" ? "Seleccionar Filter (SKU: FLT)" : actionLabel;
     const button = screen.getByRole("button", { name });
     assert.equal(button.textContent, actionLabel);
-    assert.equal(screen.queryByRole("button", { name: "Vista de tabla" }), null);
+    if (presentation === "sales") {
+      assert.ok(screen.getByRole("button", { name: "Vista de tabla" }));
+    } else {
+      assert.equal(screen.queryByRole("button", { name: "Vista de tabla" }), null);
+    }
     assert.equal((button as HTMLButtonElement).disabled, true);
     view.unmount();
   }
@@ -140,6 +144,126 @@ test("Catalog toolbar view controls are icon-only, named, and depict table and g
   assert.equal(gallery.getAttribute("title"), "Vista de galería");
   assert.equal(within(table).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "table");
   assert.equal(within(gallery).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "gallery");
+});
+
+test("Sales table and gallery render ordered non-empty attribute summaries, thumbnails, and add state", () => {
+  const product = { ...page.products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "" }, { definition_id: 2, label: "Diámetro", value: "50 mm" }, { definition_id: 3, label: "Marca", value: "Bosch" }, { definition_id: 4, label: "Modelo", value: "Ignorar" }] };
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar", disabledProductIds: new Set([1]), thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" } };
+  const view = render(createElement(ProductBrowser, props));
+  const list = screen.getByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(list.getAttribute("data-ui-sales-table"), "true");
+  assert.ok(within(list).getByRole("img", { name: "Filter" }));
+  assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
+  assert.equal(within(list).getByText("Marca: Bosch").textContent, "Marca: Bosch");
+  assert.equal(within(list).queryByText("Modelo: Ignorar"), null);
+  assert.equal((within(list).getByRole("button", { name: "Agregado" }) as HTMLButtonElement).disabled, true);
+  view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: "gallery" }));
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.ok(within(list).getByRole("img", { name: "Filter" }));
+  assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
+});
+
+test("Sales browse modes retain distinct geometry and protect table price and Add content", async () => {
+  const state = { ...initialProductBrowserState, status: "results" as const, result: page };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar" };
+  const view = render(createElement(ProductBrowser, props));
+  const list = screen.getByRole("list", { name: "Resultados del catálogo" });
+  const row = within(list).getByRole("listitem");
+  assert.equal(list.getAttribute("data-ui-sales-table"), "true");
+  const actionArea = row.querySelector("[data-ui-product-action]")!;
+  assert.equal(actionArea.querySelector("[data-ui-unit-price] [data-ui-money]")?.textContent, "Bs 25,00");
+  assert.equal(within(actionArea).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
+
+  view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: "gallery" }));
+  assert.equal(list.getAttribute("data-ui-sales-table"), null);
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  const card = within(list).getByRole("listitem");
+  assert.equal(card.getAttribute("data-ui-sales-product-card"), "true");
+  assert.deepEqual(Array.from(card.children, (child) => child.getAttribute("data-ui-sales-image-area") ? "image" : child.getAttribute("data-ui-sales-product-identity") ? "identity" : child.getAttribute("data-ui-sales-commercial-footer") ? "commercial-footer" : "unexpected"), ["image", "identity", "commercial-footer"]);
+  const viewport = card.querySelector("[data-ui-sales-image-area]")!;
+  assert.equal(within(viewport).getByRole("img", { name: "Sin imagen" }).getAttribute("data-ui-catalog-image-placeholder"), "true");
+  const footer = card.querySelector("[data-ui-sales-commercial-footer]")!;
+  assert.equal(footer.querySelector("[data-ui-money]")?.textContent, "Bs 25,00");
+  assert.equal(within(footer).getByText("Disponible: 4").getAttribute("data-ui-badge"), "available");
+  assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
+
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /data-ui-sales-table="true"[^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
+  assert.match(css, /data-ui-sales-table="true"] \[data-ui-product-action\][^}]*white-space:\s*nowrap/s);
+  assert.match(css, /data-ui-sales-table="true"] \[data-ui-money\][^}]*word-break:\s*keep-all/s);
+  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.match(css, /@media \(min-width: 961px\)[\s\S]*data-ui-product-browser="sales"\] \[data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
+  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] > \[data-ui-sales-product-card\][^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(css, /data-ui-sales-image-area\]\s*\{[^}]*inline-size:\s*min\(100%, clamp\(8rem, 14vw, 10\.6667rem\)\)[^}]*aspect-ratio:\s*4 \/ 3[^}]*justify-self:\s*center/s);
+  assert.match(css, /data-ui-sales-image-area\] > \[data-ui-product-thumbnail\], \[data-ui-sales-image-area\] > \[data-ui-catalog-image-placeholder\][^}]*inline-size:\s*100%[^}]*block-size:\s*100%/s);
+  assert.match(css, /data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s);
+  assert.match(css, /data-ui-sales-commercial-footer\] > \[data-ui-action\][^}]*grid-column:\s*1 \/ -1[^}]*inline-size:\s*100%[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /@media \(max-width: 400px\)[\s\S]*data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+});
+
+test("Sales product identity opens an accessible read-only detail with every ordered attribute and restores focus", async () => {
+  const product = { ...page.products[0], purchase_price_centavos: null, minimum_sale_price_centavos: 1_500, attribute_values: [
+    { definition_id: 2, label: "Diámetro", value: "50 mm" },
+    { definition_id: 5, label: "Material", value: "  " },
+    { definition_id: 8, label: "Marca", value: "Bosch" },
+  ] };
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {} };
+  const view = render(createElement(ProductBrowser, props));
+  for (const mode of ["table", "gallery"] as const) {
+    if (mode === "gallery") view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: mode }));
+    const trigger = screen.getByRole("button", { name: "Ver detalles de Filter (SKU: FLT)" });
+    trigger.focus();
+    await userEvent.click(trigger);
+    const detail = screen.getByRole("dialog", { name: "Filter" });
+    const closeButton = within(detail).getByRole("button", { name: "Cerrar detalle del producto" });
+    assert.equal(document.activeElement, closeButton);
+    await userEvent.keyboard("{Tab}");
+    assert.equal(document.activeElement, closeButton);
+    assert.ok(detail.contains(document.activeElement));
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    assert.equal(document.activeElement, closeButton);
+    assert.ok(detail.contains(document.activeElement));
+    assert.ok(within(detail).getByRole("img", { name: "Sin imagen" }));
+    for (const fact of ["SKU", "FLT", "Categoría", "Filters", "Stock", "Disponible: 4", "Precio de compra", "No registrado", "Precio de venta", "Bs 25,00", "Precio mínimo de venta", "Bs 15,00"]) within(detail).getByText(fact);
+    const values = Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dt, [data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent);
+    assert.deepEqual(values, ["Diámetro", "50 mm", "Material", "Sin dato", "Marca", "Bosch"]);
+    await userEvent.keyboard("{Escape}");
+    assert.equal(screen.queryByRole("dialog", { name: "Filter" }), null);
+    assert.equal(document.activeElement, trigger);
+  }
+});
+
+test("Sales view preference is separate from Catalog and defaults safely", () => {
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  assert.equal(readSalesViewMode(storage), "table");
+  writeCatalogViewMode("gallery", storage);
+  assert.equal(readSalesViewMode(storage), "table");
+  writeSalesViewMode("gallery", storage);
+  assert.equal(readSalesViewMode(storage), "gallery");
+  assert.equal(values.get("catalog.product-browser.view-mode"), "gallery");
+  assert.equal(values.get("sales.product-browser.view-mode"), "gallery");
+});
+
+test("Sales search, category, view, and submit controls share an accessible form toolbar", async () => {
+  const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+  const view = render(createElement(ProductBrowser, props));
+  const form = view.container.querySelector('[data-ui-product-browser="sales"] > form')!;
+  const search = within(form).getByRole("searchbox", { name: "Buscar en el catálogo" });
+  const category = within(form).getByRole("combobox", { name: "Categoría" });
+  const views = within(form).getByRole("group", { name: "Presentación de ventas" });
+  const submit = within(form).getByRole("button", { name: "Buscar" });
+  assert.deepEqual([search.closest("[data-ui-field]"), category.closest("[data-ui-field]"), views, submit], Array.from(form.children));
+  assert.equal((within(views).getByRole("button", { name: "Vista de tabla" })).getAttribute("aria-pressed"), "true");
+  assert.equal((within(views).getByRole("button", { name: "Vista de galería" })).getAttribute("aria-pressed"), "false");
+
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-product-browser="sales"\]\s*\{[^}]*container:\s*sales-browse\s*\/\s*inline-size/s);
+  assert.match(css, /\[data-ui-product-browser="sales"\]\s*\[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;[^}]*\}/s);
+  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(12rem,\s*1\.6fr\) minmax\(10rem,\s*1fr\) auto auto/s);
+  assert.equal(css.includes('[data-ui-catalog-workspace] [data-ui-product-browser] > form'), true);
 });
 
 test("view controls are accessible, selected, and only rendered for Catalog", async () => {

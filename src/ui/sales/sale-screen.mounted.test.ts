@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC as mockNativeIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -15,13 +15,14 @@ document.head.append(style);
 const UUID = "550e8400-e29b-41d4-a716-446655440060";
 const RETRY_UUID = "550e8400-e29b-41d4-a716-446655440061";
 const products = [
-  { product_id: 1, category_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, purchase_price_centavos: 3200, catalog_unit_price_centavos: 8550, sale_price_centavos: 8550, list_price_centavos: 8550, minimum_sale_price_centavos: 8550, revision: 2 },
-  { product_id: 2, category_id: 1, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, purchase_price_centavos: null, catalog_unit_price_centavos: 12550, sale_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 12550, revision: 3 },
-  { product_id: 3, category_id: 1, sku: "FIL-0", name: "Filtro agotado", category_name: "Filtros", available_quantity: 0, purchase_price_centavos: null, catalog_unit_price_centavos: 5000, sale_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 5000, revision: 1 },
+  { product_id: 1, category_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, purchase_price_centavos: 3200, catalog_unit_price_centavos: 8550, sale_price_centavos: 8550, list_price_centavos: 8550, minimum_sale_price_centavos: 8550, revision: 2, attribute_values: [] },
+  { product_id: 2, category_id: 1, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, purchase_price_centavos: null, catalog_unit_price_centavos: 12550, sale_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 12550, revision: 3, attribute_values: [] },
+  { product_id: 3, category_id: 1, sku: "FIL-0", name: "Filtro agotado", category_name: "Filtros", available_quantity: 0, purchase_price_centavos: null, catalog_unit_price_centavos: 5000, sale_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 5000, revision: 1, attribute_values: [] },
 ];
 const browse = (items: typeof products) => ({ kind: "success", products: items, categories: [{ category_id: 1, name: "Filtros" }], page: 1, page_size: 20, total: items.length, total_pages: items.length ? 1 : 0 });
 const success = { kind: "success", sale_id: 9, request_id: UUID, status: "confirmed", confirmed_at: "2026-01-02T10:00:00Z", outcome: "confirmed", lines: [], payments: [], total_centavos: 8550 };
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+const mockIPC = (handler: Parameters<typeof mockNativeIPC>[0]) => mockNativeIPC((command, payload) => command === "catalog_product_image_thumbnail_command" ? { kind: "error", code: "image_unavailable", message: "No product image is available." } : handler(command, payload));
 const user = () => userEvent.setup({ document });
 async function searchFor(value = "filtro") { const u = user(); await u.type(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }), `${value}{Enter}`); return u; }
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); return u; }
@@ -119,6 +120,118 @@ test("Sales and checkout consume canonical sale price without changing submitted
   assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 9_000, captured_revision: 2, final_unit_price_centavos: 9_000 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
 });
 
+test("Sales loads revision-checked page thumbnails and offers a persisted Sales-only gallery", async () => {
+  const calls: Array<{ command: string; payload: unknown }> = [];
+  mockNativeIPC((command, payload) => {
+    calls.push({ command, payload });
+    if (command === "browse_products_command") return browse([products[0]]);
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "success", product_id: 1, revision: 2, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+    throw new Error(command);
+  });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+  await within(list).findByRole("img", { name: "Filtro aceite" });
+  assert.deepEqual(calls.filter((call) => call.command === "catalog_product_image_thumbnail_command").map((call) => call.payload), [
+    { request: { product_id: 1, expected_revision: 2 } },
+  ]);
+  const galleryButton = within(catalog).getByRole("button", { name: "Vista de galería" });
+  await user().click(galleryButton);
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.equal(within(list).getAllByRole("listitem").length, 1);
+  const card = within(list).getByRole("listitem");
+  assert.deepEqual(Array.from(card.children, (child) => child.getAttribute("data-ui-sales-image-area") ? "image" : child.getAttribute("data-ui-sales-product-identity") ? "identity" : child.getAttribute("data-ui-sales-commercial-footer") ? "commercial-footer" : "unexpected"), ["image", "identity", "commercial-footer"]);
+  assert.ok(within(card.querySelector("[data-ui-sales-image-area]")!).getByRole("img", { name: "Filtro aceite" }));
+  const footer = card.querySelector("[data-ui-sales-commercial-footer]")!;
+  assert.equal(within(footer).getByText("Bs 85,50").textContent, "Bs 85,50");
+  assert.equal(within(footer).getByText("Disponible: 8").getAttribute("data-ui-badge"), "available");
+  assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
+});
+
+test("keeps Sales toolbar and gallery presentation isolated from browser layout repairs", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error(`Unexpected command: ${command}`)));
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  const toolbar = within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
+  assert.deepEqual(Array.from(toolbar.querySelectorAll(":scope > *"), (item) => item.getAttribute("role") === "group" ? item.getAttribute("aria-label") : item.tagName === "BUTTON" ? item.textContent?.trim() : item.querySelector("label")?.textContent), ["Buscar en el catálogo", "Categoría", "Presentación de ventas", "Buscar"]);
+  const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+  await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.equal(within(list).getAllByRole("listitem").length, 1);
+  const css = style.textContent ?? "";
+  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\] \{ grid-template-columns: minmax\(12rem, 1\.6fr\) minmax\(10rem, 1fr\) auto auto; \}/);
+  assert.match(css, /\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] \{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)[^}]*\}/);
+  assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
+});
+
+test("quick product detail uses the browse snapshot without changing browse or Add behavior", async () => {
+  const product = { ...products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }, { definition_id: 2, label: "Largo", value: "  " }] };
+  const calls: string[] = [];
+  mockIPC((command) => { calls.push(command); return command === "browse_products_command" ? browse([product]) : Promise.reject(new Error(`unexpected command: ${command}`)); });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  const trigger = await within(catalog).findByRole("button", { name: "Ver detalles de Filtro aceite (SKU: FIL-1)" });
+  const before = calls.filter((command) => command === "browse_products_command").length;
+  await user().click(trigger);
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  assert.deepEqual(Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent), ["Acero", "Sin dato"]);
+  assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
+  assert.equal(calls.includes("catalog_metadata_detail_command"), false);
+  await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  assert.equal(document.activeElement, trigger);
+  await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
+  assert.ok(within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("1 línea"));
+  assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
+});
+
+test("persists the Sales-only view preference across unmount and remount", async () => {
+  const key = "sales.product-browser.view-mode";
+  const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (item: string) => values.get(item) ?? null, setItem: (item: string, value: string) => { values.set(item, value); }, removeItem: (item: string) => { values.delete(item); } } });
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error(`Unexpected command: ${command}`)));
+  try {
+    const first = render(createElement(SaleScreen));
+    assert.equal((await screen.findByRole("button", { name: "Vista de tabla" })).getAttribute("aria-pressed"), "true");
+    await user().click(screen.getByRole("button", { name: "Vista de galería" }));
+    assert.equal(screen.getByRole("button", { name: "Vista de galería" }).getAttribute("aria-pressed"), "true");
+    assert.equal(values.get(key), "gallery");
+    assert.equal(values.has("catalog.product-browser.view-mode"), false);
+
+    first.unmount();
+    render(createElement(SaleScreen));
+    assert.equal((await screen.findByRole("button", { name: "Vista de galería" })).getAttribute("aria-pressed"), "true");
+    assert.equal(screen.getByRole("button", { name: "Vista de tabla" }).getAttribute("aria-pressed"), "false");
+  } finally {
+    if (previousDescriptor) Object.defineProperty(globalThis, "localStorage", previousDescriptor);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("ignores stale and mismatched thumbnails while retaining the missing-image fallback", async () => {
+  const staleThumbnail = deferred<unknown>();
+  const currentThumbnail = deferred<unknown>();
+  let browseCalls = 0;
+  let thumbnailCalls = 0;
+  mockNativeIPC((command) => {
+    if (command === "browse_products_command") return browse([products[browseCalls++ === 0 ? 0 : 1]]);
+    if (command === "catalog_product_image_thumbnail_command") return ++thumbnailCalls === 1 ? staleThumbnail.promise : currentThumbnail.promise;
+    throw new Error(command);
+  });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+  await screen.findByText("Filtro aceite");
+  await searchFor("premium");
+  await screen.findByText("Filtro premium");
+  assert.equal(thumbnailCalls, 2);
+
+  await act(() => { currentThumbnail.resolve({ kind: "success", product_id: 999, revision: 3, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" }); return currentThumbnail.promise; });
+  await act(() => { staleThumbnail.resolve({ kind: "success", product_id: 1, revision: 2, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" }); return staleThumbnail.promise; });
+  assert.equal(within(list).queryByRole("img", { name: "Filtro premium" }), null);
+  assert.equal(within(list).getByRole("img", { name: "Sin imagen" }).textContent, "Sin imagen");
+});
+
 test("automatically loads the active first page once on mount", async () => {
   const calls: unknown[] = [];
   mockIPC((command, payload) => {
@@ -157,7 +270,16 @@ test("contains the product result viewport between search and pagination without
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-catalog-results\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto/s);
   assert.match(style.textContent ?? "", /@media \(min-width: 961px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-layout\][^}]*grid-template-rows:\s*auto auto;[^}]*align-content:\s*start;[^}]*flex:\s*0 0 auto/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*auto[^}]*flex:\s*0 0 auto[^}]*overflow-y:\s*visible/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-product-browser-list\][^}]*min-block-size:\s*0[^}]*max-block-size:\s*min\(42vh, 32rem\)[^}]*flex:\s*0 1 auto[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] > \[data-ui-sales-product\][^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-table="true"\] \[data-ui-unit-price\][^}]*white-space:\s*nowrap/s);
+  assert.ok(within(list).getAllByRole("button", { name: "Agregar" }).length > 0);
+  await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.match(style.textContent ?? "", /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\][^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.equal(within(list).getAllByRole("listitem").length, 100);
+  assert.ok(within(catalog).getByRole("status"));
+  assert.ok(within(catalog).getByRole("button", { name: "Siguiente" }));
 });
 
 test("shows every discovery state and ignores reverse-order search completion", async () => {
@@ -206,7 +328,7 @@ test("routes nonblank global sales search through the canonical paged browse com
   mockIPC((command, payload) => { calls.push({ command, payload }); return command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error("unexpected command")); });
   render(createElement(SaleScreen));
   await searchFor("filtro");
-  assert.deepEqual(calls, [
+  assert.deepEqual(calls.filter((call) => call.command === "browse_products_command"), [
     { command: "browse_products_command", payload: { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
     { command: "browse_products_command", payload: { request: { query: "filtro", category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
   ]);
