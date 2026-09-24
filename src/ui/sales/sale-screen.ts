@@ -130,7 +130,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       createElement("div", { "data-ui-sale-price-facts": true },
         createElement("span", { "data-ui-sales-list-price": true }, `Precio de venta: ${formatBs(line.sale_price_centavos)}`),
         createElement("span", { "data-ui-sales-minimum-price": true }, `Precio mínimo de venta: ${formatBs(line.minimum_price_centavos)}`),
-        line.purchase_price_centavos == null ? null : createElement("span", { "data-ui-sales-purchase-price-reference": true }, `Precio de compra (referencia): ${formatBs(line.purchase_price_centavos)}`)),
+        createElement("span", { "data-ui-sales-purchase-price-reference": true }, `Precio de compra (referencia): ${line.purchase_price_centavos == null ? "No registrado" : formatBs(line.purchase_price_centavos)}`)),
       createElement(Action, { variant: "tertiary", "aria-label": `Quitar ${line.product_name}`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar")),
     createElement("div", { "data-ui-sale-cart-controls": true },
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),

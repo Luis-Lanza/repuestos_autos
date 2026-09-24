@@ -278,7 +278,7 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.ok(within(row).getByText(product.sku));
     assert.equal(row.querySelector("[data-ui-sales-list-price]")?.textContent, `Precio de venta: ${product.sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
     assert.equal(row.querySelector("[data-ui-sales-minimum-price]")?.textContent, `Precio mínimo de venta: ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
-    if (product.purchase_price_centavos === null) assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]"), null);
+    if (product.purchase_price_centavos === null) assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): No registrado");
     else assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): Bs 32,00");
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
