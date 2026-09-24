@@ -615,6 +615,29 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-sale-list] { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 [data-ui-sale-list] > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); align-items: center; padding-block: var(--space-2); border-block-end: 1px solid var(--color-border); }
 [data-ui-product-browser="sales"] [data-ui-sale-list] > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface-elevated); }
+[data-ui-product-browser="sales"] [data-ui-sales-table="true"] > [data-ui-sales-product] { grid-template-columns: 3rem minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2); }
+[data-ui-sales-table-thumbnail] { display: grid; inline-size: 3rem; block-size: 3rem; place-items: center; overflow: hidden; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
+[data-ui-sales-table-image-placeholder] { display: grid; inline-size: 100%; block-size: 100%; place-items: center; color: var(--color-text-muted); font-size: 9px; text-align: center; }
+[data-ui-sales-table-thumbnail] [data-ui-product-thumbnail] { inline-size: 100%; block-size: 100%; }
+[data-ui-sales-product-attributes] { display: flex; min-inline-size: 0; flex-wrap: wrap; gap: 0 var(--space-2); color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+[data-ui-sales-product-attributes] > span { overflow-wrap: anywhere; }
+[data-ui-sales-view-toggle] { display: flex; gap: var(--space-1); }
+[data-ui-sales-view-toggle] > button { display: grid; inline-size: var(--size-control-default); min-inline-size: var(--size-control-default); block-size: var(--size-control-default); min-block-size: var(--size-control-default); place-items: center; padding: 0; }
+[data-ui-sales-view-toggle] svg { inline-size: 1.125rem; block-size: 1.125rem; }
+[data-ui-product-browser="sales"] [data-ui-sales-gallery="true"] { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); min-block-size: auto; margin-block-start: var(--space-2); }
+[data-ui-product-browser="sales"] [data-ui-sales-product-card] { display: grid; min-inline-size: 0; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); align-content: start; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface-elevated); }
+[data-ui-sales-image-area] { display: grid; min-block-size: 4rem; place-items: center; overflow: hidden; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
+[data-ui-sales-image-area] > [data-ui-product-thumbnail] { inline-size: 100%; block-size: 4rem; }
+[data-ui-sales-image-area] > [data-ui-catalog-image-placeholder] { min-block-size: 4rem; font-size: var(--type-caption-size); }
+[data-ui-sales-product-identity] { display: grid; min-inline-size: 0; gap: var(--space-1); }
+[data-ui-sales-product-card] > [data-ui-action] { justify-self: start; min-block-size: var(--size-control-default); }
+@media (max-width: 960px) {
+  [data-ui-product-browser="sales"] [data-ui-sales-table="true"] > [data-ui-sales-product] { grid-template-columns: 2.5rem minmax(0, 1fr) auto; }
+  [data-ui-product-browser="sales"] [data-ui-sales-table="true"] [data-ui-product-action] { grid-column: 3; grid-row: 1 / span 2; flex-direction: column; align-items: end; gap: var(--space-1); }
+  [data-ui-product-browser="sales"] [data-ui-sales-table-thumbnail] { inline-size: 2.5rem; block-size: 2.5rem; }
+  [data-ui-product-browser="sales"] [data-ui-sales-gallery="true"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  [data-ui-product-browser="sales"] [data-ui-sales-product-card] > [data-ui-action] { min-inline-size: 0; max-inline-size: 100%; }
+}
 @media (min-width: 961px) {
   [data-ui-sale-layout] { min-block-size: 0; grid-template-rows: minmax(0, 1fr); }
   [data-ui-sale-layout] > [data-ui-panel]:first-child { min-block-size: 0; display: flex; flex-direction: column; }

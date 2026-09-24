@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, writeCatalogViewMode } from "./product-browser.ts";
+import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
 
 const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
@@ -56,7 +56,11 @@ test("keeps unavailable selection disabled and leaves Agregar and Editar names u
     const name = actionLabel === "Seleccionar" ? "Seleccionar Filter (SKU: FLT)" : actionLabel;
     const button = screen.getByRole("button", { name });
     assert.equal(button.textContent, actionLabel);
-    assert.equal(screen.queryByRole("button", { name: "Vista de tabla" }), null);
+    if (presentation === "sales") {
+      assert.ok(screen.getByRole("button", { name: "Vista de tabla" }));
+    } else {
+      assert.equal(screen.queryByRole("button", { name: "Vista de tabla" }), null);
+    }
     assert.equal((button as HTMLButtonElement).disabled, true);
     view.unmount();
   }
@@ -140,6 +144,36 @@ test("Catalog toolbar view controls are icon-only, named, and depict table and g
   assert.equal(gallery.getAttribute("title"), "Vista de galería");
   assert.equal(within(table).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "table");
   assert.equal(within(gallery).getByRole("img", { hidden: true }).getAttribute("data-ui-icon"), "gallery");
+});
+
+test("Sales table and gallery render ordered non-empty attribute summaries, thumbnails, and add state", () => {
+  const product = { ...page.products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "" }, { definition_id: 2, label: "Diámetro", value: "50 mm" }, { definition_id: 3, label: "Marca", value: "Bosch" }, { definition_id: 4, label: "Modelo", value: "Ignorar" }] };
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, actionLabel: "Agregar", disabledProductIds: new Set([1]), thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" } };
+  const view = render(createElement(ProductBrowser, props));
+  const list = screen.getByRole("list", { name: "Resultados del catálogo" });
+  assert.equal(list.getAttribute("data-ui-sales-table"), "true");
+  assert.ok(within(list).getByRole("img", { name: "Filter" }));
+  assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
+  assert.equal(within(list).getByText("Marca: Bosch").textContent, "Marca: Bosch");
+  assert.equal(within(list).queryByText("Modelo: Ignorar"), null);
+  assert.equal((within(list).getByRole("button", { name: "Agregado" }) as HTMLButtonElement).disabled, true);
+  view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: "gallery" }));
+  assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
+  assert.ok(within(list).getByRole("img", { name: "Filter" }));
+  assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
+});
+
+test("Sales view preference is separate from Catalog and defaults safely", () => {
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  assert.equal(readSalesViewMode(storage), "table");
+  writeCatalogViewMode("gallery", storage);
+  assert.equal(readSalesViewMode(storage), "table");
+  writeSalesViewMode("gallery", storage);
+  assert.equal(readSalesViewMode(storage), "gallery");
+  assert.equal(values.get("catalog.product-browser.view-mode"), "gallery");
+  assert.equal(values.get("sales.product-browser.view-mode"), "gallery");
 });
 
 test("view controls are accessible, selected, and only rendered for Catalog", async () => {

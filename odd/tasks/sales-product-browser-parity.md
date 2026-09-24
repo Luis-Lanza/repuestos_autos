@@ -15,7 +15,7 @@ Make Sales product discovery visually rich enough to identify parts quickly in i
 ## Tasks
 - [x] T1 Map and extend paged browse contracts for ordered product attribute summaries and complete detail data. Evidence: extend paged browse only; provide all page attributes ordered by `attribute_definitions.id`, derive first-two non-empty in the presentation, and load them with one page-bounded query. No migration or per-product detail IPC.
 - [x] T2 Add bounded attribute projection and repository/IPC tests without per-product fetches. Evidence: browse now loads ordered `{definition_id,label,value}` attributes with one repository query scoped to selected page IDs; Rust repository/command and strict TypeScript decoder tests cover empty values, page isolation, malformed data, and projection shape.
-- [ ] T3 Build Sales-specific compact table/gallery presentation with thumbnail lifecycle and add-state behavior.
+- [x] T3 Build Sales-specific compact table/gallery presentation with thumbnail lifecycle and add-state behavior. Evidence: Sales now defaults to a persisted Sales-only compact table, offers an optional two-column gallery, loads revision-checked bounded thumbnails for the current browse page, and displays at most two ordered non-empty attribute summaries; Add/Added and zero-stock disabling remain Sales-owned.
 - [ ] T4 Add accessible quick product detail with all attributes and preserve checkout flow behavior.
 - [ ] T5 Validate Rust/TypeScript contracts, desktop density, image fallbacks, attribute ordering, and Sales interactions.
 
@@ -26,3 +26,4 @@ Make Sales product discovery visually rich enough to identify parts quickly in i
 
 ## Evidence
 - T2: Rust browse/command checks pass (16/16), strict TypeScript decoder checks pass (16/16), and `git diff --check` passes. Independent verification passed. Committed locally; no push was authorized.
+- T3: shared ProductBrowser/Sales mounted checks pass (45/45) and `git diff --check` passes. Table/gallery preference, two-column Sales gallery, thumbnail stale fallback, ordered summaries, zero-stock disablement, and Catalog presentation boundaries were independently verified. `tsc --noEmit` retains the clean-HEAD-confirmed 32-diagnostic unrelated baseline; it is not a passing gate. Committed locally; no push was authorized.
