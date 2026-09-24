@@ -44,6 +44,9 @@ const VERSION_THIRTEEN_MIGRATION: &str = include_str!(
 const VERSION_FOURTEEN_MIGRATION: &str = include_str!(
     "../src/infrastructure/sqlite/migrations/0014_sale_list_price_snapshot.sql"
 );
+const VERSION_FIFTEEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"
+);
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "repuestos-autos-{name}-{}-{}",
@@ -539,6 +542,59 @@ fn migration_v14_adds_nullable_immutable_list_snapshots_without_fabricating_lega
             [],
         )
         .is_err());
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn upgrades_v15_with_one_to_one_product_images_and_cascade_delete() {
+    let directory = temporary_directory("migration-v16-product-images");
+    let path = create_version_twelve_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(VERSION_THIRTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 13).unwrap();
+    connection.execute_batch(VERSION_FOURTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 14).unwrap();
+    connection.execute_batch(VERSION_FIFTEEN_MIGRATION).unwrap();
+    connection.pragma_update(None, "user_version", 15).unwrap();
+    drop(connection);
+
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
+    connection.execute(
+        "INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (2, 1, 'IMAGE-001', 'Image test', 1, 100, 100)",
+        [],
+    ).unwrap();
+    let image = vec![0x89, 0x50, 0x4e, 0x47, 0x00, 0xff];
+    connection.execute(
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (?1, ?2, ?3)",
+        rusqlite::params![2, "image/png", &image],
+    ).unwrap();
+    assert_eq!(
+        connection.query_row("SELECT mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes FROM product_images WHERE product_id = 2", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<Vec<u8>>>(3)?))).unwrap(),
+        ("image/png".to_string(), image, None, None),
+    );
+    assert!(connection.execute(
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (2, 'image/jpeg', x'01')", []
+    ).is_err());
+    assert!(connection.execute(
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (999, 'image/png', x'01')", []
+    ).is_err());
+    assert!(connection.execute(
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (1, 'text/plain', x'01')", []
+    ).is_err());
+    assert!(connection.execute(
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (2, 'image/png', x'')", []
+    ).is_err());
+    assert!(connection.execute(
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (2, 'image/png', zeroblob(2097153))", []
+    ).is_err());
+    assert!(connection.execute(
+        "UPDATE product_images SET thumbnail_mime_type = 'image/jpeg' WHERE product_id = 2", []
+    ).is_err());
+    connection.execute("DELETE FROM products WHERE id = 2", []).unwrap();
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM product_images", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
     drop(connection);
     std::fs::remove_dir_all(directory).unwrap();
 }

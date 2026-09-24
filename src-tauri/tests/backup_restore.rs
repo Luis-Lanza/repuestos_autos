@@ -30,7 +30,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 14] = [
+const MIGRATIONS: [&str; 16] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -55,6 +55,8 @@ const MIGRATIONS: [&str; 14] = [
     include_str!(
         "../src/infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"
     ),
+    include_str!("../src/infrastructure/sqlite/migrations/0016_product_images.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
@@ -555,6 +557,186 @@ fn rejects_invalid_and_unsupported_candidates_without_source_mutation() {
     assert_eq!(
         stage_and_validate(&corrupt, &directory.join("corrupt-stage.sqlite3")).unwrap_err(),
         BackupValidationError::InvalidBackup
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn v16_product_images_remain_thumbnail_free_when_staged_under_v17() {
+    let directory = temporary_directory("v16-product-image-upgrade");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("v16.sqlite3");
+    let stage = directory.join("staging/v17.sqlite3");
+    versioned_database(&source, 16);
+    Connection::open(&source)
+        .unwrap()
+        .execute(
+            "INSERT INTO product_images (product_id, mime_type, image_bytes)
+             VALUES (?1, ?2, ?3)",
+            params![1, "image/png", vec![0x89_u8, 0x50, 0x4e, 0x47]],
+        )
+        .unwrap();
+
+    let metadata = stage_and_validate(&source, &stage).unwrap();
+    assert_eq!(metadata.schema_version, 17);
+    assert_eq!(
+        Connection::open(&stage)
+            .unwrap()
+            .query_row(
+                "SELECT thumbnail_mime_type, thumbnail_bytes FROM product_images WHERE product_id = 1",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
+            )
+            .unwrap(),
+        (None, None),
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn backup_stage_and_restore_retain_product_image_records() {
+    let directory = temporary_directory("product-image-backup-restore");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.sqlite3");
+    let snapshot = directory.join("snapshot.sqlite3");
+    let stage = directory.join("staging/restored.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    let image = vec![0x89, 0x50, 0x4e, 0x47, 0x00, 0xff];
+    let thumbnail = vec![0xff, 0xd8, 0xff, 0xd9];
+    Connection::open(&source).unwrap().execute(
+        "INSERT INTO product_images (
+             product_id, mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![1, "image/png", &image, "image/jpeg", &thumbnail],
+    ).unwrap();
+    let live = Connection::open(&source).unwrap();
+
+    let metadata = create_snapshot(&live, &snapshot).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    let metadata = stage_and_validate(&snapshot, &stage).unwrap();
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        Connection::open(&stage).unwrap().query_row(
+            "SELECT mime_type, image_bytes, thumbnail_mime_type, thumbnail_bytes
+             FROM product_images WHERE product_id = 1",
+            [],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<Vec<u8>>>(3)?,
+            )),
+        ).unwrap(),
+        ("image/png".to_string(), image, Some("image/jpeg".into()), Some(thumbnail)),
+    );
+    drop(live);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_missing_product_image_integrity_configuration() {
+    let directory = temporary_directory("missing-product-images");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source).unwrap().execute_batch("DROP TABLE product_images;").unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&source).unwrap()),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_with_unconstrained_product_image_table() {
+    let directory = temporary_directory("unconstrained-product-images");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch(
+            "DROP TABLE product_images;
+             CREATE TABLE product_images (
+                 product_id INTEGER,
+                 mime_type TEXT,
+                 image_bytes BLOB
+             );",
+        )
+        .unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&source).unwrap()),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_current_schema_backup_missing_thumbnail_integrity_configuration() {
+    let directory = temporary_directory("missing-product-image-thumbnails");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("current.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    Connection::open(&source)
+        .unwrap()
+        .execute_batch(
+            "DROP TABLE product_images;
+             CREATE TABLE product_images (
+                 product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+                 mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+                 image_bytes BLOB NOT NULL CHECK (
+                     typeof(image_bytes) = 'blob'
+                     AND length(image_bytes) BETWEEN 1 AND 2097152
+                 )
+             );",
+        )
+        .unwrap();
+
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(
+            &Connection::open(&source).unwrap()
+        ),
+        Err(BackupValidationError::InvalidBackup)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn rejects_v17_backup_with_product_image_constraints_only_in_comments() {
+    let directory = temporary_directory("comment-only-product-image-constraints");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("comment-only.sqlite3");
+    versioned_database(&source, CURRENT_SCHEMA_VERSION);
+    let connection = Connection::open(&source).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE product_images;
+             CREATE TABLE product_images (
+                 product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+                 mime_type TEXT NOT NULL /* CHECK (mime_type in ('image/png', 'image/jpeg', 'image/webp')) */,
+                 image_bytes BLOB NOT NULL /* typeof(image_bytes) = 'blob' */
+                                  /* length(image_bytes) between 1 and 2097152 */
+             );",
+        )
+        .unwrap();
+    let stored_ddl = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'product_images'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(stored_ddl.contains("check (mime_type in ('image/png', 'image/jpeg', 'image/webp'))"));
+    assert!(stored_ddl.contains("typeof(image_bytes) = 'blob'"));
+    assert!(stored_ddl.contains("length(image_bytes) between 1 and 2097152"));
+    drop(connection);
+
+    assert_eq!(
+        stage_and_validate(&source, &directory.join("rejected-stage.sqlite3")),
+        Err(BackupValidationError::InvalidBackup),
     );
     fs::remove_dir_all(directory).unwrap();
 }
