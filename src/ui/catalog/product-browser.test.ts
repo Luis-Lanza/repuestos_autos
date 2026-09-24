@@ -180,16 +180,25 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
   const card = within(list).getByRole("listitem");
   assert.equal(card.getAttribute("data-ui-sales-product-card"), "true");
-  assert.equal(card.querySelector("[data-ui-money]")?.textContent, "Bs 25,00");
-  assert.equal(within(card).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
+  assert.deepEqual(Array.from(card.children, (child) => child.getAttribute("data-ui-sales-image-area") ? "image" : child.getAttribute("data-ui-sales-product-identity") ? "identity" : child.getAttribute("data-ui-sales-commercial-footer") ? "commercial-footer" : "unexpected"), ["image", "identity", "commercial-footer"]);
+  const viewport = card.querySelector("[data-ui-sales-image-area]")!;
+  assert.equal(within(viewport).getByRole("img", { name: "Sin imagen" }).getAttribute("data-ui-catalog-image-placeholder"), "true");
+  const footer = card.querySelector("[data-ui-sales-commercial-footer]")!;
+  assert.equal(footer.querySelector("[data-ui-money]")?.textContent, "Bs 25,00");
+  assert.equal(within(footer).getByText("Disponible: 4").getAttribute("data-ui-badge"), "available");
+  assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
 
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /data-ui-sales-table="true"[^}]*grid-template-columns:\s*3rem minmax\(0, 1fr\) max-content/s);
   assert.match(css, /data-ui-sales-table="true"] \[data-ui-product-action\][^}]*white-space:\s*nowrap/s);
   assert.match(css, /data-ui-sales-table="true"] \[data-ui-money\][^}]*word-break:\s*keep-all/s);
-  assert.match(css, /data-ui-sales-gallery="true"] [^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
-  assert.match(css, /data-ui-sales-product-card\] > \[data-ui-money\][^}]*font-size:\s*var\(--type-h2-size\)/s);
-  assert.match(css, /data-ui-sales-product-card\] > \[data-ui-action\][^}]*inline-size:\s*100%[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\]\s*\{[^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.match(css, /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\] > \[data-ui-sales-product-card\][^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(css, /data-ui-sales-image-area\]\s*\{[^}]*aspect-ratio:\s*4 \/ 3/s);
+  assert.match(css, /data-ui-sales-image-area\] > \[data-ui-product-thumbnail\], \[data-ui-sales-image-area\] > \[data-ui-catalog-image-placeholder\][^}]*inline-size:\s*100%[^}]*block-size:\s*100%/s);
+  assert.match(css, /data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s);
+  assert.match(css, /data-ui-sales-commercial-footer\] > \[data-ui-action\][^}]*grid-column:\s*1 \/ -1[^}]*inline-size:\s*100%[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /@media \(max-width: 400px\)[\s\S]*data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 });
 
 test("Sales product identity opens an accessible read-only detail with every ordered attribute and restores focus", async () => {

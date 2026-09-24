@@ -139,7 +139,13 @@ test("Sales loads revision-checked page thumbnails and offers a persisted Sales-
   await user().click(galleryButton);
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
   assert.equal(within(list).getAllByRole("listitem").length, 1);
-  assert.ok(within(list).getByRole("img", { name: "Filtro aceite" }));
+  const card = within(list).getByRole("listitem");
+  assert.deepEqual(Array.from(card.children, (child) => child.getAttribute("data-ui-sales-image-area") ? "image" : child.getAttribute("data-ui-sales-product-identity") ? "identity" : child.getAttribute("data-ui-sales-commercial-footer") ? "commercial-footer" : "unexpected"), ["image", "identity", "commercial-footer"]);
+  assert.ok(within(card.querySelector("[data-ui-sales-image-area]")!).getByRole("img", { name: "Filtro aceite" }));
+  const footer = card.querySelector("[data-ui-sales-commercial-footer]")!;
+  assert.equal(within(footer).getByText("Bs 85,50").textContent, "Bs 85,50");
+  assert.equal(within(footer).getByText("Disponible: 8").getAttribute("data-ui-badge"), "available");
+  assert.equal(within(footer).getByRole("button", { name: "Agregar" }).textContent, "Agregar");
 });
 
 test("quick product detail uses the browse snapshot without changing browse or Add behavior", async () => {
@@ -254,7 +260,7 @@ test("contains the product result viewport between search and pagination without
   assert.ok(within(list).getAllByRole("button", { name: "Agregar" }).length > 0);
   await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
   assert.equal(list.getAttribute("data-ui-sales-gallery"), "true");
-  assert.match(style.textContent ?? "", /data-ui-product-browser="sales"\] \[data-ui-sales-gallery="true"\][^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
+  assert.match(style.textContent ?? "", /data-ui-product-browser-list\]\[data-ui-sales-gallery="true"\][^}]*repeat\(auto-fit, minmax\(min\(100%, 15rem\), 1fr\)\)/s);
   assert.equal(within(list).getAllByRole("listitem").length, 100);
   assert.ok(within(catalog).getByRole("status"));
   assert.ok(within(catalog).getByRole("button", { name: "Siguiente" }));
