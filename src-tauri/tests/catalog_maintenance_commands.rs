@@ -1,10 +1,77 @@
+use repuestos_autos::application::catalog::{replace_product_image, ProductImage};
 use repuestos_autos::commands::catalog::{
-    catalog_metadata_detail, edit_catalog, list_catalog_maintenance, maintain_catalog,
+    catalog_product_image_thumbnail, parse_product_image_request, ProductImageRequest,
+    ProductImageThumbnailResponse,
+    catalog_metadata_detail, edit_catalog, list_catalog_categories, list_catalog_maintenance, maintain_catalog,
     map_command_state_error, CatalogMaintenanceListResponse, CatalogMaintenanceRecord,
     CatalogMaintenanceResponse, CatalogMetadataDetailRequest, CatalogMetadataDetailResponse,
     EditCatalogRequest, MaintainCatalogRequest,
 };
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
+
+#[test]
+fn image_requests_are_strict_and_image_responses_never_expose_paths() {
+    assert!(serde_json::from_str::<ProductImageRequest>(r#"{"product_id":1,"expected_revision":0,"path":"/secret"}"#).is_err());
+    assert!(serde_json::from_str::<ProductImageRequest>(r#"{"product_id":1,"expected_revision":-1}"#).is_ok());
+    assert!(parse_product_image_request(ProductImageRequest { product_id: 0, expected_revision: 0 }).is_err());
+
+    let mut connection = open_seeded_catalog().unwrap();
+    let image = ProductImage::new("image/png", generated_png()).unwrap();
+    replace_product_image(&mut connection, 1, 0, &image).unwrap();
+    let response = catalog_product_image_thumbnail(&connection, ProductImageRequest { product_id: 1, expected_revision: 1 });
+    let serialized = serde_json::to_string(&response).unwrap();
+    assert!(!serialized.contains("path"));
+    assert!(!serialized.contains("sqlite"));
+    let json = serde_json::to_value(&response).unwrap();
+    assert_eq!(json["kind"], "success");
+    assert_eq!(json["product_id"], 1);
+    assert_eq!(json["revision"], 1);
+    assert_eq!(json["mime_type"], "image/jpeg");
+    assert_eq!(json["encoding"], "base64");
+    assert!(json["bytes"].as_str().unwrap().starts_with("/9j/"));
+    assert!(matches!(response, ProductImageThumbnailResponse::Success { .. }));
+    let stale = catalog_product_image_thumbnail(&connection, ProductImageRequest { product_id: 1, expected_revision: 0 });
+    assert_eq!(serde_json::to_value(stale).unwrap()["code"], "stale_catalog_record");
+}
+
+#[test]
+fn missing_product_thumbnail_is_distinct_from_an_unavailable_product() {
+    let connection = open_seeded_catalog().unwrap();
+    let no_image = catalog_product_image_thumbnail(&connection, ProductImageRequest { product_id: 1, expected_revision: 0 });
+    assert_eq!(serde_json::to_value(no_image).unwrap()["code"], "image_unavailable");
+    let stale_no_image = catalog_product_image_thumbnail(&connection, ProductImageRequest { product_id: 1, expected_revision: 99 });
+    assert_eq!(serde_json::to_value(stale_no_image).unwrap()["code"], "stale_catalog_record");
+
+    let missing_product = catalog_product_image_thumbnail(&connection, ProductImageRequest { product_id: 99, expected_revision: 0 });
+    assert_eq!(serde_json::to_value(missing_product).unwrap()["code"], "catalog_unavailable");
+}
+
+fn generated_png() -> Vec<u8> {
+    use image::ImageEncoder;
+    let mut bytes = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut bytes)
+        .write_image(&[255; 16], 2, 2, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    bytes
+}
+
+#[test]
+fn category_list_command_serializes_the_authoritative_active_product_count() {
+    let connection = open_seeded_catalog().unwrap();
+    let response = list_catalog_categories(&connection).unwrap();
+    let value = serde_json::to_value(response).unwrap();
+    assert_eq!(value["kind"], "success");
+    let records = value["records"].as_array().unwrap();
+    let category = records.iter().find(|record| record["entity_id"] == 1).unwrap();
+    assert_eq!(category["active_product_count"], 1);
+    assert_eq!(records.iter().find(|record| record["entity_id"] == 2).unwrap()["active_product_count"], 0);
+
+    connection.execute("UPDATE products SET active = 0 WHERE category_id = 1", []).unwrap();
+    let response = list_catalog_categories(&connection).unwrap();
+    let value = serde_json::to_value(response).unwrap();
+    let category = value["records"].as_array().unwrap().iter().find(|record| record["entity_id"] == 1).unwrap();
+    assert_eq!(category["active_product_count"], 0);
+}
 
 #[test]
 fn maintenance_command_returns_tagged_outcomes_without_sql_details() {
