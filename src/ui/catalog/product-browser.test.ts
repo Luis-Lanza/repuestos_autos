@@ -246,6 +246,25 @@ test("Sales view preference is separate from Catalog and defaults safely", () =>
   assert.equal(values.get("sales.product-browser.view-mode"), "gallery");
 });
 
+test("Sales search, category, view, and submit controls share an accessible form toolbar", async () => {
+  const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+  const view = render(createElement(ProductBrowser, props));
+  const form = view.container.querySelector('[data-ui-product-browser="sales"] > form')!;
+  const search = within(form).getByRole("searchbox", { name: "Buscar en el catálogo" });
+  const category = within(form).getByRole("combobox", { name: "Categoría" });
+  const views = within(form).getByRole("group", { name: "Presentación de ventas" });
+  const submit = within(form).getByRole("button", { name: "Buscar" });
+  assert.deepEqual([search.closest("[data-ui-field]"), category.closest("[data-ui-field]"), views, submit], Array.from(form.children));
+  assert.equal((within(views).getByRole("button", { name: "Vista de tabla" })).getAttribute("aria-pressed"), "true");
+  assert.equal((within(views).getByRole("button", { name: "Vista de galería" })).getAttribute("aria-pressed"), "false");
+
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-product-browser="sales"\]\s*\{[^}]*container:\s*sales-browse\s*\/\s*inline-size/s);
+  assert.match(css, /\[data-ui-product-browser="sales"\]\s*\[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;[^}]*\}/s);
+  assert.match(css, /@container sales-browse \(min-width:\s*40rem\)[\s\S]*\[data-ui-product-browser="sales"\] \[data-ui-sale-search\]\s*\{[^}]*grid-template-columns:\s*minmax\(12rem,\s*1\.6fr\) minmax\(10rem,\s*1fr\) auto auto/s);
+  assert.equal(css.includes('[data-ui-catalog-workspace] [data-ui-product-browser] > form'), true);
+});
+
 test("view controls are accessible, selected, and only rendered for Catalog", async () => {
   const props = { state: { ...initialProductBrowserState, status: "results" as const, result: page }, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
   const changed: string[] = [];
