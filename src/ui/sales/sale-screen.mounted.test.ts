@@ -15,9 +15,9 @@ document.head.append(style);
 const UUID = "550e8400-e29b-41d4-a716-446655440060";
 const RETRY_UUID = "550e8400-e29b-41d4-a716-446655440061";
 const products = [
-  { product_id: 1, category_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, catalog_unit_price_centavos: 8550, sale_price_centavos: 8550, list_price_centavos: 8550, minimum_sale_price_centavos: 8550, revision: 2 },
-  { product_id: 2, category_id: 1, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, catalog_unit_price_centavos: 12550, sale_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 12550, revision: 3 },
-  { product_id: 3, category_id: 1, sku: "FIL-0", name: "Filtro agotado", category_name: "Filtros", available_quantity: 0, catalog_unit_price_centavos: 5000, sale_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 5000, revision: 1 },
+  { product_id: 1, category_id: 1, sku: "FIL-1", name: "Filtro aceite", category_name: "Filtros", available_quantity: 8, purchase_price_centavos: 3200, catalog_unit_price_centavos: 8550, sale_price_centavos: 8550, list_price_centavos: 8550, minimum_sale_price_centavos: 8550, revision: 2 },
+  { product_id: 2, category_id: 1, sku: "FIL-2", name: "Filtro premium", category_name: "Filtros", available_quantity: 1, purchase_price_centavos: null, catalog_unit_price_centavos: 12550, sale_price_centavos: 12550, list_price_centavos: 12550, minimum_sale_price_centavos: 12550, revision: 3 },
+  { product_id: 3, category_id: 1, sku: "FIL-0", name: "Filtro agotado", category_name: "Filtros", available_quantity: 0, purchase_price_centavos: null, catalog_unit_price_centavos: 5000, sale_price_centavos: 5000, list_price_centavos: 5000, minimum_sale_price_centavos: 5000, revision: 1 },
 ];
 const browse = (items: typeof products) => ({ kind: "success", products: items, categories: [{ category_id: 1, name: "Filtros" }], page: 1, page_size: 20, total: items.length, total_pages: items.length ? 1 : 0 });
 const success = { kind: "success", sale_id: 9, request_id: UUID, status: "confirmed", confirmed_at: "2026-01-02T10:00:00Z", outcome: "confirmed", lines: [], payments: [], total_centavos: 8550 };
@@ -99,7 +99,7 @@ test("removes products directly from the read-only Sales summary", async () => {
 });
 
 test("Sales and checkout consume canonical sale price without changing submitted identity semantics", async () => {
-  const canonicalProduct = { ...products[0], sale_price_centavos: 9_000, list_price_centavos: 8_550, catalog_unit_price_centavos: 8_000, minimum_sale_price_centavos: 7_500 };
+  const canonicalProduct = { ...products[0], purchase_price_centavos: 4_500, sale_price_centavos: 9_000, list_price_centavos: 8_550, catalog_unit_price_centavos: 8_000, minimum_sale_price_centavos: 7_500 };
   let envelope: unknown;
   installUuid(UUID);
   mockIPC((command, payload) => command === "browse_products_command" ? browse([canonicalProduct]) : (envelope = payload, success));
@@ -110,6 +110,7 @@ test("Sales and checkout consume canonical sale price without changing submitted
   const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   const line = within(dialog).getByRole("listitem");
   assert.equal(within(line).getByText("Precio de venta: Bs 90,00").textContent, "Precio de venta: Bs 90,00");
+  assert.equal(within(line).getByText("Precio de compra (referencia): Bs 45,00").textContent, "Precio de compra (referencia): Bs 45,00");
   assert.equal((within(line).getByRole("textbox", { name: "Precio de venta (Bs)" }) as HTMLInputElement).value, "90,00");
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
@@ -277,6 +278,8 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.ok(within(row).getByText(product.sku));
     assert.equal(row.querySelector("[data-ui-sales-list-price]")?.textContent, `Precio de venta: ${product.sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
     assert.equal(row.querySelector("[data-ui-sales-minimum-price]")?.textContent, `Precio mínimo de venta: ${product.minimum_sale_price_centavos === 8550 ? "Bs 85,50" : "Bs 125,50"}`);
+    if (product.purchase_price_centavos === null) assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]"), null);
+    else assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, "Precio de compra (referencia): Bs 32,00");
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
     assert.ok(within(row).getByRole("textbox", { name: "Precio de venta (Bs)" }));
