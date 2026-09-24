@@ -14,6 +14,11 @@ pub struct StockEntryRequest {
     pub request_id: String,
     pub product_id: i64,
     pub quantity: i64,
+    pub unit_purchase_price_centavos: i64,
+    #[serde(default)]
+    pub sale_price_centavos: Option<i64>,
+    #[serde(default)]
+    pub minimum_sale_price_centavos: Option<i64>,
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -74,6 +79,9 @@ pub fn confirm_stock_entry_command(
             request.product_id,
             request_id,
             request.quantity,
+            request.unit_purchase_price_centavos,
+            request.sale_price_centavos,
+            request.minimum_sale_price_centavos,
             request.note,
         ) {
             Ok(result) => InventoryCommandResponse::Success(map_result(result)),

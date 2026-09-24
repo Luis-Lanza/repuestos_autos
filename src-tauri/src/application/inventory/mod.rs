@@ -12,10 +12,14 @@ pub fn confirm_stock_entry<R: InventoryRepository>(
     product_id: i64,
     request_id: RequestId,
     quantity: i64,
+    unit_purchase_price_centavos: i64,
+    sale_price_centavos: Option<i64>,
+    minimum_sale_price_centavos: Option<i64>,
     note: Option<String>,
 ) -> Result<PersistedInventoryOperation, InventoryError> {
-    repository.confirm(InventoryOperation::stock_entry(
-        product_id, request_id, quantity, note,
+    repository.confirm(InventoryOperation::stock_entry_with_prices(
+        product_id, request_id, quantity, unit_purchase_price_centavos,
+        sale_price_centavos, minimum_sale_price_centavos, note,
     )?)
 }
 

@@ -41,11 +41,14 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
             return Ok(result);
         }
 
-        let (product_id, kind, delta, counted_quantity, reason, note) = match operation {
+        let (product_id, kind, delta, counted_quantity, reason, note, purchase_price, sale_price, minimum_price) = match operation {
             InventoryOperation::StockEntry {
                 product_id,
                 quantity,
                 note,
+                unit_purchase_price,
+                sale_price_centavos,
+                minimum_sale_price_centavos,
                 ..
             } => (
                 product_id,
@@ -54,6 +57,9 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                 None,
                 None,
                 note,
+                Some(unit_purchase_price.value()),
+                sale_price_centavos,
+                minimum_sale_price_centavos,
             ),
             InventoryOperation::PhysicalCount {
                 product_id,
@@ -67,17 +73,20 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                 Some(count.value()),
                 Some(reason.as_str().to_owned()),
                 None,
+                None,
+                None,
+                None,
             ),
         };
         let product = transaction
             .query_row(
-                "SELECT p.active, c.active, b.quantity FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.id = ?1",
+                "SELECT p.active, c.active, b.quantity, p.list_price_centavos, p.minimum_sale_price_centavos FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.id = ?1",
                 [product_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
             )
             .optional()
             .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
-        let (active, category_active, previous_quantity) =
+        let (active, category_active, previous_quantity, current_sale, current_minimum) =
             product.ok_or(InventoryError::MISSING_PRODUCT)?;
         if active == 0 || category_active == 0 {
             return Err(InventoryError::INACTIVE_PRODUCT);
@@ -99,13 +108,18 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                 (adjustment, delta)
             }
         };
+        let resulting_sale = sale_price.unwrap_or(current_sale);
+        let resulting_minimum = minimum_price.unwrap_or(current_minimum);
+        if resulting_sale <= 0 || resulting_minimum <= 0 || resulting_minimum > resulting_sale {
+            return Err(InventoryError::INVALID_PRICE);
+        }
         let movement_type = match kind {
             OperationKind::StockEntry => "stock_entry",
             OperationKind::PhysicalCount => "adjustment",
         };
         if transaction
             .execute(
-                "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, source_reference, request_id, counted_quantity, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO inventory_movements (product_id, movement_type, quantity_delta, reason, source_reference, request_id, counted_quantity, resulting_quantity, operation_kind, payload_version, canonical_payload, payload_sha256, unit_purchase_price_centavos) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     product_id,
                     movement_type,
@@ -119,6 +133,7 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                     identity.payload_version(),
                     identity.canonical_payload(),
                     identity.payload_sha256(),
+                    purchase_price,
                 ],
             )
             .is_err()
@@ -142,6 +157,14 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
             != 1
         {
             return Err(InventoryError::PERSISTENCE_FAILURE);
+        }
+        if kind == OperationKind::StockEntry {
+            if transaction.execute(
+                "UPDATE products SET purchase_price_centavos = ?1, list_price_centavos = ?2, minimum_unit_price_centavos = ?3 WHERE id = ?4",
+                params![purchase_price, resulting_sale, resulting_minimum, product_id],
+            ).map_err(|_| InventoryError::PERSISTENCE_FAILURE)? != 1 {
+                return Err(InventoryError::PERSISTENCE_FAILURE);
+            }
         }
         let persisted = load_persisted(&transaction, &request_id)?
             .ok_or(InventoryError::PERSISTED_DATA_INVALID)?;
