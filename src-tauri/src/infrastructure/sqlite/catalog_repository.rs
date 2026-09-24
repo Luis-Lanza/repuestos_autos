@@ -4,10 +4,12 @@ use crate::application::catalog::bootstrap_demo::{
     BootstrapDemoEligibility, BootstrapDemoPlan, BootstrapDemoRepository,
 };
 use crate::application::catalog::repository::{
-    CatalogCategoryRepository, CatalogMaintenanceRepository, CatalogMetadataRepository,
-    CreateProductRepository, ProductMetadata,
+    CatalogBrowseRepository, CatalogCategoryRepository, CatalogMaintenanceRepository,
+    CatalogMetadataRepository, CreateProductRepository, ProductMetadata,
 };
-use crate::application::catalog::{CategoryMetadataSummary, CreateProductInput, ProductImage};
+use crate::application::catalog::{
+    CategoryMetadataSummary, CreateProductInput, ProductBrowseAttribute, ProductImage,
+};
 use crate::domain::catalog::{
     AttributeDefinition, CatalogActivity, CatalogSnapshot, CatalogTarget, FieldType,
     TransitionPlan, ValidatedAttributeValue,
@@ -16,6 +18,42 @@ use crate::domain::catalog::{
 const BOOTSTRAP_DEMO_OCCURRED_AT: &str = "2025-01-01T00:00:00Z";
 
 pub struct SqliteCatalogRepository;
+
+impl CatalogBrowseRepository for SqliteCatalogRepository {
+    fn load_page_attributes(
+        &self,
+        connection: &Connection,
+        product_ids: &[i64],
+    ) -> Result<Vec<(i64, ProductBrowseAttribute)>> {
+        if product_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = (1..=product_ids.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT p.id, d.id, d.label, COALESCE(v.searchable_value, '')
+             FROM products p
+             JOIN attribute_definitions d ON d.category_id = p.category_id
+             LEFT JOIN product_attribute_values v ON v.product_id = p.id AND v.definition_id = d.id
+             WHERE p.id IN ({placeholders}) ORDER BY p.id, d.id"
+        );
+        connection
+            .prepare(&sql)?
+            .query_map(rusqlite::params_from_iter(product_ids), |row| {
+                Ok((
+                    row.get(0)?,
+                    ProductBrowseAttribute {
+                        definition_id: row.get(1)?,
+                        label: row.get(2)?,
+                        value: row.get(3)?,
+                    },
+                ))
+            })?
+            .collect()
+    }
+}
 
 impl BootstrapDemoRepository for SqliteCatalogRepository {
     fn inspect_bootstrap(

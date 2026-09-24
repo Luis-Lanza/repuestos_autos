@@ -1,7 +1,7 @@
 use repuestos_autos::application::catalog::{
     AttributeValueInput, CategoryFieldInput, CreateCategoryInput, CreateProductInput,
 };
-use repuestos_autos::commands::catalog::{search_products, SearchProductsRequest};
+use repuestos_autos::commands::catalog::{browse_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};
 use repuestos_autos::commands::confirm_sale::{
     confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
 };
@@ -29,6 +29,24 @@ fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> 
             qr_applied_centavos: qr_applied,
         },
     }
+}
+
+#[test]
+fn browse_command_serializes_the_complete_ordered_attribute_projection_without_drift() {
+    let connection = open_seeded_catalog().unwrap();
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (7, 1, 'Material', 'text', 0)", []).unwrap();
+    connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 7, 'Paper', 'Paper')", []).unwrap();
+    let response = browse_products(&connection, BrowseProductsRequest {
+        query: None, category_id: None, stock_state: "all".into(), activity: "active".into(), page: 1, page_size: 20,
+    });
+    let ProductBrowseResponse::Success(page) = response else { panic!("expected browse success"); };
+    let serialized = serde_json::to_value(page).unwrap();
+    assert_eq!(serialized["products"][0]["attribute_values"], serde_json::json!([
+        { "definition_id": 7, "label": "Material", "value": "Paper" }
+    ]));
+    assert_eq!(serialized["products"][0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec![
+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "product_id", "purchase_price_centavos", "revision", "sale_price_centavos", "sku"
+    ]);
 }
 
 #[test]
