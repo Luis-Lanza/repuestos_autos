@@ -108,11 +108,9 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const valid = whole && (state.operation !== "physical_count" || Boolean(state.reason.trim()));
   const sortedAlerts = [...state.alerts].sort((a, b) => a.classification === b.classification ? 0 : a.classification === "out_of_stock" ? -1 : 1);
 
-  const sparseBrowser = browser.status === "results" && browser.result?.products.length === 1;
   return createElement("main", {
     "aria-labelledby": "inventory-heading",
     "data-ui-inventory": true,
-    "data-ui-density": sparseBrowser ? "sparse" : undefined,
   },
     createElement("header", { "data-ui-inventory-header": true },
       createElement("h1", { id: "inventory-heading" }, "Inventario"),
