@@ -40,6 +40,8 @@ const brakePad: ProductSearchResult = {
   category_name: "Brakes",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_500,
+  purchase_price_centavos: 1_250,
+  sale_price_centavos: 2_500,
   list_price_centavos: 2_500,
   minimum_sale_price_centavos: 2_500,
   revision: 0,
@@ -109,11 +111,28 @@ test("adds active search results as quantity-only sale intent", () => {
       quantity: 1,
       captured_unit_price_centavos: 2_500,
       captured_revision: 0,
-      list_price_centavos: 2_500,
+      sale_price_centavos: 2_500,
       minimum_price_centavos: 2_500,
+      purchase_price_centavos: 1_250,
       final_price_input: "25,00",
     },
   ]);
+});
+
+test("uses canonical sale price for a draft and falls back to legacy prices", () => {
+  const canonical = { ...brakePad, sale_price_centavos: 3_000, list_price_centavos: 2_700, catalog_unit_price_centavos: 2_500 };
+  const canonicalDraft = createSaleFlow(initialSaleState, { type: "add_product", product: canonical });
+  assert.equal(canonicalDraft.lines[0].captured_unit_price_centavos, 3_000);
+  assert.equal(canonicalDraft.lines[0].sale_price_centavos, 3_000);
+  assert.equal(canonicalDraft.lines[0].final_price_input, "30,00");
+  assert.equal(canonicalDraft.lines[0].purchase_price_centavos, 1_250);
+
+  const withoutPurchasePrice = createSaleFlow(initialSaleState, { type: "add_product", product: { ...brakePad, purchase_price_centavos: null } });
+  assert.equal(withoutPurchasePrice.lines[0].purchase_price_centavos, null);
+
+  const legacy = { ...brakePad, sale_price_centavos: undefined, list_price_centavos: 2_700 } as unknown as ProductSearchResult;
+  const legacyDraft = createSaleFlow(initialSaleState, { type: "add_product", product: legacy });
+  assert.equal(legacyDraft.lines[0].sale_price_centavos, 2_700);
 });
 
 test("keeps the newest catalog query when search completions arrive in reverse order", () => {

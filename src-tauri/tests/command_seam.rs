@@ -21,7 +21,7 @@ fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> 
             captured_unit_price_centavos: 2_500,
             captured_revision: 0,
             final_unit_price_centavos: None,
-                acknowledged_price_centavos: None,
+            acknowledged_price_centavos: None,
             acknowledged_revision: None,
         }],
         payment: PaymentInputRequest {
@@ -32,7 +32,7 @@ fn request(request_id: &str, tendered: Option<i64>, qr_applied: Option<i64>) -> 
 }
 
 #[test]
-fn exposes_catalog_price_without_physical_storage_terminology() {
+fn exposes_sale_price_without_physical_storage_terminology() {
     let connection = open_seeded_catalog().unwrap();
     let results = search_products(
         &connection,
@@ -42,7 +42,7 @@ fn exposes_catalog_price_without_physical_storage_terminology() {
     )
     .unwrap();
 
-    assert_eq!(results[0].catalog_unit_price_centavos, 2_500);
+    assert_eq!(results[0].sale_price_centavos, 2_500);
 }
 
 #[test]
@@ -215,7 +215,8 @@ fn onboarding_commands_return_persisted_results_and_stable_errors() {
             sku: "BRG-1".into(),
             name: "Wheel bearing".into(),
             category_id: category.category_id,
-            list_price_centavos: 5_000,
+            purchase_price_centavos: 3_000,
+            sale_price_centavos: 5_000,
             minimum_sale_price_centavos: 4_000,
             opening_quantity: 3,
             attribute_values: vec![AttributeValueInput {
@@ -235,7 +236,7 @@ fn onboarding_commands_return_persisted_results_and_stable_errors() {
 #[test]
 fn rejects_unknown_onboarding_and_search_payload_fields() {
     let category = r#"{"name":"Bearings","fields":[],"unexpected":true}"#;
-    let product = r#"{"sku":"BRG-1","name":"Wheel bearing","category_id":1,"list_price_centavos":5000,"minimum_sale_price_centavos":4000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;
+    let product = r#"{"sku":"BRG-1","name":"Wheel bearing","category_id":1,"purchase_price_centavos":3000,"sale_price_centavos":5000,"minimum_sale_price_centavos":4000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;
     let search = r#"{"query":"bearing","unexpected":true}"#;
 
     assert!(serde_json::from_str::<CreateCategoryInput>(category).is_err());
@@ -256,7 +257,7 @@ fn lists_categories_with_the_same_stable_envelope_as_create_commands() {
 }
 
 #[test]
-fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {
+fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {
     let mut connection = open_seeded_catalog().unwrap();
     let CreateCategoryResponse::Success(category) = create_category_command(
         &mut connection,
@@ -279,7 +280,8 @@ fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {
             sku: "BRG-50".into(),
             name: "Wheel bearing".into(),
             category_id: category.category_id,
-            list_price_centavos: 5_000,
+            purchase_price_centavos: 3_000,
+            sale_price_centavos: 5_000,
             minimum_sale_price_centavos: 4_000,
             opening_quantity: 3,
             attribute_values: vec![AttributeValueInput {
@@ -299,9 +301,9 @@ fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {
         },
     )
     .unwrap();
-    assert_eq!(results[0].catalog_unit_price_centavos, 5_000);
-        assert_eq!(results[0].list_price_centavos, 5_000);
-        assert_eq!(results[0].minimum_sale_price_centavos, 4_000);
+    assert_eq!(results[0].purchase_price_centavos, Some(3_000));
+    assert_eq!(results[0].sale_price_centavos, 5_000);
+    assert_eq!(results[0].minimum_sale_price_centavos, 4_000);
 
     let ConfirmSaleResponse::Success(summary) = confirm_sale(
         &mut connection,
@@ -310,22 +312,23 @@ fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {
             lines: vec![RequestedLine {
                 product_id: product.product_id,
                 quantity: 1,
-                captured_unit_price_centavos: 4_000,
+                captured_unit_price_centavos: 5_000,
                 captured_revision: 0,
-                final_unit_price_centavos: None,
+                final_unit_price_centavos: Some(5_000),
                 acknowledged_price_centavos: None,
                 acknowledged_revision: None,
             }],
             payment: PaymentInputRequest {
                 amount_tendered_centavos: None,
-                qr_applied_centavos: Some(4_000),
+                qr_applied_centavos: Some(5_000),
             },
         },
     )
     .unwrap() else {
         panic!("expected the onboarded sale request to persist");
     };
-    assert_eq!(summary.lines[0].unit_price_centavos, 4_000);
-    assert_eq!(product.list_price_centavos, 5_000);
+    assert_eq!(summary.lines[0].unit_price_centavos, 5_000);
+    assert_eq!(product.purchase_price_centavos, 3_000);
+    assert_eq!(product.sale_price_centavos, 5_000);
     assert_eq!(product.minimum_sale_price_centavos, 4_000);
 }

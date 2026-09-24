@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 
 import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, writeCatalogViewMode } from "./product-browser.ts";
 
-const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("names Seleccionar actions by product and SKU without changing visible copy or selection", async () => {
   const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "FLT-2" }];
@@ -99,6 +99,33 @@ test("Catalog Table and Gallery expose the same product facts and explicit Edit 
   assert.equal(within(gallery).getAllByRole("button", { name: "Editar" }).length, 2);
   assert.equal(within(gallery).getAllByText("Sin stock: 0").length, 1);
   assert.equal(within(gallery).getAllByText("Stock bajo: 1").length, 1);
+});
+
+test("Catalog, Gallery, and Sales display canonical sale price ahead of legacy aliases", () => {
+  const canonicalProduct = { ...page.products[0], sale_price_centavos: 3_000, list_price_centavos: 2_500, catalog_unit_price_centavos: 2_000 };
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [canonicalProduct] } };
+  const props = { state, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+  const view = render(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "table" }));
+  assert.equal(screen.getByTestId("catalog-table-price").textContent, "Bs 30,00");
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "gallery" }));
+  assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByText("Bs 30,00").textContent, "Bs 30,00");
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "sales" }));
+  assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByText("Bs 30,00").textContent, "Bs 30,00");
+});
+
+test("Catalog browse falls back to the legacy list price when canonical sale price is absent", () => {
+  const legacyProduct = (({ sale_price_centavos: _, ...product }) => ({
+    ...product,
+    list_price_centavos: 3_000,
+    catalog_unit_price_centavos: 2_000,
+  }))(page.products[0]);
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [legacyProduct] } };
+  render(createElement(ProductBrowser, {
+    state, presentation: "catalog", catalogViewMode: "table",
+    onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event) => event.preventDefault(), onPageChange: () => {},
+  }));
+
+  assert.equal(screen.getByTestId("catalog-table-price").textContent, "Bs 30,00");
 });
 
 test("Catalog toolbar view controls are icon-only, named, and depict table and gallery", () => {

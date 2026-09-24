@@ -58,6 +58,7 @@ function stockText(product: ProductBrowseResult) {
   return product.available_quantity === 0 ? "Sin stock: 0" : product.available_quantity === 1 ? "Stock bajo: 1" : `Disponible: ${product.available_quantity}`;
 }
 function priceText(centavos: number) { return `Bs ${Math.trunc(centavos / 100)},${String(centavos % 100).padStart(2, "0")}`; }
+function salePriceCentavos(product: ProductBrowseResult): number { return product.sale_price_centavos ?? product.list_price_centavos ?? product.catalog_unit_price_centavos; }
 function stockKind(product: ProductBrowseResult) {
   return product.available_quantity === 0 ? "out-of-stock" : product.available_quantity === 1 ? "low-stock" : "available";
 }
@@ -124,7 +125,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
       return galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
         createElement("div", { "data-ui-catalog-image-area": true }, galleryImage),
         createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
-        createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
+        createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
         createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
         action) : salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
 
@@ -136,18 +137,18 @@ export function ProductBrowser(props: ProductBrowserProps) {
             createElement(Badge, { kind: stockKind(product), text: stockText(product) }))),
         createElement("div", { "data-ui-product-action": true },
           createElement("span", { "data-ui-unit-price": true },
-            createElement("span", { "data-ui-unit-price-caption": true }, "Precio unitario"),
-            createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos))),
+            createElement("span", { "data-ui-unit-price-caption": true }, "Precio de venta"),
+            createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product)))),
           action)) : catalogPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-table-row": true },
             createElement("div", { "data-testid": "catalog-table-thumbnail", "data-ui-catalog-table-thumbnail": true }, tableImage),
             createElement("div", { "data-testid": "catalog-table-identity", "data-ui-catalog-table-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku)),
-            createElement("span", { "data-testid": "catalog-table-price", "data-ui-money": true }, priceText(product.list_price_centavos)),
+            createElement("span", { "data-testid": "catalog-table-price", "data-ui-money": true }, priceText(salePriceCentavos(product))),
             createElement("span", { "data-testid": "catalog-table-category", "data-ui-catalog-table-category": true }, product.category_name),
             createElement("span", { "data-testid": "catalog-table-stock" }, createElement(Badge, { kind: stockKind(product), text: stockText(product) })),
             createElement("div", { "data-testid": "catalog-table-edit", "data-ui-catalog-table-edit": true }, action)) : createElement("li", { key: product.product_id },
             safeThumbnail,
             createElement("div", null, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
-            createElement("span", { "data-ui-money": true }, priceText(product.list_price_centavos)),
+            createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
             createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
             action);
     }))) : null,

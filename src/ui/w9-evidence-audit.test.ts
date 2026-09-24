@@ -243,6 +243,54 @@ function assertDashboardRegistrationAllowlist(libDiff: string) {
   );
 }
 
+const commandSeamPricingLineAllowlist = new Set([
+  "                acknowledged_price_centavos: None,",
+  "            acknowledged_price_centavos: None,",
+  "fn exposes_catalog_price_without_physical_storage_terminology() {",
+  "fn exposes_sale_price_without_physical_storage_terminology() {",
+  "    assert_eq!(results[0].catalog_unit_price_centavos, 2_500);",
+  "    assert_eq!(results[0].sale_price_centavos, 2_500);",
+  "            list_price_centavos: 5_000,",
+  "            purchase_price_centavos: 3_000,",
+  "            sale_price_centavos: 5_000,",
+  `    let product = r#"{"sku":"BRG-1","name":"Wheel bearing","category_id":1,"list_price_centavos":5000,"minimum_sale_price_centavos":4000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;`,
+  `    let product = r#"{"sku":"BRG-1","name":"Wheel bearing","category_id":1,"purchase_price_centavos":3000,"sale_price_centavos":5000,"minimum_sale_price_centavos":4000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;`,
+  "fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {",
+  "fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {",
+  "    assert_eq!(results[0].catalog_unit_price_centavos, 5_000);",
+  "        assert_eq!(results[0].list_price_centavos, 5_000);",
+  "        assert_eq!(results[0].minimum_sale_price_centavos, 4_000);",
+  "    assert_eq!(results[0].purchase_price_centavos, Some(3_000));",
+  "    assert_eq!(results[0].sale_price_centavos, 5_000);",
+  "    assert_eq!(results[0].minimum_sale_price_centavos, 4_000);",
+  "                captured_unit_price_centavos: 4_000,",
+  "                captured_unit_price_centavos: 5_000,",
+  "                final_unit_price_centavos: None,",
+  "                final_unit_price_centavos: Some(5_000),",
+  "                qr_applied_centavos: Some(4_000),",
+  "                qr_applied_centavos: Some(5_000),",
+  "    assert_eq!(summary.lines[0].unit_price_centavos, 4_000);",
+  "    assert_eq!(summary.lines[0].unit_price_centavos, 5_000);",
+  "    assert_eq!(product.list_price_centavos, 5_000);",
+  "    assert_eq!(product.purchase_price_centavos, 3_000);",
+  "    assert_eq!(product.sale_price_centavos, 5_000);",
+  "    assert_eq!(product.minimum_sale_price_centavos, 4_000);",
+]);
+
+function assertCommandSeamPricingAllowlist(commandSeamDiff: string) {
+  const changedLines = commandSeamDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(commandSeamDiff, /onboarded_product_searches_and_sells_at_its_backend_sale_price/);
+  assert.match(commandSeamDiff, /captured_unit_price_centavos: 5_000/);
+  assert.match(commandSeamDiff, /qr_applied_centavos: Some\(5_000\)/);
+  assert.match(commandSeamDiff, /summary\.lines\[0\]\.unit_price_centavos, 5_000/);
+  assert.ok(
+    changedLines.every((line) => commandSeamPricingLineAllowlist.has(line.slice(1))),
+    "unexpected command-seam contract-test drift",
+  );
+}
+
 const catalogImageRegistrationLineAllowlist = new Set([
   "choose_product_image_command,",
   "remove_product_image_command,",
@@ -354,6 +402,7 @@ function assertW9ProtectedDiffPolicy(
   currentLockValue: Record<string, any>,
   baselineLockValue: Record<string, any>,
   libDiff: string,
+  commandSeamDiff = "",
 ) {
   const allowedPaths = new Set([
     "package.json",
@@ -373,6 +422,7 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/Cargo.toml",
     "src-tauri/src/application/catalog/repository.rs",
     "src-tauri/tests/backup_restore.rs",
+    "src-tauri/tests/command_seam.rs",
     "src-tauri/tests/catalog_maintenance_commands.rs",
     "src-tauri/tests/catalog_maintenance_sqlite.rs",
     "src-tauri/tests/post_sale_lifecycle.rs",
@@ -391,6 +441,9 @@ function assertW9ProtectedDiffPolicy(
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
+  if (changedPaths.includes("src-tauri/tests/command_seam.rs")) {
+    assertCommandSeamPricingAllowlist(commandSeamDiff);
+  }
 
   if (changedPaths.includes("package.json") || changedPaths.includes("package-lock.json")) {
     assertTicket14PackageAllowlist(
@@ -483,6 +536,7 @@ test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam"
   const changedProtectedPaths = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   const changedPaths = changedProtectedPaths ? changedProtectedPaths.split("\n").sort() : [];
   const libDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
+  const commandSeamDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/tests/command_seam.rs"], { cwd: root, encoding: "utf8" });
   assertW9ProtectedDiffPolicy(
     changedPaths,
     currentPackage,
@@ -490,9 +544,32 @@ test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam"
     currentLock,
     baselineLock,
     libDiff,
+    commandSeamDiff,
   );
   const uiSources = mountedSuites.map((suite) => read(suite)).join("\n");
   assert.doesNotMatch(uiSources, /https?:\/\/|cdn\.|innerHTML/);
+});
+
+test("W9 allows only the diagnosed command-seam pricing contract-test drift", () => {
+  const allowedDiff = [
+    "-                captured_unit_price_centavos: 4_000,",
+    "+                captured_unit_price_centavos: 5_000,",
+    "-                final_unit_price_centavos: None,",
+    "+                final_unit_price_centavos: Some(5_000),",
+    "-                qr_applied_centavos: Some(4_000),",
+    "+                qr_applied_centavos: Some(5_000),",
+    "-    assert_eq!(summary.lines[0].unit_price_centavos, 4_000);",
+    "+    assert_eq!(summary.lines[0].unit_price_centavos, 5_000);",
+    "+    assert_eq!(product.purchase_price_centavos, 3_000);",
+    "+    assert_eq!(product.sale_price_centavos, 5_000);",
+    "+    assert_eq!(product.minimum_sale_price_centavos, 4_000);",
+    "+fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {",
+  ].join("\n");
+  assert.doesNotThrow(() => assertCommandSeamPricingAllowlist(allowedDiff));
+  assert.throws(
+    () => assertCommandSeamPricingAllowlist(`${allowedDiff}\n+ fn unrelated_runtime_change() { native_runtime_drift(); }`),
+    /unexpected command-seam contract-test drift/,
+  );
 });
 
 test("W9 rejects arbitrary protected-path and package-lock drift", () => {
