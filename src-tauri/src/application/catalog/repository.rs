@@ -4,7 +4,15 @@ use crate::domain::catalog::{
     AttributeDefinition, CatalogSnapshot, CatalogTarget, TransitionPlan, ValidatedAttributeValue,
 };
 
-use super::{CategoryMetadataSummary, CreateProductInput};
+use super::{CategoryMetadataSummary, CreateProductInput, ProductBrowseAttribute};
+
+pub trait CatalogBrowseRepository {
+    fn load_page_attributes(
+        &self,
+        connection: &Connection,
+        product_ids: &[i64],
+    ) -> Result<Vec<(i64, ProductBrowseAttribute)>>;
+}
 
 pub trait CatalogCategoryRepository {
     fn list_metadata(&self, connection: &Connection) -> Result<Vec<CategoryMetadataSummary>>;

@@ -229,6 +229,7 @@ pub fn browse_products(
     }
     match catalog::browse_active_products(
         connection,
+        &SqliteCatalogRepository,
         &BrowseProductsInput {
             query: request.query,
             category_id: request.category_id,

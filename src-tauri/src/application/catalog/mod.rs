@@ -18,7 +18,7 @@ pub use bootstrap_demo::{
 
 use repository::{
     CatalogCategoryRepository, CatalogMaintenanceRepository, CatalogMetadataRepository,
-    CreateProductRepository,
+    CreateProductRepository, CatalogBrowseRepository,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -592,6 +592,13 @@ pub struct BrowseProductsInput {
 }
 
 #[derive(Debug, PartialEq, Serialize)]
+pub struct ProductBrowseAttribute {
+    pub definition_id: i64,
+    pub label: String,
+    pub value: String,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
 pub struct ProductBrowseResult {
     pub product_id: i64,
     pub category_id: i64,
@@ -603,6 +610,7 @@ pub struct ProductBrowseResult {
     pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
     pub revision: i64,
+    pub attribute_values: Vec<ProductBrowseAttribute>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -621,8 +629,9 @@ pub struct ProductBrowsePage {
     pub total_pages: i64,
 }
 
-pub fn browse_active_products(
+pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     connection: &Connection,
+    repository: &Repository,
     input: &BrowseProductsInput,
 ) -> Result<ProductBrowsePage> {
     const MAX_PAGE_SIZE: i64 = 50;
@@ -686,7 +695,7 @@ pub fn browse_active_products(
     if let Some(ref category_id) = input.category_id { product_args.push(category_id); }
     product_args.push(&input.page_size);
     product_args.push(&offset);
-    let products = connection
+    let mut products = connection
         .prepare(&products_sql)?
         .query_map(
             rusqlite::params_from_iter(product_args),
@@ -702,10 +711,18 @@ pub fn browse_active_products(
                     sale_price_centavos: row.get(7)?,
                     minimum_sale_price_centavos: row.get(8)?,
                     revision: row.get(9)?,
+                    attribute_values: Vec::new(),
                 })
             },
         )?
         .collect::<Result<Vec<_>>>()?;
+    let product_ids = products.iter().map(|product| product.product_id).collect::<Vec<_>>();
+    let attributes = repository.load_page_attributes(connection, &product_ids)?;
+    for (product_id, attribute) in attributes {
+        if let Some(product) = products.iter_mut().find(|product| product.product_id == product_id) {
+            product.attribute_values.push(attribute);
+        }
+    }
     let mut categories = connection.prepare(
         "SELECT id, name FROM categories WHERE active = 1 ORDER BY lower(name), id",
     )?;

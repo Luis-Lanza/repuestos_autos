@@ -6,7 +6,8 @@ export const ATTRIBUTE_FIELD_TYPE = { TEXT: "text", NUMBER: "number", OPTION: "o
 const RESPONSE_KIND = { SUCCESS: "success", ERROR: "error" } as const;
 const ERROR_CODE = { VALIDATION: "validation_error", LIFECYCLE: "lifecycle_blocked", STALE: "stale_catalog_record", PERSISTENCE: "persistence_failure", UNAVAILABLE: "catalog_unavailable", IMAGE_UNAVAILABLE: "image_unavailable", INVALID_PURCHASE: "invalid_purchase_price", INVALID_SALE: "invalid_sale_price", INVALID_MINIMUM: "invalid_minimum_sale_price", MINIMUM_ABOVE_SALE: "minimum_sale_price_exceeds_sale_price" } as const;
 export interface ProductSearchResult { product_id: number; sku: string; name: string; category_name: string; available_quantity: number; purchase_price_centavos: number | null; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; revision: number; }
-export interface ProductBrowseResult extends ProductSearchResult { category_id: number; }
+export interface ProductBrowseAttribute { definition_id: number; label: string; value: string; }
+export interface ProductBrowseResult extends ProductSearchResult { category_id: number; attribute_values: ProductBrowseAttribute[]; }
 export interface ProductBrowseCategory { category_id: number; name: string; }
 export type ProductStockState = "all" | "low_stock" | "out_of_stock" | "available" | "alerts";
 export type ProductActivityState = "active" | "archived" | "all";
@@ -56,10 +57,15 @@ const searchResults = (value: unknown): ProductSearchResult[] | null => {
   const decoded = value.map(searchProduct);
   return decoded.every((item): item is ProductSearchResult => item !== null) ? decoded : null;
 };
+const browseAttribute = (value: unknown): ProductBrowseAttribute | null => responseRecord(value) && hasOnlyKeys(value, ["definition_id", "label", "value"]) && positiveSafeInteger(value.definition_id) && typeof value.label === "string" && typeof value.value === "string"
+  ? { definition_id: value.definition_id, label: value.label, value: value.value }
+  : null;
 const browseProduct = (value: unknown): ProductBrowseResult | null => {
   const product = searchProduct(value);
-  return product && responseRecord(value) && positiveSafeInteger(value.category_id)
-    ? { ...product, category_id: value.category_id }
+  if (!product || !responseRecord(value) || !positiveSafeInteger(value.category_id) || !Array.isArray(value.attribute_values)) return null;
+  const attributeValues = value.attribute_values.map(browseAttribute);
+  return attributeValues.every((item): item is ProductBrowseAttribute => item !== null)
+    ? { ...product, category_id: value.category_id, attribute_values: attributeValues }
     : null;
 };
 const browsePage = (value: unknown): ProductBrowsePage | null => {

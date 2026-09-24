@@ -4,17 +4,24 @@ import test from "node:test";
 import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogMaintenanceCommands, createSearchProductsCommand, createCatalogProductImageCommands } from "./catalog.ts";
 
 const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
-const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9 }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("decodes the paged browse contract and sends optional filters in its request envelope", async () => {
   const calls: unknown[] = [];
   const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return { ...browsePage, products: [{ ...browsePage.products[0], original_image_base64: "/9j/secret", source_path: "/private/image.jpg" }] }; });
-  assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9 }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
+  assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
   assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "low_stock", activity: "active", page: 2, page_size: 20 } } }]);
 });
 
+test("decodes ordered compact browse attributes including empty values without projection drift", async () => {
+  const attributes = [{ definition_id: 2, label: "Material", value: "" }, { definition_id: 8, label: "Diameter", value: "50" }];
+  const browse = createBrowseProductsCommand(async () => ({ ...browsePage, products: [{ ...browsePage.products[0], attribute_values: attributes, internal: "not projected" }] }));
+  assert.deepEqual((await browse()).products[0].attribute_values, attributes);
+  assert.equal(Object.hasOwn((await browse()).products[0], "internal"), false);
+});
+
 test("rejects malformed paged browse responses without exposing native details", async () => {
-  for (const response of [null, { ...browsePage, products: [{ ...searchProduct, category_id: 0 }] }, { ...browsePage, total: -1 }, { ...browsePage, page_size: 51 }]) {
+  for (const response of [null, { ...browsePage, products: [{ ...searchProduct, category_id: 0, attribute_values: [] }] }, { ...browsePage, products: [{ ...browsePage.products[0], attribute_values: [{ definition_id: 1, value: "missing label" }] }] }, { ...browsePage, products: [{ ...browsePage.products[0], attribute_values: [{ definition_id: 1, label: "Size", value: "M", internal: true }] }] }, { ...browsePage, total: -1 }, { ...browsePage, page_size: 51 }]) {
     const browse = createBrowseProductsCommand(async () => response);
     await assert.rejects(browse(), /product catalog/);
   }
