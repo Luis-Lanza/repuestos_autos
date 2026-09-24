@@ -11,6 +11,7 @@ const brakePad: ProductSearchResult = {
   category_name: "Frenos",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_509,
+  sale_price_centavos: 2_509,
   list_price_centavos: 2_509,
   minimum_sale_price_centavos: 2_509,
   revision: 0,
@@ -30,6 +31,12 @@ test("projects typed catalog identity and exact immutable Bs price", () => {
     centavos: 2_509,
     text: "Bs 25,09",
   });
+});
+
+test("prefers canonical sale price while retaining legacy aliases as fallback", () => {
+  assert.equal(catalogResultDetails({ ...brakePad, sale_price_centavos: 3_000, list_price_centavos: 2_509, catalog_unit_price_centavos: 2_000 }).price.centavos, 3_000);
+  const legacy = { ...brakePad, sale_price_centavos: undefined, list_price_centavos: 2_509 } as unknown as ProductSearchResult;
+  assert.equal(catalogResultDetails(legacy).price.centavos, 2_509);
 });
 
 test("projects available, low, and zero stock as distinct typed facts", () => {
