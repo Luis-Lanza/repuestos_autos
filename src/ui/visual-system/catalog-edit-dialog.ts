@@ -18,6 +18,11 @@ export interface CatalogEditDialogProps {
   onChange: (field: string, value: string) => void;
   onSubmit: () => void;
   onLifecycle: () => void;
+  imageThumbnail?: string | null;
+  imagePending?: boolean;
+  imageFeedback?: string | null;
+  onChooseImage?: () => void;
+  onRemoveImage?: () => void;
   onReload: () => void;
   onCancel: () => void;
 }
@@ -67,7 +72,7 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
     feedback ? createElement(Feedback, { kind: "error" } as never, feedback) : null);
 }
 
-export function CatalogEditDialog({ record, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, onChange, onSubmit, onLifecycle, onReload, onCancel }: CatalogEditDialogProps) {
+export function CatalogEditDialog({ record, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, imageThumbnail = null, imagePending = false, imageFeedback = null, onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onReload, onCancel }: CatalogEditDialogProps) {
   const nameRef = useRef<HTMLInputElement>(null);
   const hasFocusedDetail = useRef(false);
   const dialogPending = loading || pending;
@@ -85,19 +90,25 @@ export function CatalogEditDialog({ record, detail, form, loading, pending, feed
     title,
     description: detail ? "Editá los metadatos del registro seleccionado y guardá los cambios." : loading ? "Cargando el detalle autorizado del registro seleccionado…" : "No se pudo cargar el detalle del registro seleccionado.",
     confirmLabel: "Guardar metadatos",
-    pending: dialogPending,
-    pendingLabel: loading ? "Cargando detalle…" : "Guardando metadatos…",
-    confirmDisabled: !detail || !form || recoveryRequired,
+    pending: dialogPending || imagePending,
+    pendingLabel: imagePending ? "Procesando imagen…" : loading ? "Cargando detalle…" : "Guardando metadatos…",
+    confirmDisabled: !detail || !form || recoveryRequired || imagePending,
     dialogId: "catalog-edit-dialog",
     dialogDataAttribute: "catalog-edit-dialog",
     onCancel,
     onConfirm: onSubmit,
     children: detail && form ? createElement("div", { "data-ui-catalog-edit-content": true },
-      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit }),
+      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit }),
+      detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
+        createElement("h3", null, "Imagen del producto"),
+        imageThumbnail ? createElement("img", { src: imageThumbnail, alt: `Imagen de ${detail.name}`, "data-ui-catalog-product-image-preview": true }) : createElement("p", null, "Sin imagen"),
+        createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending || recoveryRequired, pending: imagePending, pendingLabel: "Procesando imagen…", onClick: onChooseImage }, "Elegir imagen"),
+        imageThumbnail ? createElement(Action, { variant: "tertiary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onRemoveImage }, "Quitar imagen") : null,
+        imageFeedback ? createElement(Feedback, { kind: imageFeedback === "No se modificó la imagen." ? "advisory" : imageFeedback.includes("actualizada") ? "success" : "error" } as never, imageFeedback) : null) : null,
       createElement("section", { "aria-label": "Acciones de ciclo de vida", "data-ui-catalog-lifecycle": true },
-        createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity }, detail.activity === "active" ? "Archivar" : "Reactivar"),
+        createElement(Action, { variant: detail.activity === "active" ? "destructive" : "secondary", disabled: dialogPending || imagePending || recoveryRequired, onClick: onLifecycle, "data-ui-catalog-lifecycle-action": detail.activity }, detail.activity === "active" ? "Archivar" : "Reactivar"),
         lifecycleFeedback ? createElement(Feedback, { kind: lifecycleFeedback === "Catálogo actualizado." ? "success" : "error" } as never, lifecycleFeedback) : null,
-        recoveryRequired ? createElement(Action, { variant: "secondary", disabled: dialogPending, onClick: onReload }, "Reintentar actualización") : null))
+        recoveryRequired ? createElement(Action, { variant: "secondary", disabled: dialogPending || imagePending, onClick: onReload }, "Reintentar actualización") : null))
       : loading ? createElement(Feedback, { kind: "loading" } as never, "Cargando el detalle autorizado…")
         : createElement("div", { "data-ui-catalog-edit-error": true },
           createElement(Feedback, { kind: "error" } as never, feedback ?? "No se pudo cargar el registro."),

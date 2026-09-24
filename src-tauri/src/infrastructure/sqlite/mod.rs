@@ -20,7 +20,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 15;
+pub const CURRENT_SCHEMA_VERSION: i64 = 17;
 const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
@@ -285,6 +285,24 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         transaction.pragma_update(None, "user_version", 15)?;
         transaction.commit()?;
         version = 15;
+    }
+
+    if version == 15 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!("migrations/0016_product_images.sql"))?;
+        transaction.pragma_update(None, "user_version", 16)?;
+        validate_version_fifteen_schema(&transaction)?;
+        transaction.commit()?;
+        version = 16;
+    }
+
+    if version == 16 {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(include_str!("migrations/0017_product_image_thumbnails.sql"))?;
+        transaction.pragma_update(None, "user_version", 17)?;
+        validate_version_fifteen_schema(&transaction)?;
+        transaction.commit()?;
+        version = 17;
     }
 
     if version == CURRENT_SCHEMA_VERSION {
@@ -758,7 +776,177 @@ fn validate_version_fifteen_schema(connection: &Connection) -> Result<()> {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
+    validate_foreign_keys(connection)?;
+    let version = connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
+    if version >= 16 {
+        validate_product_images_schema(connection)?;
+    }
+    if version >= 17 {
+        validate_product_image_thumbnails_schema(connection)?;
+    }
+    Ok(())
+}
+
+fn validate_product_images_schema(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(product_images)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, bool>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    if columns.get(..3)
+        != Some(&[
+            ("product_id".into(), "INTEGER".into(), false, 1),
+            ("mime_type".into(), "TEXT".into(), true, 0),
+            ("image_bytes".into(), "BLOB".into(), true, 0),
+        ])
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    let foreign_key = connection.query_row(
+        "SELECT \"table\", \"from\", \"to\", on_delete FROM pragma_foreign_key_list('product_images') WHERE \"from\" = 'product_id'",
+        [],
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        )),
+    )?;
+    if foreign_key != ("products".into(), "product_id".into(), "id".into(), "CASCADE".into()) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    let sql = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'product_images'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    let actual = normalize_product_images_ddl(&sql);
+    let expected = normalize_product_images_ddl(
+        "CREATE TABLE product_images (
+            product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+            mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+            image_bytes BLOB NOT NULL CHECK (
+                typeof(image_bytes) = 'blob'
+                AND length(image_bytes) BETWEEN 1 AND 2097152
+            )
+        )",
+    );
+    if !actual.starts_with(expected.strip_suffix(')').unwrap_or(&expected)) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     validate_foreign_keys(connection)
+}
+
+fn validate_product_image_thumbnails_schema(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(product_images)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, bool>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>>>()?;
+    if columns.len() != 5
+        || columns.get(3) != Some(&("thumbnail_mime_type".into(), "TEXT".into(), false))
+        || columns.get(4) != Some(&("thumbnail_bytes".into(), "BLOB".into(), false))
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    let sql = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'product_images'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    let actual = normalize_product_images_ddl(&sql);
+    let expected = normalize_product_images_ddl(
+        "CREATE TABLE product_images (
+            product_id INTEGER PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+            mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
+            image_bytes BLOB NOT NULL CHECK (
+                typeof(image_bytes) = 'blob'
+                AND length(image_bytes) BETWEEN 1 AND 2097152
+            ),
+            thumbnail_mime_type TEXT CHECK (
+                thumbnail_mime_type IS NULL OR thumbnail_mime_type = 'image/jpeg'
+            ),
+            thumbnail_bytes BLOB CHECK (
+                (thumbnail_mime_type IS NULL AND thumbnail_bytes IS NULL)
+                OR (
+                    thumbnail_mime_type IS NOT NULL
+                    AND typeof(thumbnail_bytes) = 'blob'
+                    AND length(thumbnail_bytes) BETWEEN 1 AND 1048576
+                )
+            )
+        )",
+    );
+    if actual != expected {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
+fn normalize_product_images_ddl(sql: &str) -> String {
+    let mut uncommented = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    let mut quote = None;
+
+    while let Some(character) = chars.next() {
+        if let Some(end_quote) = quote {
+            uncommented.push(character);
+            if character == end_quote {
+                if chars.peek() == Some(&end_quote) {
+                    uncommented.push(chars.next().expect("peeked character"));
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+
+        if matches!(character, '\'' | '"' | '`') {
+            quote = Some(character);
+            uncommented.push(character);
+        } else if character == '[' {
+            quote = Some(']');
+            uncommented.push(character);
+        } else if character == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            for comment_char in chars.by_ref() {
+                if comment_char == '\n' {
+                    uncommented.push(' ');
+                    break;
+                }
+            }
+        } else if character == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut previous = None;
+            for comment_char in chars.by_ref() {
+                if previous == Some('*') && comment_char == '/' {
+                    break;
+                }
+                previous = Some(comment_char);
+            }
+            uncommented.push(' ');
+        } else {
+            uncommented.push(character.to_ascii_lowercase());
+        }
+    }
+
+    uncommented
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
 }
 
 fn validate_catalog_price_data(connection: &Connection) -> Result<()> {

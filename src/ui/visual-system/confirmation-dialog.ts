@@ -79,6 +79,7 @@ function DialogFrame({
   const dialogRef = useRef<HTMLDivElement>(null);
   const ownedDialogRef = useRef<HTMLElement | null>(null);
   const invokerRef = useRef<HTMLElement | null>(null);
+  const previousDialogRef = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
   const pendingRef = useRef(pending);
   const onCancelRef = useRef(onCancel);
@@ -90,6 +91,7 @@ function DialogFrame({
     if (!open || !container) return;
     const owner = container.ownerDocument;
     if (!wasOpen.current) {
+      previousDialogRef.current = currentDialog(owner);
       const active = owner.activeElement as HTMLElement | null;
       const provided = externalInvokerRef?.current ?? null;
       invokerRef.current = provided?.isConnected
@@ -131,10 +133,11 @@ function DialogFrame({
       const current = currentDialog(owner);
       const replacement = [...owner.querySelectorAll<HTMLElement>('[role="dialog"]')]
         .some((node) => node !== container && node.isConnected);
-      if (current !== container && !replacement) restore(invokerRef.current);
+      if (current === previousDialogRef.current || (current !== container && !replacement)) restore(invokerRef.current);
       dialogs.delete(container);
       if (!container.isConnected) {
         invokerRef.current = null;
+        previousDialogRef.current = null;
         wasOpen.current = false;
       }
     };
