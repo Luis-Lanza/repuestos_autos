@@ -142,6 +142,26 @@ test("Sales loads revision-checked page thumbnails and offers a persisted Sales-
   assert.ok(within(list).getByRole("img", { name: "Filtro aceite" }));
 });
 
+test("quick product detail uses the browse snapshot without changing browse or Add behavior", async () => {
+  const product = { ...products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }, { definition_id: 2, label: "Largo", value: "  " }] };
+  const calls: string[] = [];
+  mockIPC((command) => { calls.push(command); return command === "browse_products_command" ? browse([product]) : Promise.reject(new Error(`unexpected command: ${command}`)); });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  const trigger = await within(catalog).findByRole("button", { name: "Ver detalles de Filtro aceite (SKU: FIL-1)" });
+  const before = calls.filter((command) => command === "browse_products_command").length;
+  await user().click(trigger);
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  assert.deepEqual(Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent), ["Acero", "Sin dato"]);
+  assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
+  assert.equal(calls.includes("catalog_metadata_detail_command"), false);
+  await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  assert.equal(document.activeElement, trigger);
+  await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
+  assert.ok(within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("1 línea"));
+  assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
+});
+
 test("persists the Sales-only view preference across unmount and remount", async () => {
   const key = "sales.product-browser.view-mode";
   const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");

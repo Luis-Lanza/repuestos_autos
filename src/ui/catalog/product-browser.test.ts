@@ -164,6 +164,39 @@ test("Sales table and gallery render ordered non-empty attribute summaries, thum
   assert.equal(within(list).getByText("Diámetro: 50 mm").textContent, "Diámetro: 50 mm");
 });
 
+test("Sales product identity opens an accessible read-only detail with every ordered attribute and restores focus", async () => {
+  const product = { ...page.products[0], purchase_price_centavos: null, minimum_sale_price_centavos: 1_500, attribute_values: [
+    { definition_id: 2, label: "Diámetro", value: "50 mm" },
+    { definition_id: 5, label: "Material", value: "  " },
+    { definition_id: 8, label: "Marca", value: "Bosch" },
+  ] };
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {} };
+  const view = render(createElement(ProductBrowser, props));
+  for (const mode of ["table", "gallery"] as const) {
+    if (mode === "gallery") view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: mode }));
+    const trigger = screen.getByRole("button", { name: "Ver detalles de Filter (SKU: FLT)" });
+    trigger.focus();
+    await userEvent.click(trigger);
+    const detail = screen.getByRole("dialog", { name: "Filter" });
+    const closeButton = within(detail).getByRole("button", { name: "Cerrar detalle del producto" });
+    assert.equal(document.activeElement, closeButton);
+    await userEvent.keyboard("{Tab}");
+    assert.equal(document.activeElement, closeButton);
+    assert.ok(detail.contains(document.activeElement));
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    assert.equal(document.activeElement, closeButton);
+    assert.ok(detail.contains(document.activeElement));
+    assert.ok(within(detail).getByRole("img", { name: "Sin imagen" }));
+    for (const fact of ["SKU", "FLT", "Categoría", "Filters", "Stock", "Disponible: 4", "Precio de compra", "No registrado", "Precio de venta", "Bs 25,00", "Precio mínimo de venta", "Bs 15,00"]) within(detail).getByText(fact);
+    const values = Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dt, [data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent);
+    assert.deepEqual(values, ["Diámetro", "50 mm", "Material", "Sin dato", "Marca", "Bosch"]);
+    await userEvent.keyboard("{Escape}");
+    assert.equal(screen.queryByRole("dialog", { name: "Filter" }), null);
+    assert.equal(document.activeElement, trigger);
+  }
+});
+
 test("Sales view preference is separate from Catalog and defaults safely", () => {
   const values = new Map<string, string>();
   const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };

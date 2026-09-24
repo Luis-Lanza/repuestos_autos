@@ -1,4 +1,4 @@
-import { createElement, type FormEvent } from "react";
+import { createElement, type FormEvent, useEffect, useRef, useState } from "react";
 
 import type { ProductActivityState, ProductBrowsePage, ProductBrowseResult, ProductStockState } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
@@ -96,6 +96,29 @@ export interface ProductBrowserProps {
 }
 export function ProductBrowser(props: ProductBrowserProps) {
   const { state } = props;
+  const [detailProduct, setDetailProduct] = useState<ProductBrowseResult | null>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
+  const detailClose = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!detailProduct) {
+      detailTrigger.current?.focus();
+      detailTrigger.current = null;
+      return;
+    }
+    detailClose.current?.focus();
+    const contain = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setDetailProduct(null); return; }
+      if (event.key !== "Tab") return;
+      const dialog = event.currentTarget as Document;
+      const buttons = [...dialog.querySelectorAll<HTMLButtonElement>('[data-ui-sales-product-detail] button:not(:disabled)')];
+      const index = buttons.indexOf(dialog.activeElement as HTMLButtonElement);
+      if (!buttons.length || (!event.shiftKey && index === buttons.length - 1) || (event.shiftKey && index === 0)) {
+        event.preventDefault(); buttons[event.shiftKey ? buttons.length - 1 : 0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", contain, true);
+    return () => document.removeEventListener("keydown", contain, true);
+  }, [detailProduct]);
   const page = state.result;
   const feedback = state.status === "initial" ? createElement(Feedback, { kind: "initial" } as never, props.initialMessage ?? "Buscá un producto para comenzar.")
     : state.status === "loading" ? createElement(Feedback, { kind: "loading", "aria-label": props.loadingMessage ?? "Cargando productos…" } as never, props.loadingMessage ?? "Cargando productos…")
@@ -135,12 +158,14 @@ export function ProductBrowser(props: ProductBrowserProps) {
       const safeThumbnail = thumbnail && thumbnail.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(thumbnail) ? createElement("img", { src: thumbnail, alt: product.name, loading: "lazy", "data-ui-product-thumbnail": true }) : null;
       const galleryImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-image-placeholder": true }, "Sin imagen");
       const tableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-table-image-placeholder": true }, "Sin imagen");
+      const showSalesDetail = () => { detailTrigger.current = document.activeElement as HTMLElement; setDetailProduct(product); };
+      const salesIdentity = createElement("button", { type: "button", "data-ui-sales-product-detail-trigger": true, "aria-label": `Ver detalles de ${product.name} (SKU: ${product.sku})`, onClick: showSalesDetail }, product.name);
       const salesAttributes = (product.attribute_values ?? []).filter((attribute) => attribute.value.trim().length > 0).slice(0, 2);
       const salesAttributeSummary = createElement("div", { "data-ui-sales-product-attributes": true }, salesAttributes.map((attribute) => createElement("span", { key: attribute.definition_id }, `${attribute.label}: ${attribute.value}`)));
       const salesTableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-table-image-placeholder": true }, "Sin imagen");
       return salesGalleryPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product-card": true },
         createElement("div", { "data-ui-sales-image-area": true }, galleryImage),
-        createElement("div", { "data-ui-sales-product-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name), salesAttributeSummary),
+        createElement("div", { "data-ui-sales-product-identity": true }, createElement("strong", null, salesIdentity), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name), salesAttributeSummary),
         createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
         createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
         action) : galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
@@ -151,7 +176,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
         action) : salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
         createElement("div", { "data-ui-sales-table-thumbnail": true }, salesTableImage),
         createElement("div", { "data-ui-product-identity": true },
-          createElement("strong", null, product.name),
+          createElement("strong", null, salesIdentity),
           createElement("div", { "data-ui-product-facts": true },
             createElement("span", { "data-ui-sku": true }, product.sku),
             createElement("span", { "data-ui-product-category": true }, product.category_name),
@@ -173,5 +198,20 @@ export function ProductBrowser(props: ProductBrowserProps) {
             createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
             action);
     }))) : null,
-    page && page.total_pages > 1 ? createElement("nav", { "aria-label": "Páginas de productos", "data-ui-product-browser-pages": true }, createElement("span", null, `Página ${page.page} de ${page.total_pages}`), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page <= 1, onClick: () => props.onPageChange(page.page - 1) }, "Anterior"), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page >= page.total_pages, onClick: () => props.onPageChange(page.page + 1) }, "Siguiente")) : null);
+    page && page.total_pages > 1 ? createElement("nav", { "aria-label": "Páginas de productos", "data-ui-product-browser-pages": true }, createElement("span", null, `Página ${page.page} de ${page.total_pages}`), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page <= 1, onClick: () => props.onPageChange(page.page - 1) }, "Anterior"), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page >= page.total_pages, onClick: () => props.onPageChange(page.page + 1) }, "Siguiente")) : null,
+    salesPresentation && detailProduct ? createElement("div", { "data-ui-dialog-backdrop": true, onMouseDown: (event: { target: EventTarget | null; currentTarget: EventTarget | null }) => { if (event.target === event.currentTarget) setDetailProduct(null); } },
+      createElement("section", { role: "dialog", "aria-modal": "true", "aria-labelledby": "sales-product-detail-title", "data-ui-sales-product-detail": true, tabIndex: -1 },
+        createElement("h2", { id: "sales-product-detail-title" }, detailProduct.name),
+        createElement("button", { ref: detailClose, type: "button", "aria-label": "Cerrar detalle del producto", onClick: () => setDetailProduct(null) }, "Cerrar"),
+        (() => { const image = props.thumbnails?.[detailProduct.product_id]; const safeImage = image && image.length <= 2_796_227 && /^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(image);
+          return safeImage ? createElement("img", { src: image, alt: detailProduct.name, "data-ui-sales-detail-image": true }) : createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-detail-placeholder": true }, "Sin imagen"); })(),
+        createElement("dl", { "data-ui-sales-product-detail-facts": true },
+          createElement("dt", null, "SKU"), createElement("dd", null, detailProduct.sku),
+          createElement("dt", null, "Categoría"), createElement("dd", null, detailProduct.category_name),
+          createElement("dt", null, "Stock"), createElement("dd", null, stockText(detailProduct)),
+          createElement("dt", null, "Precio de compra"), createElement("dd", null, detailProduct.purchase_price_centavos === null ? "No registrado" : priceText(detailProduct.purchase_price_centavos)),
+          createElement("dt", null, "Precio de venta"), createElement("dd", null, priceText(salePriceCentavos(detailProduct))),
+          createElement("dt", null, "Precio mínimo de venta"), createElement("dd", null, priceText(detailProduct.minimum_sale_price_centavos))),
+        createElement("h3", null, "Atributos"),
+        detailProduct.attribute_values.length ? createElement("dl", { "data-ui-sales-product-detail-attributes": true }, detailProduct.attribute_values.map((attribute) => createElement("div", { key: attribute.definition_id }, createElement("dt", null, attribute.label), createElement("dd", null, attribute.value.trim() ? attribute.value : "Sin dato")))) : createElement("p", null, "No hay atributos definidos."))) : null);
 }

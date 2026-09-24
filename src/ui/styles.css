@@ -628,6 +628,15 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-product-browser="sales"] [data-ui-sales-product-card] { display: grid; min-inline-size: 0; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); align-content: start; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface-elevated); }
 [data-ui-sales-image-area] { display: grid; min-block-size: 4rem; place-items: center; overflow: hidden; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
 [data-ui-sales-image-area] > [data-ui-product-thumbnail] { inline-size: 100%; block-size: 4rem; }
+[data-ui-sales-product-detail] { display: grid; inline-size: min(560px, 100%); max-block-size: calc(100vh - var(--space-6) - var(--space-6)); gap: var(--space-3); overflow: auto; padding: var(--space-6); border: 1px solid var(--color-border-strong); border-radius: var(--radius-modal); background: var(--color-surface-elevated); box-shadow: var(--elevation-modal); }
+[data-ui-sales-product-detail] > h2, [data-ui-sales-product-detail] > h3 { margin: 0; }
+[data-ui-sales-product-detail] > button { justify-self: end; min-inline-size: var(--size-control-default); min-block-size: var(--size-control-default); }
+[data-ui-sales-detail-image], [data-ui-sales-detail-placeholder] { inline-size: min(100%, 16rem); block-size: 10rem; object-fit: contain; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
+[data-ui-sales-detail-placeholder] { display: grid; place-items: center; color: var(--color-text-muted); }
+[data-ui-sales-product-detail-facts], [data-ui-sales-product-detail-attributes] { display: grid; grid-template-columns: minmax(8rem, .7fr) minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; }
+[data-ui-sales-product-detail-facts] dt, [data-ui-sales-product-detail-attributes] dt { color: var(--color-text-muted); font-weight: var(--weight-semibold); }
+[data-ui-sales-product-detail-facts] dd, [data-ui-sales-product-detail-attributes] dd { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
+[data-ui-sales-product-detail-attributes] > div { display: contents; }
 [data-ui-sales-image-area] > [data-ui-catalog-image-placeholder] { min-block-size: 4rem; font-size: var(--type-caption-size); }
 [data-ui-sales-product-identity] { display: grid; min-inline-size: 0; gap: var(--space-1); }
 [data-ui-sales-product-card] > [data-ui-action] { justify-self: start; min-block-size: var(--size-control-default); }
