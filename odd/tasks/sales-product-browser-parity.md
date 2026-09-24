@@ -20,7 +20,7 @@ Make Sales product discovery visually rich enough to identify parts quickly in i
 - [ ] T5 Validate Rust/TypeScript contracts, desktop density, image fallbacks, attribute ordering, and Sales interactions.
 
 ## Delivery
-- Delivery strategy: stacked to main; forecast and split review slices before the first work-unit commit.
+- Delivery strategy: stacked to main, selected by the user after the branch reached ~492 changed lines; split review slices before PR creation.
 - TDD mode: standard (not strict), from `openspec/config.yaml` (`sdd.strict_tdd: false`).
 - Rust runner: `cargo test --manifest-path src-tauri/Cargo.toml`.
 
