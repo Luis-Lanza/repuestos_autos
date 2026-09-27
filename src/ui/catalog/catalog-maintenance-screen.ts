@@ -5,7 +5,7 @@ import { Action, Feedback } from "../visual-system/controls.ts";
 import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { createCatalogEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
+import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
 
 export { CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
@@ -58,6 +58,7 @@ export function CatalogMaintenanceScreen() {
   const [categoryActionFeedback, setCategoryActionFeedback] = useState<Record<number, string>>({});
   const [archiveConfirmation, setArchiveConfirmation] = useState<{ record: CatalogMaintenanceRecord; context: "category-list" | "detail" } | null>(null);
   const [archivePending, setArchivePending] = useState(false);
+  const [retirementConfirmation, setRetirementConfirmation] = useState<{ index: number; label: string } | null>(null);
   const catalogMainHeading = useRef<HTMLHeadingElement>(null);
   const categoryManagementHeading = useRef<HTMLHeadingElement>(null);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, activity: "all" });
@@ -256,7 +257,7 @@ export function CatalogMaintenanceScreen() {
     if (!mounted.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {
-      refreshDetailAfterRecovery.current = response.code === "stale_catalog_record";
+      refreshDetailAfterRecovery.current = response.code === "stale_catalog_record" || response.code === "stale_category_schema";
       dispatch({ type: "edit_failed", code: response.code });
       return;
     }
@@ -290,6 +291,38 @@ export function CatalogMaintenanceScreen() {
     if (refreshed && mounted.current) await loadDetail({ target: detail.target, entity_id: detail.entity_id, label: `${detail.sku} — ${detail.name}`, activity: detail.activity, revision: response.revision });
   };
   const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : { ...current, [field]: value });
+  const addCategoryField = () => setForm((current) => current?.category_fields ? { ...current, category_fields: [...current.category_fields, { definition_id: null, label: "", field_type: "text", required: false, options: "", active: true }] } : current);
+  const changeCategoryField = (index: number, field: string, value: string | boolean) => setForm((current) => current?.category_fields ? { ...current, category_fields: current.category_fields.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) } : current);
+  const requestCategoryFieldRetirement = (index: number) => {
+    const field = form?.category_fields?.[index];
+    if (field?.definition_id !== null && field) setRetirementConfirmation({ index, label: field.label });
+  };
+  const confirmCategoryFieldRetirement = () => {
+    const retirement = retirementConfirmation;
+    if (!retirement) return;
+    setForm((current) => current?.category_fields ? { ...current, category_fields: current.category_fields.map((field, index) => index === retirement.index ? { ...field, active: false } : field) } : current);
+    setRetirementConfirmation(null);
+  };
+  const saveCategorySchema = async () => {
+    const detail = state.detail;
+    if (!detail || detail.target !== "category" || !form || mutationLocked.current || state.recovery_required) return;
+    const request = createCategorySchemaEditRequest(detail, form);
+    if (!request) { dispatch({ type: "edit_validation_failed", field_errors: { category_fields: "Completá el nombre y al menos una opción para cada campo de opciones." } }); return; }
+    mutationLocked.current = true;
+    dispatch({ type: "edit_started" });
+    const response = await catalogMaintenanceCommands.editCategorySchema(request);
+    if (!mounted.current) return;
+    mutationLocked.current = false;
+    if (response.kind === "error") {
+      refreshDetailAfterRecovery.current = response.code === "stale_category_schema" || response.code === "stale_catalog_record";
+      dispatch({ type: "edit_failed", code: response.code });
+      return;
+    }
+    dispatch({ type: "edit_succeeded", record: response });
+    refreshDetailAfterRecovery.current = true;
+    const refreshed = await refreshCatalogList(true);
+    if (refreshed && mounted.current) await loadDetail({ target: response.target, entity_id: response.entity_id, label: response.label, activity: response.activity, revision: response.revision });
+  };
   const pending = state.status === "pending" || state.status === "loading" && !!state.selected;
   const interactionLocked = pending || state.recovery_required;
   const submitBrowse = (event: FormEvent) => {
@@ -358,7 +391,18 @@ export function CatalogMaintenanceScreen() {
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onCancel: close }) : null,
+    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    retirementConfirmation ? createElement(ConfirmationDialog, {
+      open: true,
+      purpose: "cancellation",
+      title: `Retirar ${retirementConfirmation.label || "campo"}`,
+      description: `¿Querés retirar ${retirementConfirmation.label || "este campo"}? La definición y sus valores históricos se conservarán; no se podrá reactivar en esta versión.`,
+      confirmLabel: "Confirmar retiro",
+      pending: false,
+      dialogId: "catalog-field-retirement-confirmation-dialog",
+      onCancel: () => setRetirementConfirmation(null),
+      onConfirm: confirmCategoryFieldRetirement,
+    }) : null,
     archiveConfirmation ? createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",
