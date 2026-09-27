@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, Result};
 
 pub mod backup;
-pub mod dashboard_repository;
 pub mod catalog_repository;
+pub mod dashboard_repository;
 pub mod inventory_repository;
 pub mod post_sale_repository;
 pub mod post_sale_transaction;
@@ -20,7 +20,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 18;
+pub const CURRENT_SCHEMA_VERSION: i64 = 19;
 const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
@@ -78,9 +78,7 @@ pub fn default_application_database_config() -> std::result::Result<DatabaseConf
     ))
 }
 
-pub fn open_existing_database(
-    config: &DatabaseConfig,
-) -> std::result::Result<Connection, String> {
+pub fn open_existing_database(config: &DatabaseConfig) -> std::result::Result<Connection, String> {
     if !config.path().is_file() {
         return Err("database file does not exist".into());
     }
@@ -88,7 +86,8 @@ pub fn open_existing_database(
     connection
         .execute_batch("PRAGMA foreign_keys = ON;")
         .map_err(|_| "cannot enable foreign keys")?;
-    validate_restored_database(&connection).map_err(|_| "database schema or integrity is invalid")?;
+    validate_restored_database(&connection)
+        .map_err(|_| "database schema or integrity is invalid")?;
     Ok(connection)
 }
 
@@ -253,9 +252,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         )? {
             return Err(rusqlite::Error::InvalidQuery);
         }
-        transaction.execute_batch(include_str!(
-            "migrations/0013_catalog_dual_pricing.sql"
-        ))?;
+        transaction.execute_batch(include_str!("migrations/0013_catalog_dual_pricing.sql"))?;
         validate_version_thirteen_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 13)?;
         transaction.commit()?;
@@ -265,9 +262,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
     if version == 13 {
         let transaction = connection.transaction()?;
         validate_version_thirteen_schema(&transaction)?;
-        transaction.execute_batch(include_str!(
-            "migrations/0014_sale_list_price_snapshot.sql"
-        ))?;
+        transaction.execute_batch(include_str!("migrations/0014_sale_list_price_snapshot.sql"))?;
         validate_version_fourteen_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 14)?;
         transaction.commit()?;
@@ -278,9 +273,7 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         let transaction = connection.transaction()?;
         validate_version_fourteen_schema(&transaction)?;
         validate_catalog_price_data(&transaction)?;
-        transaction.execute_batch(include_str!(
-            "migrations/0015_catalog_price_cap.sql"
-        ))?;
+        transaction.execute_batch(include_str!("migrations/0015_catalog_price_cap.sql"))?;
         validate_version_fifteen_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", 15)?;
         transaction.commit()?;
@@ -316,8 +309,24 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         version = 18;
     }
 
+    if version == 18 {
+        connection.pragma_update(None, "foreign_keys", false)?;
+        let migration_result = (|| {
+            let transaction = connection.transaction()?;
+            validate_version_eighteen_schema(&transaction)?;
+            transaction
+                .execute_batch(include_str!("migrations/0019_category_field_lifecycle.sql"))?;
+            validate_version_nineteen_schema(&transaction)?;
+            transaction.pragma_update(None, "user_version", 19)?;
+            transaction.commit()
+        })();
+        connection.pragma_update(None, "foreign_keys", true)?;
+        migration_result?;
+        version = 19;
+    }
+
     if version == CURRENT_SCHEMA_VERSION {
-        validate_version_eighteen_schema(connection)?;
+        validate_version_nineteen_schema(connection)?;
     }
 
     Ok(())
@@ -830,7 +839,14 @@ fn validate_product_images_schema(connection: &Connection) -> Result<()> {
             row.get::<_, String>(3)?,
         )),
     )?;
-    if foreign_key != ("products".into(), "product_id".into(), "id".into(), "CASCADE".into()) {
+    if foreign_key
+        != (
+            "products".into(),
+            "product_id".into(),
+            "id".into(),
+            "CASCADE".into(),
+        )
+    {
         return Err(rusqlite::Error::InvalidQuery);
     }
 
@@ -960,6 +976,130 @@ fn normalize_product_images_ddl(sql: &str) -> String {
         .collect()
 }
 
+fn validate_version_nineteen_schema(connection: &Connection) -> Result<()> {
+    validate_version_eighteen_schema(connection)?;
+    validate_category_field_lifecycle_schema(connection)
+}
+
+fn validate_category_field_lifecycle_schema(connection: &Connection) -> Result<()> {
+    let active_column = connection
+        .prepare("PRAGMA table_info(attribute_definitions)")?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, bool>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .find(|(name, _, _, _)| name == "active");
+    let Some((_, data_type, not_null, default_value)) = active_column else {
+        return Err(rusqlite::Error::InvalidQuery);
+    };
+    if !data_type.eq_ignore_ascii_case("INTEGER")
+        || !not_null
+        || default_value.as_deref() != Some("1")
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    let table_sql: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attribute_definitions'",
+        [],
+        |row| row.get(0),
+    )?;
+    let normalized_sql = normalize_product_images_ddl(&table_sql);
+    if !normalized_sql.contains("check(activein(0,1))")
+        || normalized_sql.contains("unique(category_id,label)")
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    if !schema_object_exists(
+        connection,
+        "index",
+        "attribute_definitions_active_category_label_idx",
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let active_label_index_columns = connection
+        .prepare("PRAGMA index_info(attribute_definitions_active_category_label_idx)")?
+        .query_map([], |row| row.get::<_, String>(2))?
+        .collect::<Result<Vec<_>>>()?;
+    if active_label_index_columns
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        != ["category_id", "label"]
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let active_label_index_sql: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'attribute_definitions_active_category_label_idx'",
+        [],
+        |row| row.get(0),
+    )?;
+    let normalized_active_label_index_sql =
+        normalize_product_images_ddl(&active_label_index_sql);
+    if !normalized_active_label_index_sql.starts_with("createuniqueindex")
+        || normalized_active_label_index_sql
+            .rsplit_once("where")
+            .map_or(true, |(_, predicate)| predicate != "active=1")
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if has_global_unique_category_label_index(connection)? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+
+    if !schema_object_exists(
+        connection,
+        "index",
+        "attribute_definitions_category_active_idx",
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let index_columns = connection
+        .prepare("PRAGMA index_info(attribute_definitions_category_active_idx)")?
+        .query_map([], |row| row.get::<_, String>(2))?
+        .collect::<Result<Vec<_>>>()?;
+    if index_columns.iter().map(String::as_str).collect::<Vec<_>>()
+        != ["category_id", "active", "id"]
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
+}
+
+fn has_global_unique_category_label_index(connection: &Connection) -> Result<bool> {
+    let indexes = connection
+        .prepare("PRAGMA index_list(attribute_definitions)")?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, bool>(2)?,
+                row.get::<_, bool>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>>>()?;
+
+    for (name, is_unique, is_partial) in indexes {
+        if !is_unique || is_partial {
+            continue;
+        }
+        let columns = connection
+            .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")?
+            .query_map([name], |row| row.get::<_, Option<String>>(0))?
+            .collect::<Result<Vec<_>>>()?;
+        if columns.as_slice() == [Some("category_id".into()), Some("label".into())] {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn validate_version_eighteen_schema(connection: &Connection) -> Result<()> {
     validate_version_fifteen_schema(connection)?;
     for (table, column) in [
@@ -1014,7 +1154,8 @@ fn validate_version_eighteen_schema(connection: &Connection) -> Result<()> {
     )? {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    validate_foreign_keys(connection)
+    validate_foreign_keys(connection)?;
+    Ok(())
 }
 
 fn validate_catalog_price_data(connection: &Connection) -> Result<()> {

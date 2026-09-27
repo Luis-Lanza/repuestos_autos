@@ -829,7 +829,7 @@ fn v18_adds_nullable_purchase_prices_and_preserves_unknown_history_on_v17_upgrad
 
     let config = production_database_config(&directory);
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 18);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         connection.query_row(
             "SELECT purchase_price_centavos FROM products WHERE id = 1",
@@ -853,7 +853,7 @@ fn v18_adds_nullable_purchase_prices_and_preserves_unknown_history_on_v17_upgrad
     drop(connection);
 
     let reopened = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 18);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         reopened.query_row(
             "SELECT purchase_price_centavos FROM products WHERE id = 1",
@@ -870,7 +870,7 @@ fn v18_adds_nullable_purchase_prices_and_preserves_unknown_history_on_v17_upgrad
 fn fresh_v18_schema_has_nullable_price_columns_and_rejects_malformed_costs() {
     let directory = temporary_directory("migration-v18-fresh-schema");
     let connection = open_database(&production_database_config(&directory)).unwrap();
-    assert_eq!(user_version(&directory.join("repuestos-autos.sqlite3")), 18);
+    assert_eq!(user_version(&directory.join("repuestos-autos.sqlite3")), CURRENT_SCHEMA_VERSION);
     connection.execute(
         "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'FRESH-001', 'Fresh product', 1, 100, 100)",
         [],

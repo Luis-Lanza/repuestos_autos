@@ -11,8 +11,9 @@ use crate::application::catalog::{
     CategoryMetadataSummary, CreateProductInput, ProductBrowseAttribute, ProductImage,
 };
 use crate::domain::catalog::{
-    AttributeDefinition, CatalogActivity, CatalogSnapshot, CatalogTarget, FieldType,
-    TransitionPlan, ValidatedAttributeValue,
+    AttributeDefinition, CatalogActivity, CatalogSnapshot, CatalogTarget, CategoryFieldLifecycle,
+    CategorySchemaPlan, ExistingCategorySchemaField, FieldType, TransitionPlan,
+    ValidatedAttributeValue,
 };
 
 const BOOTSTRAP_DEMO_OCCURRED_AT: &str = "2025-01-01T00:00:00Z";
@@ -154,7 +155,7 @@ impl CreateProductRepository for SqliteCatalogRepository {
         category_id: i64,
     ) -> Result<Vec<AttributeDefinition>> {
         let mut statement = transaction.prepare(
-            "SELECT d.id, d.field_type, d.required, o.value FROM attribute_definitions d LEFT JOIN attribute_options o ON o.definition_id = d.id WHERE d.category_id = ?1 ORDER BY d.id, o.rowid",
+            "SELECT d.id, d.field_type, d.required, o.value FROM attribute_definitions d LEFT JOIN attribute_options o ON o.definition_id = d.id WHERE d.category_id = ?1 AND d.active = 1 ORDER BY d.id, o.rowid",
         )?;
         let rows = statement
             .query_map([category_id], |row| {
@@ -208,7 +209,14 @@ impl CreateProductRepository for SqliteCatalogRepository {
         values: &[ValidatedAttributeValue],
         category_name: &str,
     ) -> Result<i64> {
-        self.persist_product_with_opening_timestamp(transaction, input, values, category_name, None, true)
+        self.persist_product_with_opening_timestamp(
+            transaction,
+            input,
+            values,
+            category_name,
+            None,
+            true,
+        )
     }
 }
 
@@ -343,7 +351,7 @@ impl CatalogMaintenanceRepository for SqliteCatalogRepository {
                 .optional()?,
             CatalogTarget::Product => transaction
                 .query_row(
-                    "SELECT p.active, c.active, 0, NOT EXISTS (SELECT 1 FROM attribute_definitions d LEFT JOIN product_attribute_values v ON v.product_id = p.id AND v.definition_id = d.id WHERE d.category_id = p.category_id AND ((d.required = 1 AND v.definition_id IS NULL) OR (v.definition_id IS NOT NULL AND ((d.field_type = 'text' AND v.text_value IS NULL) OR (d.field_type = 'number' AND v.number_value IS NULL) OR (d.field_type = 'option' AND (v.option_value IS NULL OR NOT EXISTS (SELECT 1 FROM attribute_options o WHERE o.definition_id = d.id AND o.value = v.option_value))))))), p.revision FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
+                    "SELECT p.active, c.active, 0, NOT EXISTS (SELECT 1 FROM attribute_definitions d LEFT JOIN product_attribute_values v ON v.product_id = p.id AND v.definition_id = d.id WHERE d.category_id = p.category_id AND d.active = 1 AND ((d.required = 1 AND v.definition_id IS NULL) OR (v.definition_id IS NOT NULL AND ((d.field_type = 'text' AND v.text_value IS NULL) OR (d.field_type = 'number' AND v.number_value IS NULL) OR (d.field_type = 'option' AND (v.option_value IS NULL OR NOT EXISTS (SELECT 1 FROM attribute_options o WHERE o.definition_id = d.id AND o.value = v.option_value))))))), p.revision FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
                     [entity_id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
                 )
@@ -422,6 +430,111 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         transaction.query_row("SELECT EXISTS(SELECT 1 FROM categories WHERE id <> ?1 AND lower(trim(name)) = lower(trim(?2)))", params![id, name], |row| row.get(0))
     }
 
+    fn category_schema(
+        &self,
+        transaction: &Transaction<'_>,
+        category_id: i64,
+    ) -> Result<Vec<ExistingCategorySchemaField>> {
+        let mut statement = transaction.prepare(
+            "SELECT d.id, d.label, d.field_type, d.required, d.active, o.value
+             FROM attribute_definitions d
+             LEFT JOIN attribute_options o ON o.definition_id = d.id
+             WHERE d.category_id = ?1 ORDER BY d.id, o.rowid",
+        )?;
+        let rows = statement
+            .query_map([category_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, bool>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        let mut fields: Vec<ExistingCategorySchemaField> = Vec::new();
+        for (id, label, field_type, required, active, option) in rows {
+            if fields.last().map(|field| field.definition_id) != Some(id) {
+                fields.push(ExistingCategorySchemaField {
+                    definition_id: id,
+                    label,
+                    field_type: FieldType::parse(&field_type)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    required,
+                    options: Vec::new(),
+                    lifecycle: if active {
+                        CategoryFieldLifecycle::Active
+                    } else {
+                        CategoryFieldLifecycle::Retired
+                    },
+                });
+            }
+            if let Some(option) = option {
+                fields
+                    .last_mut()
+                    .ok_or(rusqlite::Error::InvalidQuery)?
+                    .options
+                    .push(option);
+            }
+        }
+        Ok(fields)
+    }
+
+    fn apply_category_schema(
+        &self,
+        transaction: &Transaction<'_>,
+        category_id: i64,
+        revision: i64,
+        plan: &CategorySchemaPlan,
+    ) -> Result<CatalogSnapshot> {
+        let before = category_schema_json(transaction, category_id)?;
+        for definition_id in &plan.retire_definition_ids {
+            if transaction.execute(
+                "UPDATE attribute_definitions SET active = 0 WHERE id = ?1 AND category_id = ?2 AND active = 1",
+                params![definition_id, category_id],
+            )? != 1 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+        }
+        for field in &plan.additions {
+            transaction.execute(
+                "INSERT INTO attribute_definitions (category_id, label, field_type, required, active) VALUES (?1, ?2, ?3, ?4, 1)",
+                params![category_id, field.label, field.field_type.as_str(), field.required],
+            )?;
+            let definition_id = transaction.last_insert_rowid();
+            for option in &field.options {
+                transaction.execute(
+                    "INSERT INTO attribute_options (definition_id, value) VALUES (?1, ?2)",
+                    params![definition_id, option],
+                )?;
+            }
+        }
+        if transaction.execute(
+            "UPDATE categories SET revision = revision + 1 WHERE id = ?1 AND revision = ?2 AND revision < 9223372036854775807",
+            params![category_id, revision],
+        )? != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        let snapshot = CatalogMaintenanceRepository::load(
+            self,
+            transaction,
+            CatalogTarget::Category,
+            category_id,
+        )?
+        .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        let after = category_schema_json(transaction, category_id)?;
+        audit_metadata(
+            transaction,
+            CatalogTarget::Category,
+            category_id,
+            before,
+            after,
+            snapshot.revision,
+        )?;
+        Ok(snapshot)
+    }
+
     fn product_metadata_for_normalized_patch(
         &self,
         transaction: &Transaction<'_>,
@@ -429,11 +542,11 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         sku: &str,
         name: &str,
     ) -> Result<Option<ProductMetadata>> {
-        let Some(category_id) = transaction
+        let Some((category_id, category_revision)) = transaction
             .query_row(
-                "SELECT category_id FROM products WHERE id = ?1",
+                "SELECT c.id, c.revision FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?1",
                 [id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?
         else {
@@ -443,6 +556,7 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
             CreateProductRepository::attribute_definitions(self, transaction, category_id)?;
         let duplicate_normalized_identity = transaction.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE id <> ?1 AND (lower(trim(sku)) = lower(trim(?2)) OR lower(trim(name)) = lower(trim(?3))))", params![id, sku, name], |row| row.get(0))?;
         Ok(Some(ProductMetadata {
+            category_revision,
             definitions,
             duplicate_normalized_identity,
         }))
@@ -482,7 +596,13 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         let before = product_metadata_json(transaction, id)?;
         if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, purchase_price_centavos = ?3, list_price_centavos = ?4, minimum_unit_price_centavos = ?5, revision = revision + 1 WHERE id = ?6 AND revision = ?7", params![sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
         transaction.execute(
-            "DELETE FROM product_attribute_values WHERE product_id = ?1",
+            "DELETE FROM product_attribute_values
+             WHERE product_id = ?1
+               AND definition_id IN (
+                   SELECT id FROM attribute_definitions
+                   WHERE category_id = (SELECT category_id FROM products WHERE id = ?1)
+                     AND active = 1
+               )",
             [id],
         )?;
         for value in values {
@@ -531,19 +651,51 @@ struct AuditFingerprint {
 }
 
 fn is_pristine_bootstrap_state(transaction: &Transaction<'_>) -> Result<bool> {
-    Ok(load_categories(transaction)? == vec![
-        (1, "Filtros".into(), 1, 0),
-        (2, "Bujias".into(), 1, 0),
-    ] && load_products(transaction)?
-        == vec![
-            (1, 1, "FLT-001".into(), "Filtro de aceite".into(), 1, 0, 2500, 2500),
-            (2, 2, "BUJ-001".into(), "Bujia archivada".into(), 0, 0, 1800, 1800),
-        ] && load_stock(transaction)? == vec![(1, 8), (2, 4)]
+    Ok(load_categories(transaction)?
+        == vec![(1, "Filtros".into(), 1, 0), (2, "Bujias".into(), 1, 0)]
+        && load_products(transaction)?
+            == vec![
+                (
+                    1,
+                    1,
+                    "FLT-001".into(),
+                    "Filtro de aceite".into(),
+                    1,
+                    0,
+                    2500,
+                    2500,
+                ),
+                (
+                    2,
+                    2,
+                    "BUJ-001".into(),
+                    "Bujia archivada".into(),
+                    0,
+                    0,
+                    1800,
+                    1800,
+                ),
+            ]
+        && load_stock(transaction)? == vec![(1, 8), (2, 4)]
         && load_searchable_values(transaction)? == vec![(1, "vehicle".into(), "Toyota".into())]
         && load_fts(transaction)?
             == vec![
-                (1, 1, fts_content("FLT-001", "Filtro de aceite", "Filtros", Some("Toyota"), true)),
-                (2, 2, fts_content("BUJ-001", "Bujia archivada", "Bujias", None, true)),
+                (
+                    1,
+                    1,
+                    fts_content(
+                        "FLT-001",
+                        "Filtro de aceite",
+                        "Filtros",
+                        Some("Toyota"),
+                        true,
+                    ),
+                ),
+                (
+                    2,
+                    2,
+                    fts_content("BUJ-001", "Bujia archivada", "Bujias", None, true),
+                ),
             ]
         && load_movements(transaction)?.is_empty()
         && load_audit(transaction)?.is_empty()
@@ -553,14 +705,8 @@ fn is_pristine_bootstrap_state(transaction: &Transaction<'_>) -> Result<bool> {
         && empty_business_activity(transaction)?)
 }
 
-fn is_complete_demo_state(
-    transaction: &Transaction<'_>,
-    plan: &BootstrapDemoPlan,
-) -> Result<bool> {
-    let mut expected_categories = vec![
-        (1, "Filtros".into(), 1, 0),
-        (2, "Bujias".into(), 1, 0),
-    ];
+fn is_complete_demo_state(transaction: &Transaction<'_>, plan: &BootstrapDemoPlan) -> Result<bool> {
+    let mut expected_categories = vec![(1, "Filtros".into(), 1, 0), (2, "Bujias".into(), 1, 0)];
     expected_categories.extend(
         plan.categories
             .iter()
@@ -569,8 +715,26 @@ fn is_complete_demo_state(
     );
 
     let mut expected_products = vec![
-        (1, 1, "FLT-001".into(), "Filtro de aceite".into(), 1, 0, 2500, 2500),
-        (2, 2, "BUJ-001".into(), "Bujia archivada".into(), 1, 1, 1800, 1800),
+        (
+            1,
+            1,
+            "FLT-001".into(),
+            "Filtro de aceite".into(),
+            1,
+            0,
+            2500,
+            2500,
+        ),
+        (
+            2,
+            2,
+            "BUJ-001".into(),
+            "Bujia archivada".into(),
+            1,
+            1,
+            1800,
+            1800,
+        ),
     ];
     expected_products.extend(plan.products.iter().enumerate().map(|(index, product)| {
         (
@@ -594,8 +758,22 @@ fn is_complete_demo_state(
     );
 
     let mut expected_fts = vec![
-        (1, 1, fts_content("FLT-001", "Filtro de aceite", "Filtros", Some("Toyota"), true)),
-        (2, 2, fts_content("BUJ-001", "Bujia archivada", "Bujias", None, false)),
+        (
+            1,
+            1,
+            fts_content(
+                "FLT-001",
+                "Filtro de aceite",
+                "Filtros",
+                Some("Toyota"),
+                true,
+            ),
+        ),
+        (
+            2,
+            2,
+            fts_content("BUJ-001", "Bujia archivada", "Bujias", None, false),
+        ),
     ];
     expected_fts.extend(plan.products.iter().enumerate().map(|(index, product)| {
         (
@@ -662,7 +840,9 @@ fn is_complete_demo_state(
 fn load_categories(transaction: &Transaction<'_>) -> Result<Vec<(i64, String, i64, i64)>> {
     transaction
         .prepare("SELECT id, name, active, revision FROM categories ORDER BY id")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
         .collect()
 }
 
@@ -766,7 +946,10 @@ fn fts_content(
             ""
         )
     } else {
-        format!("{sku} {name} {category} {}", searchable_value.unwrap_or_default())
+        format!(
+            "{sku} {name} {category} {}",
+            searchable_value.unwrap_or_default()
+        )
     };
     content.to_lowercase()
 }
@@ -820,6 +1003,27 @@ fn insert_attribute_value(
 fn category_metadata_json(transaction: &Transaction<'_>, id: i64) -> Result<String> {
     transaction.query_row(
         "SELECT json_object('name', name, 'revision', revision) FROM categories WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+}
+
+fn category_schema_json(transaction: &Transaction<'_>, id: i64) -> Result<String> {
+    transaction.query_row(
+        "SELECT json_object(
+            'name', c.name,
+            'revision', c.revision,
+            'fields', json(COALESCE((
+                SELECT json_group_array(json_object(
+                    'definition_id', d.id, 'label', d.label, 'field_type', d.field_type,
+                    'required', d.required, 'active', d.active,
+                    'options', json(COALESCE((
+                        SELECT json_group_array(o.value) FROM attribute_options o
+                        WHERE o.definition_id = d.id ORDER BY o.rowid
+                    ), '[]'))
+                )) FROM attribute_definitions d WHERE d.category_id = c.id ORDER BY d.id
+            ), '[]'))
+        ) FROM categories c WHERE c.id = ?1",
         [id],
         |row| row.get(0),
     )

@@ -1,7 +1,9 @@
 use repuestos_autos::domain::catalog::{
-    has_normalized_collision, plan_transition, validate_maintenance_category,
-    validate_maintenance_product, AttributeDefinition, AttributeValueDraft, CatalogActivity,
-    CatalogIntent, CatalogSnapshot, CatalogTarget, FieldType, MaintenanceError, TransitionPlan,
+    has_normalized_collision, plan_category_schema_edit, plan_transition,
+    validate_maintenance_category, validate_maintenance_product, AttributeDefinition,
+    AttributeValueDraft, CatalogActivity, CatalogIntent, CatalogSnapshot, CatalogTarget,
+    CategoryFieldLifecycle, CategorySchemaField, ExistingCategorySchemaField, FieldType,
+    MaintenanceError, TransitionPlan,
 };
 
 fn product_snapshot(category_activity: CatalogActivity) -> CatalogSnapshot {
@@ -54,18 +56,18 @@ fn maintenance_product_metadata_rejects_non_positive_minimum() {
 
 #[test]
 fn maintenance_product_metadata_rejects_prices_above_the_safe_integer_cap() {
-        const CAP: i64 = 9_007_199_254_740_991;
+    const CAP: i64 = 9_007_199_254_740_991;
 
-        assert_eq!(
-            validate_maintenance_product("FLT-001", "Oil filter", CAP + 1, CAP, 1, &[], &[]),
-            Err(MaintenanceError::InvalidPurchasePrice)
-        );
-        assert_eq!(
-            validate_maintenance_product("FLT-001", "Oil filter", 1, CAP + 1, CAP, &[], &[]),
-            Err(MaintenanceError::InvalidSalePrice)
-        );
-        assert!(validate_maintenance_product("FLT-001", "Oil filter", 1, CAP, CAP, &[], &[]).is_ok());
-    }
+    assert_eq!(
+        validate_maintenance_product("FLT-001", "Oil filter", CAP + 1, CAP, 1, &[], &[]),
+        Err(MaintenanceError::InvalidPurchasePrice)
+    );
+    assert_eq!(
+        validate_maintenance_product("FLT-001", "Oil filter", 1, CAP + 1, CAP, &[], &[]),
+        Err(MaintenanceError::InvalidSalePrice)
+    );
+    assert!(validate_maintenance_product("FLT-001", "Oil filter", 1, CAP, CAP, &[], &[]).is_ok());
+}
 
 #[test]
 fn maintenance_product_metadata_rejects_mistyped_values() {
@@ -88,6 +90,131 @@ fn maintenance_product_metadata_rejects_mistyped_values() {
             }],
         ),
         Err(MaintenanceError::InvalidAttributeValue)
+    );
+}
+
+#[test]
+fn category_schema_plan_adds_fields_retires_omitted_ids_and_preserves_stable_definitions() {
+    let existing = [ExistingCategorySchemaField {
+        definition_id: 41,
+        label: "Material".into(),
+        field_type: FieldType::Option,
+        required: false,
+        options: vec!["Rubber".into(), "Steel".into()],
+        lifecycle: CategoryFieldLifecycle::Active,
+    }];
+    let planned = plan_category_schema_edit(
+        &existing,
+        &[
+            CategorySchemaField {
+                definition_id: Some(41),
+                label: "Material".into(),
+                field_type: FieldType::Option,
+                required: false,
+                options: vec!["Rubber".into(), "Steel".into()],
+            },
+            CategorySchemaField {
+                definition_id: None,
+                label: "Length".into(),
+                field_type: FieldType::Number,
+                required: true,
+                options: vec![],
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(planned.retire_definition_ids, vec![]);
+    assert_eq!(planned.additions.len(), 1);
+    assert_eq!(planned.additions[0].label, "Length");
+
+    let retired = plan_category_schema_edit(&existing, &[]).unwrap();
+    assert_eq!(retired.retire_definition_ids, vec![41]);
+}
+
+#[test]
+fn category_schema_plan_allows_readding_a_retired_label() {
+    let existing = [
+        ExistingCategorySchemaField {
+            definition_id: 41,
+            label: "Material".into(),
+            field_type: FieldType::Text,
+            required: false,
+            options: vec![],
+            lifecycle: CategoryFieldLifecycle::Retired,
+        },
+        ExistingCategorySchemaField {
+            definition_id: 42,
+            label: "Length".into(),
+            field_type: FieldType::Text,
+            required: false,
+            options: vec![],
+            lifecycle: CategoryFieldLifecycle::Active,
+        },
+    ];
+    let plan = plan_category_schema_edit(
+        &existing,
+        &[CategorySchemaField {
+            definition_id: None,
+            label: "Material".into(),
+            field_type: FieldType::Text,
+            required: false,
+            options: vec![],
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(plan.retire_definition_ids, vec![42]);
+    assert_eq!(plan.additions[0].label, "Material");
+}
+
+#[test]
+fn category_schema_plan_can_retire_and_replace_a_field_with_the_same_label() {
+    let existing = [ExistingCategorySchemaField {
+        definition_id: 41,
+        label: "Material".into(),
+        field_type: FieldType::Text,
+        required: false,
+        options: vec![],
+        lifecycle: CategoryFieldLifecycle::Active,
+    }];
+
+    let plan = plan_category_schema_edit(
+        &existing,
+        &[CategorySchemaField {
+            definition_id: None,
+            label: "Material".into(),
+            field_type: FieldType::Option,
+            required: true,
+            options: vec!["Steel".into()],
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(plan.retire_definition_ids, vec![41]);
+    assert_eq!(plan.additions.len(), 1);
+    assert_eq!(plan.additions[0].label, "Material");
+}
+
+#[test]
+fn category_schema_plan_rejects_mutating_existing_field_definitions() {
+    let existing = [ExistingCategorySchemaField {
+        definition_id: 41,
+        label: "Material".into(),
+        field_type: FieldType::Option,
+        required: false,
+        options: vec!["Rubber".into()],
+        lifecycle: CategoryFieldLifecycle::Active,
+    }];
+    let changed = CategorySchemaField {
+        definition_id: Some(41),
+        label: "Material".into(),
+        field_type: FieldType::Option,
+        required: false,
+        options: vec!["Rubber".into(), "Steel".into()],
+    };
+    assert_eq!(
+        plan_category_schema_edit(&existing, &[changed]),
+        Err(MaintenanceError::ImmutableCategoryField)
     );
 }
 

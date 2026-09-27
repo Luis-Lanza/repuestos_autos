@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::catalog;
 use crate::application::catalog::{BrowseProductsInput, ProductActivityFilter, ProductStockFilter};
-use crate::domain::catalog::{CatalogActivity, CatalogIntent, CatalogTarget};
+use crate::domain::catalog::{CatalogActivity, CatalogIntent, CatalogTarget, CategorySchemaField, FieldType};
 use crate::infrastructure::sqlite::SqliteCatalogRepository;
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +49,24 @@ pub struct MaintainCatalogRequest {
 pub struct CatalogMetadataDetailRequest {
     pub target: String,
     pub entity_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditCategorySchemaRequest {
+    pub category_id: i64,
+    pub expected_revision: i64,
+    pub fields: Vec<EditCategorySchemaFieldRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditCategorySchemaFieldRequest {
+    pub definition_id: Option<i64>,
+    pub label: String,
+    pub field_type: String,
+    pub required: bool,
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,6 +178,7 @@ pub enum EditCatalogRequest {
         #[serde(alias = "list_price_centavos")]
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        expected_category_revision: i64,
         attribute_values: Vec<EditAttributeValueRequest>,
     },
 }
@@ -354,6 +373,10 @@ pub fn maintain_catalog(
                     message: "This catalog record changed. Reload and try again.",
                 },
                 catalog::MaintainCatalogError::MissingCatalogRecord => validation_error(),
+                catalog::MaintainCatalogError::StaleCategorySchema => CatalogMaintenanceError {
+                    code: "stale_category_schema",
+                    message: "Category fields changed. Reload before saving this product.",
+                },
                 catalog::MaintainCatalogError::PersistenceFailure => persistence_error(),
             }),
         },
@@ -382,8 +405,9 @@ pub fn edit_catalog(
             purchase_price_centavos,
             sale_price_centavos,
             minimum_sale_price_centavos,
+            expected_category_revision,
             attribute_values,
-        } if entity_id > 0 && expected_revision >= 0 => (
+        } if entity_id > 0 && expected_revision >= 0 && expected_category_revision >= 0 => (
             entity_id,
             "product",
             catalog::EditCatalogInput::product(
@@ -394,6 +418,7 @@ pub fn edit_catalog(
                 purchase_price_centavos,
                 sale_price_centavos,
                 minimum_sale_price_centavos,
+                expected_category_revision,
                 attribute_values
                     .into_iter()
                     .map(|value| catalog::AttributeValueInput {
@@ -418,6 +443,53 @@ pub fn edit_catalog(
             Err(error) => CatalogMaintenanceResponse::Error(map_maintenance_error(error)),
         },
     )
+}
+
+pub fn edit_category_schema(
+    connection: &mut rusqlite::Connection,
+    request: EditCategorySchemaRequest,
+) -> CatalogMaintenanceResponse {
+    if request.category_id <= 0 || request.expected_revision < 0 {
+        return CatalogMaintenanceResponse::Error(validation_error());
+    }
+    let fields = request.fields.into_iter().map(|field| {
+        let field_type = FieldType::parse(&field.field_type).map_err(|_| ())?;
+        Ok::<_, ()>(CategorySchemaField {
+            definition_id: field.definition_id,
+            label: field.label,
+            field_type,
+            required: field.required,
+            options: field.options,
+        })
+    }).collect::<Result<Vec<_>, _>>();
+    let Ok(fields) = fields else {
+        return CatalogMaintenanceResponse::Error(validation_error());
+    };
+    match catalog::EditCategorySchemaUseCase::new(connection, SqliteCatalogRepository).execute(
+        catalog::EditCategorySchemaInput {
+            category_id: request.category_id,
+            expected_revision: request.expected_revision,
+            fields,
+        },
+    ) {
+        Ok(snapshot) => CatalogMaintenanceResponse::Success(CatalogMaintenanceRecord {
+            entity_id: request.category_id,
+            target: "category",
+            label: String::new(),
+            activity: activity(snapshot.activity),
+            revision: snapshot.revision,
+            active_product_count: None,
+        }),
+        Err(error) => CatalogMaintenanceResponse::Error(match error {
+            catalog::EditCategorySchemaError::MissingCategory => unavailable_error(),
+            catalog::EditCategorySchemaError::StaleCategory => CatalogMaintenanceError {
+                code: "stale_category_schema",
+                message: "Category fields changed. Reload before saving products or editing fields.",
+            },
+            catalog::EditCategorySchemaError::ImmutableField | catalog::EditCategorySchemaError::InvalidSchema => validation_error(),
+            catalog::EditCategorySchemaError::PersistenceFailure => persistence_error(),
+        }),
+    }
 }
 
 pub fn catalog_metadata_detail(
@@ -530,6 +602,10 @@ fn map_maintenance_error(error: catalog::MaintainCatalogError) -> CatalogMainten
             message: "This catalog record changed. Reload and try again.",
         },
         catalog::MaintainCatalogError::MissingCatalogRecord => validation_error(),
+        catalog::MaintainCatalogError::StaleCategorySchema => CatalogMaintenanceError {
+            code: "stale_category_schema",
+            message: "Category fields changed. Reload before saving this product.",
+        },
         catalog::MaintainCatalogError::PersistenceFailure => persistence_error(),
     }
 }

@@ -2,10 +2,10 @@ use repuestos_autos::application::catalog::{replace_product_image, ProductImage}
 use repuestos_autos::commands::catalog::{
     catalog_product_image_thumbnail, parse_product_image_request, ProductImageRequest,
     ProductImageThumbnailResponse,
-    catalog_metadata_detail, edit_catalog, list_catalog_categories, list_catalog_maintenance, maintain_catalog,
+    catalog_metadata_detail, edit_catalog, edit_category_schema, list_catalog_categories, list_catalog_maintenance, maintain_catalog,
     map_command_state_error, CatalogMaintenanceListResponse, CatalogMaintenanceRecord,
     CatalogMaintenanceResponse, CatalogMetadataDetailRequest, CatalogMetadataDetailResponse,
-    EditCatalogRequest, MaintainCatalogRequest,
+    EditCatalogRequest, EditCategorySchemaRequest, EditCategorySchemaFieldRequest, MaintainCatalogRequest,
 };
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
@@ -114,7 +114,7 @@ fn maintenance_request_rejects_unknown_fields() {
 
 #[test]
 fn edit_requests_accept_legacy_list_price_alias_but_emit_sale_price_terminology() {
-    let legacy = r#"{"target":"product","entity_id":1,"expected_revision":0,"sku":"FLT-001","name":"Filter","purchase_price_centavos":1500,"list_price_centavos":2500,"minimum_sale_price_centavos":2000,"attribute_values":[]}"#;
+    let legacy = r#"{"target":"product","entity_id":1,"expected_revision":0,"expected_category_revision":0,"sku":"FLT-001","name":"Filter","purchase_price_centavos":1500,"list_price_centavos":2500,"minimum_sale_price_centavos":2000,"attribute_values":[]}"#;
     let request: EditCatalogRequest = serde_json::from_str(legacy).unwrap();
     let mut connection = open_seeded_catalog().unwrap();
     let response = edit_catalog(&mut connection, request).unwrap();
@@ -235,4 +235,46 @@ fn typed_metadata_commands_deny_unknown_fields_and_project_stable_outcomes() {
         .unwrap()
         .contains("no such table"));
     assert!(!serde_json::to_string(&detail).unwrap().contains("sqlite"));
+}
+
+#[test]
+fn schema_edit_is_typed_registered_use_case_and_stale_product_saves_are_recoverable() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let invalid = r#"{"category_id":1,"expected_revision":0,"fields":[{"definition_id":null,"label":"Material","field_type":"text","required":false,"options":[],"sql":"hidden"}]}"#;
+    assert!(serde_json::from_str::<EditCategorySchemaRequest>(invalid).is_err());
+
+    let response = edit_category_schema(
+        &mut connection,
+        EditCategorySchemaRequest {
+            category_id: 1,
+            expected_revision: 0,
+            fields: vec![EditCategorySchemaFieldRequest {
+                definition_id: None,
+                label: "Material".into(),
+                field_type: "text".into(),
+                required: false,
+                options: vec![],
+            }],
+        },
+    );
+    assert!(matches!(response, CatalogMaintenanceResponse::Success(CatalogMaintenanceRecord { revision: 1, .. })));
+
+    let stale_save = edit_catalog(
+        &mut connection,
+        EditCatalogRequest::Product {
+            entity_id: 1,
+            expected_revision: 0,
+            sku: "FLT-001".into(),
+            name: "Oil filter".into(),
+            purchase_price_centavos: 2_000,
+            sale_price_centavos: 2_500,
+            minimum_sale_price_centavos: 2_500,
+            expected_category_revision: 0,
+            attribute_values: vec![],
+        },
+    ).unwrap();
+    let error = serde_json::to_value(stale_save).unwrap();
+    assert_eq!(error["code"], "stale_category_schema");
+    assert!(error["message"].as_str().unwrap().contains("Reload"));
+    assert_eq!(connection.query_row("SELECT sku, revision FROM products WHERE id = 1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))).unwrap(), ("FLT-001".into(), 0));
 }

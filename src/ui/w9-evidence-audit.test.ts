@@ -219,6 +219,37 @@ const ticket11RegistrationLineAllowlist = new Set([
   "}",
 ]);
 
+const categorySchemaRegistrationLineAllowlist = new Set([
+  "edit_category_schema_command,",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn edit_category_schema_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::catalog::EditCategorySchemaRequest,",
+  ") -> commands::catalog::CatalogMaintenanceResponse {",
+  "state",
+  ".with_write(|connection| Ok(commands::catalog::edit_category_schema(connection, request)))",
+  ".unwrap_or_else(|error| {",
+  "commands::catalog::CatalogMaintenanceResponse::Error(",
+  "commands::catalog::map_command_state_error(&error),",
+  ")",
+  "})",
+  "}",
+  "",
+  "assert!(get_ipc_response(&window, request_with(\"edit_category_schema_command\", serde_json::json!({ \"category_id\": 1, \"expected_revision\": 1, \"fields\": [] }))).is_ok());",
+]);
+
+function assertCategorySchemaRegistrationAllowlist(libDiff: string) {
+  const changedLines = libDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /edit_category_schema_command/);
+  assert.ok(
+    changedLines.every((line) => categorySchemaRegistrationLineAllowlist.has(line.slice(1).trim())),
+    "unexpected Category Field Management command registration drift",
+  );
+}
+
 function assertCatalogRegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -412,18 +443,22 @@ function assertW9ProtectedDiffPolicy(
     "src/commands/catalog.test.ts",
     "src-tauri/src/application/catalog/mod.rs",
     "src-tauri/src/commands/catalog.rs",
+    "src-tauri/src/domain/catalog.rs",
     "src-tauri/src/application/mod.rs",
     "src-tauri/src/commands/mod.rs",
     "src-tauri/src/infrastructure/sqlite/mod.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0016_product_images.sql",
     "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
+    "src-tauri/src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql",
     "src-tauri/src/infrastructure/sqlite/catalog_repository.rs",
     "src-tauri/Cargo.lock",
     "src-tauri/Cargo.toml",
     "src-tauri/src/application/catalog/repository.rs",
     "src-tauri/tests/backup_restore.rs",
     "src-tauri/tests/command_seam.rs",
+    "src-tauri/tests/catalog_maintenance_application.rs",
     "src-tauri/tests/catalog_maintenance_commands.rs",
+    "src-tauri/tests/catalog_maintenance_domain.rs",
     "src-tauri/tests/catalog_maintenance_sqlite.rs",
     "src-tauri/tests/post_sale_lifecycle.rs",
     "src-tauri/tests/sqlite_migrations.rs",
@@ -454,7 +489,8 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
+    if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
     else assertTicket11RegistrationAllowlist(libDiff);
