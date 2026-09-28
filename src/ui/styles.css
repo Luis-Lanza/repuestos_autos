@@ -545,6 +545,11 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-category-actions] { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 [data-ui-category-actions] > button { min-inline-size: var(--size-control-default); min-block-size: var(--size-control-default); }
 [data-ui-category-row] > [data-ui-feedback] { grid-column: 1 / -1; margin: 0; }
+[data-ui-location-picker] { display: grid; min-inline-size: 0; gap: var(--space-2); margin-block: var(--space-3); }
+[data-ui-location-picker] > label { font-weight: var(--weight-semibold); }
+[data-ui-location-picker] > input, [data-ui-location-picker] > select, [data-ui-location-picker] > div > select { inline-size: 100%; min-inline-size: 0; }
+[data-ui-location-picker] > div { display: grid; gap: var(--space-1); }
+[data-ui-location-picker] [data-ui-location-picker-status] { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-location-management] { display: grid; align-content: start; gap: var(--space-4); }
 [data-ui-location-management] > :is(h2, h3, p) { margin: 0; }
 [data-ui-location-workspace] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); align-items: start; }

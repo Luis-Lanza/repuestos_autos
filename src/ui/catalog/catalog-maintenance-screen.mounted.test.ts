@@ -737,6 +737,7 @@ test("selects and revision-checks an optional generated primary location in prod
     if (command === "browse_products_command") return browse([{ ...browseProduct, primary_location_code: assigned ? "A1-SHELF2" : null, revision: assigned ? 9 : 7 }]);
     if (command === "catalog_metadata_detail_command") return { ...productDetail, primary_location_id: assigned ? 9 : null, revision: assigned ? 9 : 7 };
     if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 9, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
     if (command === "edit_catalog_command") return { kind: "success", entity_id: 1, target: "product", label: "Filtro Premium · FIL-PRE-014", activity: "active", revision: 8 };
     if (command === "assign_product_primary_location_command") { assigned = true; return { kind: "assignment_success", product_id: 1, location_id: 9, revision: 9 }; }
     if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
@@ -746,6 +747,12 @@ test("selects and revision-checks an optional generated primary location in prod
   await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
   const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
   const location = await within(dialog).findByRole("combobox", { name: "Ubicación principal (opcional)" });
+  assert.ok(within(dialog).getByRole("searchbox", { name: "Buscar ubicaciones" }));
+  assert.ok(within(dialog).getByRole("combobox", { name: "Sector" }));
+  assert.ok(within(dialog).getByRole("combobox", { name: "Gaveta" }));
+  await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Sector" }), "A-1");
+  await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Gaveta" }), "Shelf 2");
+  assert.equal((location as HTMLSelectElement).value, "9");
   await userEvent.selectOptions(location, "9");
   await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
   await waitFor(() => assert.ok(requests.some((request) => request.command === "assign_product_primary_location_command")));

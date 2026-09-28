@@ -25,7 +25,7 @@ test("renders shared Spanish panels and submits required purchase and sale price
   assert.ok(screen.getByRole("heading", { name: "Alta de productos", level: 1 })); assert.ok(screen.getByRole("heading", { name: "Crear categoría", level: 2 }));
   await screen.findByLabelText("Marca"); assert.ok(screen.getByRole("heading", { name: "Crear producto activo", level: 2 }));
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
-  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByRole("status")).textContent, "Producto creado: FIL-1. Stock inicial: 3 unidades.");
+  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
 });
 test("optionally assigns a generated active location after product creation", async () => {
   const calls: Array<{ command: string; payload: unknown }> = [];
@@ -58,6 +58,36 @@ test("optionally assigns a generated active location after product creation", as
   });
   assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
 });
+
+test("offers searchable and guided native controls for active locations with an optional clear choice", async () => {
+  mockIPC((command) => {
+    if (command === "list_categories_command") return success();
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Piso", position: 0 }, { id: 2, label: "Estante", position: 1 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [
+      { location_id: 8, code: "PB-12", values: ["PB", "12"], active: true, revision: 0 },
+      { location_id: 9, code: "PA-2", values: ["PA", "2"], active: true, revision: 0 },
+      { location_id: 10, code: "PB-9", values: ["PB", "9"], active: false, revision: 0 },
+    ] };
+    return undefined;
+  });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  const search = await screen.findByRole("searchbox", { name: "Buscar ubicaciones" });
+  const floor = await screen.findByRole("combobox", { name: "Piso" });
+  const shelf = screen.getByRole("combobox", { name: "Estante" });
+  const location = screen.getByRole("combobox", { name: "Ubicación principal (opcional)" });
+  assert.equal(screen.getByText("2 ubicaciones activas disponibles.").getAttribute("aria-live"), "polite");
+  const user = userEvent.setup({ document });
+  await user.selectOptions(floor, "PB");
+  await user.selectOptions(shelf, "12");
+  assert.equal((location as HTMLSelectElement).value, "8");
+  await user.clear(search);
+  await user.type(search, "pA-2");
+  assert.ok(screen.getByRole("option", { name: "PA-2" }));
+  assert.equal(screen.queryByRole("option", { name: "PB-9" }), null);
+  await user.selectOptions(location, "");
+  assert.equal((location as HTMLSelectElement).value, "");
+});
+
 
 test("prevents duplicate category submission and localizes failure", async () => {
   let resolve!: (value: unknown) => void, calls = 0;
