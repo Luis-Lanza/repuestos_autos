@@ -64,7 +64,7 @@ impl<'connection> SqliteDashboardReader<'connection> {
             })
             .map_err(|_| ReportingError::Persistence)?;
         let mut total = 0_i64;
-        let mut unavailable = false;
+        let mut missing_cost_line_count = 0_i64;
         for row in rows {
             let (quantity, unit_price, unit_cost, returned_quantity) =
                 row.map_err(|_| ReportingError::Persistence)?;
@@ -90,13 +90,14 @@ impl<'connection> SqliteDashboardReader<'connection> {
                     .checked_add(line_profit)
                     .ok_or(ReportingError::PersistedDataInvalid)?;
             } else {
-                unavailable = true;
+                missing_cost_line_count = missing_cost_line_count
+                    .checked_add(1)
+                    .ok_or(ReportingError::PersistedDataInvalid)?;
             }
         }
-        Ok(if unavailable {
-            RealizedGrossProfit::Unavailable
-        } else {
-            RealizedGrossProfit::Known(total)
+        Ok(RealizedGrossProfit {
+            amount_centavos: total,
+            missing_cost_line_count,
         })
     }
 

@@ -578,6 +578,7 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/visual-system/location-picker.ts",
     "src/ui/w9-evidence-audit.test.ts",
     "odd/tasks/dashboard-realized-gross-profit.md",
+    "odd/tasks/dashboard-partial-gross-profit.md",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
@@ -843,7 +844,7 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
   );
 });
 
-test("W9 allows only the exact Dashboard and realized-profit paths", () => {
+test("W9 allows only the exact Dashboard and gross-profit paths", () => {
   const dashboardPaths = [
     "src-tauri/src/application/mod.rs",
     "src-tauri/src/commands/mod.rs",
@@ -859,6 +860,7 @@ test("W9 allows only the exact Dashboard and realized-profit paths", () => {
     "src/ui/dashboard/dashboard-screen.ts",
     "src/ui/dashboard/dashboard-screen.mounted.test.ts",
     "docs/design/dashboard-figma-handoff.md",
+    "odd/tasks/dashboard-partial-gross-profit.md",
   ];
   for (const changedPath of dashboardPaths) {
     assert.doesNotThrow(
@@ -872,6 +874,8 @@ test("W9 allows only the exact Dashboard and realized-profit paths", () => {
     "src-tauri/src/commands/unrelated_dashboard.rs",
     "src-tauri/src/infrastructure/sqlite/other_dashboard_repository.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0022_unrelated.sql",
+    "odd/tasks/dashboard-partial-gross-profit-related.md",
+    "odd/tasks/unrelated-dashboard-partial-gross-profit.md",
     "src-tauri/src/infrastructure/sqlite/migrations/0018_unrelated.sql",
     "src-tauri/src/infrastructure/sqlite/another_repository.rs",
     "src-tauri/tests/catalog_images.rs",

@@ -4,7 +4,7 @@ export type DashboardRequest = {
   month_from_utc: string;
   month_to_exclusive_utc: string;
 };
-export type RealizedGrossProfit = { status: "known"; amount_centavos: number } | { status: "unavailable" };
+export type RealizedGrossProfit = { amount_centavos: number; missing_cost_line_count: number };
 export type DashboardMetrics = {
   effective_sale_count: number;
   effective_total_centavos: number;
@@ -32,9 +32,8 @@ const positiveInteger = (value: unknown): value is number => safeInteger(value) 
 const failure = (): DashboardError => ({ kind: "error", code: "persistence_failure", message: errorMessage });
 const decodeError = (value: RecordValue): DashboardError => value.code === "invalid_range" ? { kind: "error", code: "invalid_range", message: "The dashboard date range is invalid." } : value.code === "persistence_failure" ? failure() : failure();
 const realizedGrossProfit = (value: unknown): RealizedGrossProfit | null => {
-  if (!isRecord(value)) return null;
-  if (value.status === "unavailable") return { status: "unavailable" };
-  return value.status === "known" && safeInteger(value.amount_centavos) ? { status: "known", amount_centavos: value.amount_centavos } : null;
+  if (!isRecord(value) || !safeInteger(value.amount_centavos) || !nonNegativeInteger(value.missing_cost_line_count)) return null;
+  return { amount_centavos: value.amount_centavos, missing_cost_line_count: value.missing_cost_line_count };
 };
 const metrics = (value: unknown): DashboardMetrics | null => {
   if (!isRecord(value) || !nonNegativeInteger(value.effective_sale_count) || !nonNegativeInteger(value.effective_total_centavos) || !nonNegativeInteger(value.net_units_out) || !nonNegativeInteger(value.cancelled_sale_count)) return null;

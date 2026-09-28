@@ -12,7 +12,7 @@ const metricFacts = (metrics: DashboardMetrics) => [
   ["Total efectivo", formatBs(metrics.effective_total_centavos)],
   ["Unidades netas", String(metrics.net_units_out)],
   ["Ventas canceladas", String(metrics.cancelled_sale_count)],
-  ["Ganancia bruta", metrics.realized_gross_profit.status === "known" ? formatSignedBs(metrics.realized_gross_profit.amount_centavos) : "No disponible"],
+  [metrics.realized_gross_profit.missing_cost_line_count > 0 ? "Ganancia bruta parcial" : "Ganancia bruta", metrics.realized_gross_profit],
 ] as const;
 const topColumns = [{ label: "ID", align: "start", kind: "numeric" }, { label: "Producto", align: "start", kind: "text" }, { label: "SKU", align: "start", kind: "sku" }, { label: "Unidades netas", align: "end", kind: "numeric" }] as const;
 const stockColumns = [{ label: "ID", align: "start", kind: "numeric" }, { label: "Producto", align: "start", kind: "text" }, { label: "SKU", align: "start", kind: "sku" }, { label: "Cantidad actual", align: "end", kind: "numeric" }, { label: "Estado", align: "start", kind: "text" }] as const;
@@ -24,7 +24,10 @@ function MetricsPanel({ label, metrics }: { label: string; metrics: DashboardMet
     createElement("dl", { "data-ui-dashboard-metrics": true },
       ...metricFacts(metrics).map(([factLabel, value]) => createElement("div", { key: factLabel, "data-ui-dashboard-metric": true },
         createElement("dt", null, factLabel),
-        createElement("dd", null, value)))));
+        createElement("dd", null, typeof value === "string" ? value : formatSignedBs(value.amount_centavos),
+          typeof value !== "string" && value.missing_cost_line_count > 0
+            ? createElement("span", { "data-ui-dashboard-profit-warning": true }, `Faltan costos en ${value.missing_cost_line_count} líneas de venta.`)
+            : null)))));
 }
 
 function QuietSectionMessage({ kind, children }: { kind: "loading" | "error" | "empty"; children: ReactNode }) {

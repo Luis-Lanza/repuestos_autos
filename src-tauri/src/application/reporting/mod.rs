@@ -41,10 +41,9 @@ fn parse_utc(value: &str) -> Result<OffsetDateTime, ReportingError> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "status", content = "amount_centavos", rename_all = "snake_case")]
-pub enum RealizedGrossProfit {
-    Known(i64),
-    Unavailable,
+pub struct RealizedGrossProfit {
+    pub amount_centavos: i64,
+    pub missing_cost_line_count: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]

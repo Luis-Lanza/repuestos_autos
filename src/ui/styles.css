@@ -406,7 +406,8 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 }
 [data-ui-dashboard-metric] :is(dt, dd) { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
 [data-ui-dashboard-metric] dt { color: var(--color-text-muted); font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--weight-semibold); }
-[data-ui-dashboard-metric] dd { font-size: 22px; line-height: 28px; font-weight: var(--weight-emphasis); font-variant-numeric: tabular-nums; }
+[data-ui-dashboard-metric] dd { display: grid; gap: var(--space-1); font-size: 22px; line-height: 28px; font-weight: var(--weight-emphasis); font-variant-numeric: tabular-nums; }
+[data-ui-dashboard-profit-warning] { color: var(--color-text-muted); font-size: var(--type-caption-size); line-height: var(--type-caption-line); font-weight: var(--weight-regular); font-variant-numeric: normal; }
 [data-ui-dashboard-stock-alerts] > [data-ui-panel] {
   grid-template-columns: minmax(0, 1fr) auto;
   border-inline-start: 5px solid var(--color-warning-edge);

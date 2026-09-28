@@ -47,7 +47,8 @@ Today and current-month boundaries are calculated from the desktop's local calen
 - Cancelled sales count counts confirmed sales whose confirmation timestamp falls within the period and that currently have a cancellation record.
 - Net units out excludes cancelled sales and subtracts recorded returned quantities from their original sale-line quantities.
 - Realized gross profit is the signed sum of confirmed sale unit price minus the immutable confirmation-time unit-cost snapshot, multiplied by net units. Cancelled sales are excluded and returns reverse profit for returned units.
-- Realized gross profit is available only when every effective sale line in the period has a known cost snapshot. Otherwise show the exact text `No disponible`; never estimate, show a partial amount, or substitute zero. An empty period is known zero.
+- Show the known-cost signed amount together with the count of effective sale lines missing a cost snapshot. Unknown-cost lines contribute neither gain nor loss and are never estimated from current product cost. The count includes lines fully returned.
+- With zero missing-cost lines, label the fact `Ganancia bruta` and show the signed amount. With a positive count, label it `Ganancia bruta parcial`, show the signed known-cost amount, and show the exact warning `Faltan costos en N líneas de venta.` with N replaced by the count. An empty period is known zero with no warning.
 - Returns affect net units and realized gross profit, not the persisted sale total or the applied-payment aggregation shown here.
 - Top products use positive net units from non-cancelled current-month sales. Ranking is by net units; the report returns at most five.
 - Payment distribution sums applied cash/QR amounts for non-cancelled current-month sales. It does not introduce refunds or other payment methods.
@@ -68,7 +69,7 @@ Do not display a collection total when only a bounded list is available. Five to
 | --- | --- |
 | Initial load | Dashboard is the application's initial route. Show a loading state for the whole report and loading treatment in each region; do not present loading as empty. |
 | Atomic failure | No stale or partial report is shown. Present a Dashboard-level failure with `Reintentar`, and keep each region visibly unavailable rather than empty. Retry reloads the entire snapshot. |
-| Successful metrics | Render the four existing metric facts and `Ganancia bruta` in both periods. Known gross profit uses signed `Bs` formatting; unavailable gross profit is the exact text `No disponible`, never zero. A successful empty period has known gross profit of `Bs 0,00`. |
+| Successful metrics | Render the four existing metric facts and gross-profit amount in both periods. With no missing-cost lines, use `Ganancia bruta`; with missing-cost lines, use `Ganancia bruta parcial` and the exact warning `Faltan costos en N líneas de venta.` Known amount uses signed `Bs` formatting. A successful empty period has `Ganancia bruta — Bs 0,00` and no warning. |
 | Independent empty collections | After a successful snapshot, top products, payment distribution, recent sales, and stock alerts may each be empty independently. Show the matching contained empty message only for that collection. |
 | Async safety | Ignore stale completions after a newer load and ignore completion after unmount. A late response must not replace the current state. |
 | Stock action | `Ver en Inventario` opens Inventory with the stock-state filter set to alerts and refreshes the sidebar inventory cue. It is not a Dashboard filter or drilldown. |
@@ -111,8 +112,8 @@ Do not change semantic order only to achieve a desktop grid. A desktop compositi
 ### Period orientation
 
 - Keep `Hoy` and `Este mes` as visible panel headings; never rely on proximity alone to convey scope.
-- Each period contains the same five labels, in this order: `Ventas efectivas`, `Total efectivo`, `Unidades netas`, `Ventas canceladas`, and `Ganancia bruta`.
-- `Ganancia bruta` is the realized gross-profit fact only. Show known amounts in signed `Bs` formatting, including negative losses; show unknown amounts as `No disponible` and do not style them as zero.
+- Each period contains the same five facts, in this order: `Ventas efectivas`, `Total efectivo`, `Unidades netas`, `Ventas canceladas`, and gross profit labeled `Ganancia bruta` or `Ganancia bruta parcial` according to its missing-cost-line count.
+- Gross profit is the realized gross-profit fact only. Show known amounts in signed `Bs` formatting, including negative losses. Use `Ganancia bruta` when no effective lines lack a cost snapshot; otherwise use `Ganancia bruta parcial` and the exact warning `Faltan costos en N líneas de venta.`. Do not estimate unknown-cost lines or style missing values as zero.
 - Treat numbers as the strongest content within each period. Use tabular numerals for counts and money.
 - Do not add arrows, deltas, percentages, sparklines, targets, or comparison copy.
 
@@ -143,7 +144,7 @@ All example values below are illustrative payload-valid content. They are not ne
 **Example content:**
 
 - `Hoy`: 3 effective sales; `Bs 18.750,00`; 7 net units; 1 cancelled sale; `Ganancia bruta — Bs 4.250,00`.
-- `Este mes`: 42 effective sales; `Bs 286.430,00`; 96 net units; 3 cancelled sales; `Ganancia bruta — No disponible` (for example, when a legacy effective line lacks a cost snapshot).
+- `Este mes`: 42 effective sales; `Bs 286.430,00`; 96 net units; 3 cancelled sales; `Ganancia bruta parcial — Bs 3.900,00`; `Faltan costos en 2 líneas de venta.`
 - Stock: product #31 `Correa de distribución reforzada`, SKU `COR-DIST-031`, quantity 0, `Sin stock`; product #8 `Filtro de aire`, SKU `FLT-AIR-008`, quantity 1, `Stock bajo`.
 - Top products: three rows, led by product #8 with 18 net units.
 - Payments: `Efectivo — Bs 180.000,00`; `QR — Bs 106.430,00`.
@@ -183,7 +184,7 @@ All example values below are illustrative payload-valid content. They are not ne
 
 **Failure example:** `No se pudo cargar el dashboard.` with a 44px-minimum `Reintentar` control. Every region is visibly unavailable; do not leave plausible data behind and do not present collection empty messages.
 
-**Successful report example:** show `Ganancia bruta` as a signed known amount (include a negative loss sample) in one period and `No disponible` in the other. Unavailable is not zero.
+**Successful report example:** show `Ganancia bruta` as a signed complete amount in one period and `Ganancia bruta parcial` as a signed known-cost amount with the exact missing-cost-line warning in the other. Partial is not zero or unavailable.
 
 **Proves:** loading is not empty, failure is atomic, retry reloads the report, and no section suggests independent freshness.
 
@@ -270,9 +271,9 @@ Use the repository's existing system fonts and visual tokens when implementation
 
 ### Facts and scope
 
-- [ ] Today and current-month metrics show the four existing facts plus only the contracted realized `Ganancia bruta` fact.
+- [ ] Today and current-month metrics show the four existing facts plus only the contracted realized gross-profit fact, using the complete or partial label required by its missing-cost-line count.
 - [ ] Known gross profit is signed and formatted as money; losses remain visibly negative.
-- [ ] Unknown gross profit is exactly `No disponible`, never a guessed, partial, or zero amount; empty periods show known zero.
+- [ ] Gross profit shows the signed known-cost amount. Zero missing-cost lines use `Ganancia bruta` without a warning; a positive count uses `Ganancia bruta parcial` and `Faltan costos en N líneas de venta.`. Unknown-cost lines are never estimated; empty periods show known zero without a warning.
 - [ ] Top products show product ID, applicable name/SKU, and net units; no more than five examples are implied.
 - [ ] Payments show current-month applied cash/QR amounts only.
 - [ ] Recent sales preserve all-time scope, sale ID, timestamp, status, and persisted total; no more than eight are implied.
@@ -285,7 +286,7 @@ Use the repository's existing system fonts and visual tokens when implementation
 - [ ] Today/month orientation comes first, stock alerts receive prominent operational treatment, and contextual sections remain secondary.
 - [ ] Loading is not presented as zero or empty.
 - [ ] Atomic failure removes plausible report data and includes `Reintentar`.
-- [ ] Successful existing zero metrics remain visible; a known zero gross-profit value is distinct from `No disponible`.
+- [ ] Successful existing zero metrics remain visible; a known zero gross-profit value is `Ganancia bruta — Bs 0,00` with no missing-cost warning.
 - [ ] Each successful empty collection has its own contained state.
 - [ ] The design does not imply independent section fetching or freshness.
 

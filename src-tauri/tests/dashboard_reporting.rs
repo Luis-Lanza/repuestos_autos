@@ -126,13 +126,14 @@ fn realized_profit_uses_net_units_preserves_losses_and_ignores_cancellations() {
         .unwrap();
     assert_eq!(
         report.today.metrics.realized_gross_profit,
-        RealizedGrossProfit::Known(-500)
+        RealizedGrossProfit { amount_centavos: -500, missing_cost_line_count: 0 }
     );
     assert_eq!(report.today.metrics.effective_total_centavos, 2_500);
+    assert_eq!(report.today.metrics.realized_gross_profit.missing_cost_line_count, 0);
 }
 
 #[test]
-fn legacy_cost_makes_period_unavailable_but_empty_period_is_known_zero() {
+fn missing_cost_preserves_known_profit_and_empty_period_is_zero() {
     let connection = open_seeded_catalog().unwrap();
     sale_with_financial_snapshots(
         &connection,
@@ -146,6 +147,10 @@ fn legacy_cost_makes_period_unavailable_but_empty_period_is_known_zero() {
         Some(1_000),
     );
     sale(&connection, 41, "2024-03-10 06:00:00", 2_500, 1);
+    connection.execute("INSERT INTO post_sale_requests (id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256) VALUES (141, 'return-141', 'return', 41, 1, X'01', printf('%064d', 1))", []).unwrap();
+    connection.execute("INSERT INTO sale_returns (id, sale_id) VALUES (141, 41)", []).unwrap();
+    connection.execute("INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason) VALUES (241, 1, 41, 41, 'return', 1, NULL)", []).unwrap();
+    connection.execute("INSERT INTO sale_return_lines (return_id, sale_id, sale_line_id, product_id, quantity, movement_id) VALUES (141, 41, 41, 1, 1, 241)", []).unwrap();
     let reader = SqliteDashboardReader::new(&connection);
     let report = reader
         .read(
@@ -155,23 +160,19 @@ fn legacy_cost_makes_period_unavailable_but_empty_period_is_known_zero() {
         .unwrap();
     assert_eq!(
         report.today.metrics.realized_gross_profit,
-        RealizedGrossProfit::Unavailable
+        RealizedGrossProfit { amount_centavos: 1_500, missing_cost_line_count: 1 }
     );
     assert_eq!(
         report.month.metrics.realized_gross_profit,
-        RealizedGrossProfit::Known(0)
+        RealizedGrossProfit { amount_centavos: 0, missing_cost_line_count: 0 }
     );
 }
 
 #[test]
-fn realized_profit_serializes_as_a_tagged_known_or_unavailable_value() {
+fn realized_profit_serializes_as_signed_amount_and_missing_line_count() {
     assert_eq!(
-        serde_json::to_value(RealizedGrossProfit::Known(-123)).unwrap(),
-        serde_json::json!({"status": "known", "amount_centavos": -123})
-    );
-    assert_eq!(
-        serde_json::to_value(RealizedGrossProfit::Unavailable).unwrap(),
-        serde_json::json!({"status": "unavailable"})
+        serde_json::to_value(RealizedGrossProfit { amount_centavos: -123, missing_cost_line_count: 2 }).unwrap(),
+        serde_json::json!({"amount_centavos": -123, "missing_cost_line_count": 2})
     );
 }
 
