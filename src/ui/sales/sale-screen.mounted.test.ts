@@ -170,15 +170,24 @@ test("quick product detail uses the browse snapshot without changing browse or A
   mockIPC((command) => { calls.push(command); return command === "browse_products_command" ? browse([product]) : Promise.reject(new Error(`unexpected command: ${command}`)); });
   render(createElement(SaleScreen));
   const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
-  const trigger = await within(catalog).findByRole("button", { name: "Ver detalles de Filtro aceite (SKU: FIL-1)" });
   const before = calls.filter((command) => command === "browse_products_command").length;
-  await user().click(trigger);
-  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
-  assert.deepEqual(Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent), ["Acero", "Sin dato"]);
-  assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
-  assert.equal(calls.includes("catalog_metadata_detail_command"), false);
-  await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
-  assert.equal(document.activeElement, trigger);
+  for (const mode of ["table", "gallery"] as const) {
+    if (mode === "gallery") await user().click(within(catalog).getByRole("button", { name: "Vista de galería" }));
+    const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+    const item = within(list).getByRole("listitem");
+    assert.equal(within(item).getByText("Filtro aceite").tagName, "SPAN");
+    assert.equal(within(item).queryByRole("button", { name: "Filtro aceite" }), null);
+    const actions = within(item).getAllByRole("button", { name: "Ver detalles", exact: true });
+    assert.equal(actions.length, 1);
+    const trigger = actions[0];
+    await user().click(trigger);
+    const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+    assert.deepEqual(Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent), ["Acero", "Sin dato"]);
+    assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
+    assert.equal(calls.includes("catalog_metadata_detail_command"), false);
+    await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+    assert.equal(document.activeElement, trigger);
+  }
   await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
   assert.ok(within(screen.getByRole("region", { name: "Resumen de venta" })).getByText("1 línea"));
   assert.equal(calls.filter((command) => command === "browse_products_command").length, before);

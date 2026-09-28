@@ -159,7 +159,8 @@ export function ProductBrowser(props: ProductBrowserProps) {
       const galleryImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-image-placeholder": true }, "Sin imagen");
       const tableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-catalog-table-image-placeholder": true }, "Sin imagen");
       const showSalesDetail = () => { detailTrigger.current = document.activeElement as HTMLElement; setDetailProduct(product); };
-      const salesIdentity = createElement("button", { type: "button", "data-ui-sales-product-detail-trigger": true, "aria-label": `Ver detalles de ${product.name} (SKU: ${product.sku})`, onClick: showSalesDetail }, product.name);
+      const salesIdentity = createElement("span", { "data-ui-sales-product-identity-text": true }, product.name);
+      const salesDetailAction = createElement(Action, { variant: "tertiary", type: "button", "data-ui-sales-product-detail-trigger": true, onClick: showSalesDetail }, "Ver detalles");
       const salesAttributes = (product.attribute_values ?? []).filter((attribute) => attribute.value.trim().length > 0).slice(0, 2);
       const salesAttributeSummary = createElement("div", { "data-ui-sales-product-attributes": true }, salesAttributes.map((attribute) => createElement("span", { key: attribute.definition_id }, `${attribute.label}: ${attribute.value}`)));
       const salesTableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-table-image-placeholder": true }, "Sin imagen");
@@ -169,6 +170,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
         createElement("div", { "data-ui-sales-commercial-footer": true },
           createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
           createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
+          salesDetailAction,
           action)) : galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
         createElement("div", { "data-ui-catalog-image-area": true }, galleryImage),
         createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
@@ -186,6 +188,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
           createElement("span", { "data-ui-unit-price": true },
             createElement("span", { "data-ui-unit-price-caption": true }, "Precio de venta"),
             createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product)))),
+          salesDetailAction,
           action)) : catalogPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-table-row": true },
             createElement("div", { "data-testid": "catalog-table-thumbnail", "data-ui-catalog-table-thumbnail": true }, tableImage),
             createElement("div", { "data-testid": "catalog-table-identity", "data-ui-catalog-table-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku)),

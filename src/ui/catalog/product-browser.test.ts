@@ -213,7 +213,13 @@ test("Sales product identity opens an accessible read-only detail with every ord
   const view = render(createElement(ProductBrowser, props));
   for (const mode of ["table", "gallery"] as const) {
     if (mode === "gallery") view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: mode }));
-    const trigger = screen.getByRole("button", { name: "Ver detalles de Filter (SKU: FLT)" });
+    const row = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByRole("listitem");
+    assert.equal(within(row).getByText("Filter").tagName, "SPAN");
+    assert.equal(within(row).queryByRole("button", { name: "Filter" }), null);
+    const triggers = within(row).getAllByRole("button", { name: "Ver detalles", exact: true });
+    assert.equal(triggers.length, 1);
+    const trigger = triggers[0];
+    assert.equal(trigger.textContent, "Ver detalles");
     trigger.focus();
     await userEvent.click(trigger);
     const detail = screen.getByRole("dialog", { name: "Filter" });
