@@ -63,10 +63,16 @@ export interface CreatedProduct {
   active: boolean;
 }
 
+export interface OnboardingFieldError {
+  definition_id: number;
+  reason: "invalid_number" | "invalid_option" | "invalid_value";
+}
+
 export interface OnboardingError {
   kind: "error";
   code: string;
   message: string;
+  field_error?: OnboardingFieldError;
 }
 
 export type CreateCategoryResponse =
@@ -104,7 +110,8 @@ const errorMessages: Record<string, string> = {
   invalid_category: "Category name is required.", invalid_field_definition: "Category field definitions are invalid.", duplicate_category: "Category name already exists.",
   invalid_product: "SKU and product name are required.", missing_category: "The selected category was not found.", duplicate_sku: "SKU already exists.", invalid_purchase_price: "Purchase price must be a positive whole number of centavos.", invalid_sale_price: "Sale price must be a positive whole number of centavos.", invalid_minimum_sale_price: "Minimum sale price must be a positive whole number of centavos.", minimum_sale_price_exceeds_sale_price: "Minimum sale price cannot exceed sale price.", invalid_opening_quantity: "Opening stock must be a positive whole number.", missing_required_field: "A required category field is missing.", invalid_attribute_value: "A category field value is invalid.", persistence_failure: "The operation could not be persisted.",
 };
-const boundedError = (value: unknown, codes: string[], fallback: string): OnboardingError => record(value) && typeof value.code === "string" && typeof value.message === "string" && codes.includes(value.code) ? { kind: "error", code: value.code, message: value.code === "persistence_failure" ? fallback : errorMessages[value.code] } : generic(fallback);
+const fieldError = (value: unknown): OnboardingFieldError | undefined => record(value) && positiveSafeInteger(value.definition_id) && (value.reason === "invalid_number" || value.reason === "invalid_option" || value.reason === "invalid_value") ? { definition_id: value.definition_id, reason: value.reason } : undefined;
+const boundedError = (value: unknown, codes: string[], fallback: string): OnboardingError => record(value) && typeof value.code === "string" && typeof value.message === "string" && codes.includes(value.code) ? { kind: "error", code: value.code, message: value.code === "persistence_failure" ? fallback : errorMessages[value.code], ...(value.code === "invalid_attribute_value" && fieldError(value.field_error) ? { field_error: fieldError(value.field_error) } : {}) } : generic(fallback);
 const listResponse = (value: unknown): ListCategoriesResponse => record(value) && value.kind === "success" && decodedArray(value.categories, category) !== null ? { kind: "success", categories: decodedArray(value.categories, category) as Category[] } : record(value) && value.kind === "error" ? boundedError(value, ["persistence_failure"], "Categories could not be loaded.") : generic("Categories could not be loaded.");
 const categoryResponse = (value: unknown, codes: string[], fallback: string): CreateCategoryResponse => record(value) && value.kind === "success" && category(value) ? { kind: "success", ...(category(value) as Category) } : record(value) && value.kind === "error" ? boundedError(value, codes, fallback) : generic(fallback);
 const productResponse = (value: unknown): CreateProductResponse => record(value) && value.kind === "success" && createdProduct(value) ? { kind: "success", ...(createdProduct(value) as CreatedProduct) } : record(value) && value.kind === "error" ? boundedError(value, ["invalid_product", "missing_category", "duplicate_sku", "invalid_purchase_price", "invalid_sale_price", "invalid_minimum_sale_price", "minimum_sale_price_exceeds_sale_price", "invalid_opening_quantity", "missing_required_field", "invalid_attribute_value", "persistence_failure"], "The product could not be persisted.") : generic("The product could not be persisted.");

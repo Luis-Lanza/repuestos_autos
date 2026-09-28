@@ -132,15 +132,20 @@ test("focuses and explains a missing required category attribute before submissi
   assert.equal(calls, 0);
 });
 
-test("shows actionable fallback when the backend rejects a category attribute", async () => {
-  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? { kind: "error", code: "invalid_attribute_value", message: "raw detail" } : undefined);
+test("focuses and marks the backend-identified category attribute without exposing native details", async () => {
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? { kind: "error", code: "invalid_attribute_value", message: "raw detail", field_error: { definition_id: 10, reason: "invalid_value", raw: "secret" } } : undefined);
   const user = userEvent.setup({ document });
   render(createElement(OnboardingScreen, { onBack: () => undefined }));
   await screen.findByLabelText("Marca");
   await enterValidProduct(user);
   await user.click(screen.getByRole("button", { name: "Crear producto" }));
   const feedback = await screen.findByRole("alert");
-  assert.equal(feedback.textContent, "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones.");
+  const attribute = screen.getByRole("textbox", { name: "Marca" });
+  assert.equal(feedback.textContent, "Revisá el valor de este campo.");
+  assert.equal(document.activeElement, attribute);
+  assert.equal(attribute.getAttribute("aria-invalid"), "true");
+  assert.ok(screen.getAllByText("Revisá el valor de este campo.").length >= 1);
+  assert.equal(screen.queryByText(/raw detail|secret/), null);
   assert.equal(screen.queryByText(/Producto creado:/), null);
 });
 

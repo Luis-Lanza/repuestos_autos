@@ -29,9 +29,11 @@ export function OnboardingScreen({ onBack }: Props) {
   const [locationsStatus, setLocationsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [primaryLocationId, setPrimaryLocationId] = useState("");
   const [fieldError, setFieldError] = useState("");
+  const [fieldErrorMessage, setFieldErrorMessage] = useState("");
   const mounted = useRef(true), request = useRef(0), mutation = useRef(0), categoryLock = useRef(false), productLock = useRef(false);
   const selected = state.categories.find((category) => category.category_id === Number(selectedId));
   const focus = (id: string) => document.getElementById(id)?.focus();
+  useEffect(() => { if (state.productStatus === "error" && fieldError.startsWith("attribute-")) focus(fieldError); }, [state.productStatus, fieldError]);
 
   const loadCategories = async () => {
     const id = ++request.current;
@@ -77,11 +79,11 @@ export function OnboardingScreen({ onBack }: Props) {
     const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(purchasePrice) === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parsePositiveWhole(stock) === null ? "stock" : "";
     const attributeError = selected && !productErrors ? validateCategoryAttributes(selected, attributes) : null;
     if (productErrors || attributeError) {
-      setFieldError(attributeError ? `attribute-${attributeError.definitionId}` : productErrors);
+      setFieldError(attributeError ? `attribute-${attributeError.definitionId}` : productErrors); setFieldErrorMessage("");
       focus(attributeError ? `attribute-${attributeError.definitionId}` : productErrors === "category" ? "product-category" : productErrors === "sku" ? "product-sku" : productErrors === "name" ? "product-name" : productErrors === "purchase-price" ? "purchase-price" : productErrors === "list-price" ? "list-price" : productErrors === "minimum-price" ? "minimum-sale-price" : "opening-stock");
       return;
     }
-    const id = ++mutation.current; productLock.current = true; setFieldError(""); dispatch({ type: "product_started", requestId: id });
+    const id = ++mutation.current; productLock.current = true; setFieldError(""); setFieldErrorMessage(""); dispatch({ type: "product_started", requestId: id });
     try {
       const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: parseBsToCentavos(purchasePrice)!, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(selected!, attributes) });
       if (!mounted.current || id !== mutation.current) return;
@@ -107,7 +109,15 @@ export function OnboardingScreen({ onBack }: Props) {
         setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setAttributes({}); setPrimaryLocationId("");
       }
       else if (response.code === "invalid_attribute_value") {
-        dispatch({ type: "product_failed", requestId: id, message: "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones." });
+        const fieldError = response.field_error;
+        if (fieldError && selected!.fields.some((field) => field.definition_id === fieldError.definition_id)) {
+          const fieldId = `attribute-${fieldError.definition_id}`;
+          setFieldError(fieldId);
+          focus(fieldId);
+          const message = fieldError.reason === "invalid_number" ? "Ingresá un número válido para este campo." : fieldError.reason === "invalid_option" ? "Seleccioná una de las opciones disponibles." : "Revisá el valor de este campo.";
+          setFieldErrorMessage(message);
+          dispatch({ type: "product_failed", requestId: id, message });
+        } else dispatch({ type: "product_failed", requestId: id, message: "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones." });
       } else dispatch({ type: "product_failed", requestId: id, message: response.message });
     } catch { if (mounted.current && id === mutation.current) dispatch({ type: "product_failed", requestId: id }); }
     finally { productLock.current = false; }
@@ -134,7 +144,7 @@ export function OnboardingScreen({ onBack }: Props) {
         h(Field, { kind: "quantity", label: "Stock inicial (unidades enteras)", error: fieldError === "stock" ? "Ingresá una cantidad entera mayor que cero." : undefined, control: h("input", { id: "opening-stock", value: stock, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setStock(event.target.value) }) } as never),
         h(LocationPicker, { id: "product-primary-location", label: "Ubicación principal (opcional)", locations: productLocations, segments: locationSegments, selectedId: primaryLocationId, disabled: pending, status: locationsStatus, onChange: setPrimaryLocationId }),
         locationsStatus === "error" ? h("p", null, "Podés asignar la ubicación después desde Catálogo.") : null,
-        selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === `attribute-${field.definition_id}` ? validateCategoryAttributes(selected!, attributes)?.message : undefined, control: fieldControl(field) } as never)),
+        selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === `attribute-${field.definition_id}` ? fieldErrorMessage || validateCategoryAttributes(selected!, attributes)?.message : undefined, control: fieldControl(field) } as never)),
         h(Action, { variant: "primary", type: "submit", pending: state.productStatus === "pending", pendingLabel: "Creando producto…" }, "Crear producto"))))
   );
 }

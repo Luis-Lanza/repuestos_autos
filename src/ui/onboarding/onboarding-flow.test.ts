@@ -21,6 +21,13 @@ test("ignores obsolete mutation completions", () => {
   assert.equal(state.productStatus, "pending");
   state = createOnboardingFlow(state, { type: "product_succeeded", requestId: 2, message: "Producto creado." }); assert.equal(state.feedback, "Producto creado.");
 });
+test("keeps the safe field-specific backend validation reason in product feedback", () => {
+  let state = createOnboardingFlow(initialOnboardingState, { type: "product_started", requestId: 4 });
+  state = createOnboardingFlow(state, { type: "product_failed", requestId: 4, message: "Seleccioná una de las opciones disponibles." });
+  assert.equal(state.productStatus, "error");
+  assert.equal(state.feedback, "Seleccioná una de las opciones disponibles.");
+});
+
 test("maps category failures to localized recovery feedback and preserves a specific product reason", () => {
   let state = createOnboardingFlow(initialOnboardingState, { type: "category_started", requestId: 1 });
   state = createOnboardingFlow(state, { type: "category_failed", requestId: 1 }); assert.equal(state.feedback, "No se pudo crear la categoría.");

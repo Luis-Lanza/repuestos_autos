@@ -116,6 +116,19 @@ pub enum CatalogValidationError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttributeValueFailureReason {
+    InvalidNumber,
+    InvalidOption,
+    InvalidValue,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttributeValueFailure {
+    pub definition_id: i64,
+    pub reason: AttributeValueFailureReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CatalogActivity {
     Active,
     Archived,
@@ -328,6 +341,41 @@ pub fn validate_category(
         }
     }
     Ok(())
+}
+
+pub fn attribute_value_failure(
+    definitions: &[AttributeDefinition],
+    values: &[AttributeValueDraft],
+) -> Option<AttributeValueFailure> {
+    let mut supplied = HashSet::new();
+    for value in values {
+        if !supplied.insert(value.definition_id) {
+            return definitions
+                .iter()
+                .any(|definition| definition.id == value.definition_id)
+                .then_some(AttributeValueFailure {
+                    definition_id: value.definition_id,
+                    reason: AttributeValueFailureReason::InvalidValue,
+                });
+        }
+        let Some(definition) = definitions.iter().find(|item| item.id == value.definition_id) else {
+            continue;
+        };
+        let value = value.value.trim();
+        let reason = match definition.field_type {
+            FieldType::Number if value.parse::<f64>().map_or(true, |number| !number.is_finite()) => {
+                Some(AttributeValueFailureReason::InvalidNumber)
+            }
+            FieldType::Option if !definition.options.iter().any(|option| option == value) => {
+                Some(AttributeValueFailureReason::InvalidOption)
+            }
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            return Some(AttributeValueFailure { definition_id: definition.id, reason });
+        }
+    }
+    None
 }
 
 pub fn validate_product(

@@ -171,7 +171,12 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
                 sku: "BEL-104".into(),
                 ..valid_product(category_id, &[(definitions[0], "wide")])
             },
-            CreateProductError::InvalidAttributeValue,
+            CreateProductError::InvalidAttributeValueForField(
+                repuestos_autos::domain::catalog::AttributeValueFailure {
+                    definition_id: definitions[0],
+                    reason: repuestos_autos::domain::catalog::AttributeValueFailureReason::InvalidNumber,
+                },
+            ),
         ),
         (
             CreateProductInput {
@@ -181,7 +186,12 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
                     &[(definitions[0], "1050"), (definitions[1], "Leather")],
                 )
             },
-            CreateProductError::InvalidAttributeValue,
+            CreateProductError::InvalidAttributeValueForField(
+                repuestos_autos::domain::catalog::AttributeValueFailure {
+                    definition_id: definitions[1],
+                    reason: repuestos_autos::domain::catalog::AttributeValueFailureReason::InvalidOption,
+                },
+            ),
         ),
         (
             valid_product(category_id, &[(999, "unknown")]),
@@ -195,6 +205,28 @@ fn rejects_duplicate_sku_invalid_price_quantity_number_and_option_with_stable_er
             expected
         );
     }
+}
+
+#[test]
+fn create_product_command_returns_only_safe_field_validation_detail() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let definition_id = definition_ids(&connection, category_id)[0];
+    let response = repuestos_autos::commands::onboarding::create_product(
+        &mut connection,
+        CreateProductInput {
+            sku: "BEL-INVALID".into(),
+            ..valid_product(category_id, &[(definition_id, "not-a-number")])
+        },
+    )
+    .unwrap();
+    let json = serde_json::to_value(response).unwrap();
+    assert_eq!(json["kind"], "error");
+    assert_eq!(json["code"], "invalid_attribute_value");
+    assert_eq!(json["message"], "A category field value is invalid.");
+    assert_eq!(json["field_error"]["definition_id"], definition_id);
+    assert_eq!(json["field_error"]["reason"], "invalid_number");
+    assert!(!json.to_string().contains("not-a-number"));
 }
 
 #[test]

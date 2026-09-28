@@ -30,6 +30,14 @@ pub enum ListCategoriesResponse {
 pub struct OnboardingError {
     pub code: &'static str,
     pub message: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_error: Option<OnboardingFieldError>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct OnboardingFieldError {
+    pub definition_id: i64,
+    pub reason: &'static str,
 }
 
 pub fn list_categories(
@@ -40,6 +48,7 @@ pub fn list_categories(
         Err(_) => ListCategoriesResponse::Error(OnboardingError {
             code: "persistence_failure",
             message: "Categories could not be loaded.",
+            field_error: None,
         }),
     })
 }
@@ -79,10 +88,25 @@ fn map_category_error(error: CreateCategoryError) -> OnboardingError {
             "The category could not be persisted.",
         ),
     };
-    OnboardingError { code, message }
+    OnboardingError { code, message, field_error: None }
 }
 
 fn map_product_error(error: CreateProductError) -> OnboardingError {
+    let error = match error {
+        CreateProductError::InvalidAttributeValueForField(failure) => {
+            let reason = match failure.reason {
+                crate::domain::catalog::AttributeValueFailureReason::InvalidNumber => "invalid_number",
+                crate::domain::catalog::AttributeValueFailureReason::InvalidOption => "invalid_option",
+                crate::domain::catalog::AttributeValueFailureReason::InvalidValue => "invalid_value",
+            };
+            return OnboardingError {
+                code: "invalid_attribute_value",
+                message: "A category field value is invalid.",
+                field_error: Some(OnboardingFieldError { definition_id: failure.definition_id, reason }),
+            };
+        }
+        other => other,
+    };
     let (code, message) = match error {
         CreateProductError::InvalidProduct => {
             ("invalid_product", "SKU and product name are required.")
@@ -119,9 +143,10 @@ fn map_product_error(error: CreateProductError) -> OnboardingError {
             "invalid_attribute_value",
             "A category field value is invalid.",
         ),
+        CreateProductError::InvalidAttributeValueForField(_) => unreachable!("handled above"),
         CreateProductError::Persistence => {
             ("persistence_failure", "The product could not be persisted.")
         }
     };
-    OnboardingError { code, message }
+    OnboardingError { code, message, field_error: None }
 }

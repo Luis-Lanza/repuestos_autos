@@ -3,9 +3,10 @@ use rusqlite::{params, Connection, OptionalExtension, Result, TransactionBehavio
 use serde::{Deserialize, Serialize};
 
 use crate::domain::catalog::{
-    plan_category_schema_edit, plan_transition, validate_category, validate_current_prices,
-    validate_product, AttributeValueDraft, CatalogIntent, CatalogSnapshot, CatalogTarget,
-    CatalogValidationError, CategoryFieldDraft, CategorySchemaField, FieldType, MaintenanceError,
+    attribute_value_failure, plan_category_schema_edit, plan_transition, validate_category,
+    validate_current_prices, validate_product, AttributeValueDraft, AttributeValueFailure,
+    CatalogIntent, CatalogSnapshot, CatalogTarget, CatalogValidationError, CategoryFieldDraft,
+    CategorySchemaField, FieldType, MaintenanceError,
 };
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
@@ -938,6 +939,7 @@ pub enum CreateProductError {
     InvalidOpeningQuantity,
     MissingRequiredField,
     InvalidAttributeValue,
+    InvalidAttributeValueForField(AttributeValueFailure),
     Persistence,
 }
 
@@ -997,7 +999,15 @@ where
             &definitions,
             &values,
         )
-        .map_err(map_product_validation)?;
+        .map_err(|error| {
+            if error == CatalogValidationError::InvalidAttributeValue {
+                attribute_value_failure(&definitions, &values)
+                    .map(CreateProductError::InvalidAttributeValueForField)
+                    .unwrap_or_else(|| map_product_validation(error))
+            } else {
+                map_product_validation(error)
+            }
+        })?;
         if self
             .repository
             .sku_exists(&transaction, input.sku.trim())
