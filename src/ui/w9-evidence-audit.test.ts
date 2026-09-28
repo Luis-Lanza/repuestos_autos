@@ -472,6 +472,7 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/styles.css",
     "src/ui/visual-system/catalog-edit-dialog.ts",
     "src/ui/visual-system/confirmation-dialog.ts",
+    "src/ui/visual-system/catalog-edit-dialog.mounted.test.ts",
     "src/ui/w9-evidence-audit.test.ts",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
@@ -605,6 +606,28 @@ test("W9 allows only the diagnosed command-seam pricing contract-test drift", ()
   assert.throws(
     () => assertCommandSeamPricingAllowlist(`${allowedDiff}\n+ fn unrelated_runtime_change() { native_runtime_drift(); }`),
     /unexpected command-seam contract-test drift/,
+  );
+});
+
+test("W9 allows the authorized catalog edit dialog accessible-label test correction", () => {
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(
+    ["src/ui/visual-system/catalog-edit-dialog.mounted.test.ts"],
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ));
+  assert.throws(
+    () => assertW9ProtectedDiffPolicy(
+      ["src/ui/visual-system/unrelated.mounted.test.ts"],
+      currentPackage,
+      baselinePackage,
+      currentLock,
+      baselineLock,
+      "",
+    ),
+    /unexpected protected-path drift/,
   );
 });
 
