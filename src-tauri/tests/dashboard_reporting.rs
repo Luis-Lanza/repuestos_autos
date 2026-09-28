@@ -1,5 +1,9 @@
-use repuestos_autos::application::reporting::{DashboardRange, DashboardReader};
-use repuestos_autos::infrastructure::sqlite::{dashboard_repository::SqliteDashboardReader, open_seeded_catalog};
+use repuestos_autos::application::reporting::{
+    DashboardRange, DashboardReader, RealizedGrossProfit,
+};
+use repuestos_autos::infrastructure::sqlite::{
+    dashboard_repository::SqliteDashboardReader, open_seeded_catalog,
+};
 use rusqlite::params;
 
 fn range(from: &str, to: &str) -> DashboardRange { DashboardRange::parse(from, to).unwrap() }
@@ -9,8 +13,32 @@ fn sale(connection: &rusqlite::Connection, id: i64, when: &str, total: i64, quan
 }
 
 fn sale_with_snapshot(connection: &rusqlite::Connection, id: i64, when: &str, total: i64, quantity: i64, sku: Option<&str>, product_name: Option<&str>) {
+    sale_with_financial_snapshots(
+        connection,
+        id,
+        when,
+        total,
+        quantity,
+        sku,
+        product_name,
+        2_500,
+        None,
+    );
+}
+
+fn sale_with_financial_snapshots(
+    connection: &rusqlite::Connection,
+    id: i64,
+    when: &str,
+    total: i64,
+    quantity: i64,
+    sku: Option<&str>,
+    product_name: Option<&str>,
+    unit_price: i64,
+    unit_cost: Option<i64>,
+) {
     connection.execute("INSERT INTO sales (id, request_id, status, total_centavos, confirmed_at) VALUES (?1, ?2, 'confirmed', ?3, ?4)", params![id, format!("sale-{id}"), total, when]).unwrap();
-    connection.execute("INSERT INTO sale_lines (id, sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, 1, ?3, ?4, ?5, 2500, 2500, ?6)", params![id, id, sku, product_name, quantity, total]).unwrap();
+    connection.execute("INSERT INTO sale_lines (id, sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, unit_cost_snapshot_centavos, line_total_centavos) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, 2500, ?7, ?8)", params![id, id, sku, product_name, quantity, unit_price, unit_cost, total]).unwrap();
     connection.execute("INSERT INTO sale_payments (sale_id, method, amount_applied_centavos, amount_tendered_centavos, change_given_centavos) VALUES (?1, 'cash', ?2, ?2, 0)", params![id, total]).unwrap();
 }
 
@@ -54,6 +82,120 @@ fn groups_top_products_by_identity_and_uses_latest_non_null_snapshot() {
     assert_eq!(report.top_products[0].sku, "FLT-NEW");
     assert_eq!(report.top_products[0].product_name, "Filtro renombrado");
     assert_eq!(report.top_products[0].net_units_out, 6);
+}
+
+#[test]
+fn realized_profit_uses_net_units_preserves_losses_and_ignores_cancellations() {
+    let connection = open_seeded_catalog().unwrap();
+    sale_with_financial_snapshots(
+        &connection,
+        30,
+        "2024-03-10 05:00:00",
+        2_500,
+        2,
+        Some("FLT-001"),
+        Some("Filtro de aceite"),
+        2_500,
+        Some(3_000),
+    );
+    connection.execute("INSERT INTO post_sale_requests (id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256) VALUES (130, 'return-130', 'return', 30, 1, X'01', printf('%064d', 1))", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_returns (id, sale_id) VALUES (130, 30)",
+            [],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO inventory_movements (id, product_id, sale_id, sale_line_id, movement_type, quantity_delta, reason) VALUES (230, 1, 30, 30, 'return', 1, NULL)", []).unwrap();
+    connection.execute("INSERT INTO sale_return_lines (return_id, sale_id, sale_line_id, product_id, quantity, movement_id) VALUES (130, 30, 30, 1, 1, 230)", []).unwrap();
+    sale(&connection, 31, "2024-03-10 06:00:00", 2_500, 1);
+    connection.execute("INSERT INTO post_sale_requests (id, request_id, operation_kind, sale_id, payload_version, canonical_payload, payload_sha256) VALUES (131, 'cancel-131', 'cancellation', 31, 1, X'02', printf('%064d', 2))", []).unwrap();
+    connection
+        .execute(
+            "INSERT INTO sale_cancellations (id, sale_id, reason) VALUES (131, 31, 'correction')",
+            [],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO sale_cancellation_lines (cancellation_id, sale_id, sale_line_id, product_id, restored_quantity) VALUES (131, 31, 31, 1, 0)", []).unwrap();
+
+    let reader = SqliteDashboardReader::new(&connection);
+    let report = reader
+        .read(
+            &range("2024-03-10T05:00:00Z", "2024-03-11T04:00:00Z"),
+            &range("2024-03-01T05:00:00Z", "2024-04-01T04:00:00Z"),
+        )
+        .unwrap();
+    assert_eq!(
+        report.today.metrics.realized_gross_profit,
+        RealizedGrossProfit::Known(-500)
+    );
+    assert_eq!(report.today.metrics.effective_total_centavos, 2_500);
+}
+
+#[test]
+fn legacy_cost_makes_period_unavailable_but_empty_period_is_known_zero() {
+    let connection = open_seeded_catalog().unwrap();
+    sale_with_financial_snapshots(
+        &connection,
+        40,
+        "2024-03-10 05:00:00",
+        2_500,
+        1,
+        Some("FLT-001"),
+        Some("Filtro de aceite"),
+        2_500,
+        Some(1_000),
+    );
+    sale(&connection, 41, "2024-03-10 06:00:00", 2_500, 1);
+    let reader = SqliteDashboardReader::new(&connection);
+    let report = reader
+        .read(
+            &range("2024-03-10T05:00:00Z", "2024-03-11T04:00:00Z"),
+            &range("2024-02-01T00:00:00Z", "2024-03-01T00:00:00Z"),
+        )
+        .unwrap();
+    assert_eq!(
+        report.today.metrics.realized_gross_profit,
+        RealizedGrossProfit::Unavailable
+    );
+    assert_eq!(
+        report.month.metrics.realized_gross_profit,
+        RealizedGrossProfit::Known(0)
+    );
+}
+
+#[test]
+fn realized_profit_serializes_as_a_tagged_known_or_unavailable_value() {
+    assert_eq!(
+        serde_json::to_value(RealizedGrossProfit::Known(-123)).unwrap(),
+        serde_json::json!({"status": "known", "amount_centavos": -123})
+    );
+    assert_eq!(
+        serde_json::to_value(RealizedGrossProfit::Unavailable).unwrap(),
+        serde_json::json!({"status": "unavailable"})
+    );
+}
+
+#[test]
+fn realized_profit_overflow_fails_the_atomic_report() {
+    let connection = open_seeded_catalog().unwrap();
+    sale_with_financial_snapshots(
+        &connection,
+        50,
+        "2024-03-10 05:00:00",
+        0,
+        2,
+        Some("FLT-001"),
+        Some("Filtro de aceite"),
+        i64::MAX,
+        Some(1),
+    );
+    let reader = SqliteDashboardReader::new(&connection);
+    assert!(reader
+        .read(
+            &range("2024-03-10T05:00:00Z", "2024-03-11T04:00:00Z"),
+            &range("2024-03-01T05:00:00Z", "2024-04-01T00:00:00Z")
+        )
+        .is_err());
 }
 
 #[test]

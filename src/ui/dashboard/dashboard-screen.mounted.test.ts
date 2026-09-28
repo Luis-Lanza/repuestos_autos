@@ -22,7 +22,7 @@ test("defines the approved desktop composition and compact labeled-record CSS co
 test("renders the approved hierarchy and complete report facts before opening stock alerts", async () => {
   mockIPC((command) => {
     assert.equal(command, "dashboard_command");
-    return { kind: "success", report: { today: { metrics: { effective_sale_count: 1, effective_total_centavos: 2500, net_units_out: 1, cancelled_sale_count: 0 } }, month: { metrics: { effective_sale_count: 2, effective_total_centavos: 5000, net_units_out: 2, cancelled_sale_count: 1 } }, top_products: [{ product_id: 1, sku: "FLT-001", product_name: "Filtro", net_units_out: 2 }], payment_distribution: [{ method: "cash", amount_applied_centavos: 5000 }], recent_sales: [{ sale_id: 2, confirmed_at: "2024-03-10 12:00:00", status: "confirmed", total_centavos: 2500 }], stock_alerts: [{ product_id: 3, sku: "BEL-001", product_name: "Correa", quantity: 0, classification: "out_of_stock" }] } };
+    return { kind: "success", report: { today: { metrics: { effective_sale_count: 1, effective_total_centavos: 2500, net_units_out: 1, cancelled_sale_count: 0, realized_gross_profit: { status: "known", amount_centavos: 1234 } } }, month: { metrics: { effective_sale_count: 2, effective_total_centavos: 5000, net_units_out: 2, cancelled_sale_count: 1, realized_gross_profit: { status: "unavailable" } } }, top_products: [{ product_id: 1, sku: "FLT-001", product_name: "Filtro", net_units_out: 2 }], payment_distribution: [{ method: "cash", amount_applied_centavos: 5000 }], recent_sales: [{ sale_id: 2, confirmed_at: "2024-03-10 12:00:00", status: "confirmed", total_centavos: 2500 }], stock_alerts: [{ product_id: 3, sku: "BEL-001", product_name: "Correa", quantity: 0, classification: "out_of_stock" }] } };
   });
   const user = userEvent.setup({ document });
   let opened = false;
@@ -31,13 +31,16 @@ test("renders the approved hierarchy and complete report facts before opening st
   const main = await screen.findByRole("main");
   assert.equal(within(main).getAllByRole("heading", { name: "Dashboard" }).length, 1);
   assert.ok(within(main).getByText("Resumen operativo de ventas e inventario."));
-  await waitFor(() => assert.equal(main.querySelectorAll("[data-ui-dashboard-metric]").length, 8));
+  await waitFor(() => assert.equal(main.querySelectorAll("[data-ui-dashboard-metric]").length, 10));
 
   const today = within(main).getByRole("region", { name: "Hoy" });
   assert.equal(within(today).getByText("Ventas efectivas").nextElementSibling?.textContent, "1");
   assert.equal(within(today).getByText("Total efectivo").nextElementSibling?.textContent, "Bs 25,00");
+  assert.equal(within(today).getByText("Ganancia bruta").nextElementSibling?.textContent, "Bs 12,34");
   const month = within(main).getByRole("region", { name: "Este mes" });
   assert.equal(within(month).getByText("Ventas canceladas").nextElementSibling?.textContent, "1");
+  assert.equal(within(month).getByText("Ganancia bruta").nextElementSibling?.textContent, "No disponible");
+  assert.deepEqual([...today.querySelectorAll("dt")].map((item) => item.textContent), ["Ventas efectivas", "Total efectivo", "Unidades netas", "Ventas canceladas", "Ganancia bruta"]);
 
   const stock = within(main).getByRole("region", { name: "Alertas de stock" });
   const top = within(main).getByRole("region", { name: "Productos más vendidos · Este mes" });
@@ -70,6 +73,16 @@ test("renders the approved hierarchy and complete report facts before opening st
   assert.equal(opened, true);
 });
 
+test("renders signed realized gross-profit losses as signed money in both periods", async () => {
+  mockIPC(() => ({ kind: "success", report: { today: { metrics: { effective_sale_count: 1, effective_total_centavos: 100, net_units_out: 1, cancelled_sale_count: 0, realized_gross_profit: { status: "known", amount_centavos: -5 } } }, month: { metrics: { effective_sale_count: 1, effective_total_centavos: 100, net_units_out: 1, cancelled_sale_count: 0, realized_gross_profit: { status: "known", amount_centavos: -1234 } } }, top_products: [], payment_distribution: [], recent_sales: [], stock_alerts: [] } }));
+  render(createElement(DashboardScreen, { onOpenInventoryAlerts: () => undefined }));
+  await screen.findAllByText("Ganancia bruta");
+  const today = screen.getByRole("region", { name: "Hoy" });
+  const month = screen.getByRole("region", { name: "Este mes" });
+  assert.equal(within(today).getByText("Ganancia bruta").nextElementSibling?.textContent, "-Bs 0,05");
+  assert.equal(within(month).getByText("Ganancia bruta").nextElementSibling?.textContent, "-Bs 12,34");
+});
+
 test("keeps dashboard sections loading instead of presenting loading as empty", async () => {
   let resolveIPC: ((value: unknown) => void) | undefined;
   mockIPC(() => new Promise((resolve) => { resolveIPC = resolve; }));
@@ -78,12 +91,14 @@ test("keeps dashboard sections loading instead of presenting loading as empty", 
   assert.ok(within(topPanel).getByText("Cargando productos más vendidos…"));
   assert.equal(within(topPanel).queryByText("No hay productos vendidos en este período."), null);
   assert.equal(screen.getAllByRole("status").length, 1);
-  resolveIPC?.({ kind: "success", report: { today: { metrics: { effective_sale_count: 0, effective_total_centavos: 0, net_units_out: 0, cancelled_sale_count: 0 } }, month: { metrics: { effective_sale_count: 0, effective_total_centavos: 0, net_units_out: 0, cancelled_sale_count: 0 } }, top_products: [], payment_distribution: [], recent_sales: [], stock_alerts: [] } });
+  resolveIPC?.({ kind: "success", report: { today: { metrics: { effective_sale_count: 0, effective_total_centavos: 0, net_units_out: 0, cancelled_sale_count: 0, realized_gross_profit: { status: "known", amount_centavos: 0 } } }, month: { metrics: { effective_sale_count: 0, effective_total_centavos: 0, net_units_out: 0, cancelled_sale_count: 0, realized_gross_profit: { status: "known", amount_centavos: 0 } } }, top_products: [], payment_distribution: [], recent_sales: [], stock_alerts: [] } });
   assert.ok(await screen.findByText("No hay productos vendidos en este período."));
   assert.ok(screen.getByText("No hay pagos registrados en este período."));
   assert.ok(screen.getByText("No hay ventas recientes."));
   assert.ok(screen.getByText("No hay alertas de stock."));
-  assert.equal(document.querySelectorAll("[data-ui-dashboard-metric] dd").length, 8);
+  assert.equal(document.querySelectorAll("[data-ui-dashboard-metric] dd").length, 10);
+  assert.equal(document.querySelectorAll("[data-ui-dashboard-metric] dd")[4]?.textContent, "Bs 0,00");
+  assert.equal(document.querySelectorAll("[data-ui-dashboard-metric] dd")[9]?.textContent, "Bs 0,00");
   assert.ok([...document.querySelectorAll("[data-ui-dashboard-metric] dd")].every((value) => value.textContent === "0" || value.textContent === "Bs 0,00"));
 });
 

@@ -6,11 +6,13 @@ import { AlignedData, Panel } from "../visual-system/structure.ts";
 import { createDashboardFlow, initialDashboardState, type DashboardState } from "./dashboard-flow.ts";
 
 const formatBs = (centavos: number) => `Bs ${Math.floor(centavos / 100)},${String(centavos % 100).padStart(2, "0")}`;
+const formatSignedBs = (centavos: number) => `${centavos < 0 ? "-" : ""}${formatBs(Math.abs(centavos))}`;
 const metricFacts = (metrics: DashboardMetrics) => [
   ["Ventas efectivas", String(metrics.effective_sale_count)],
   ["Total efectivo", formatBs(metrics.effective_total_centavos)],
   ["Unidades netas", String(metrics.net_units_out)],
   ["Ventas canceladas", String(metrics.cancelled_sale_count)],
+  ["Ganancia bruta", metrics.realized_gross_profit.status === "known" ? formatSignedBs(metrics.realized_gross_profit.amount_centavos) : "No disponible"],
 ] as const;
 const topColumns = [{ label: "ID", align: "start", kind: "numeric" }, { label: "Producto", align: "start", kind: "text" }, { label: "SKU", align: "start", kind: "sku" }, { label: "Unidades netas", align: "end", kind: "numeric" }] as const;
 const stockColumns = [{ label: "ID", align: "start", kind: "numeric" }, { label: "Producto", align: "start", kind: "text" }, { label: "SKU", align: "start", kind: "sku" }, { label: "Cantidad actual", align: "end", kind: "numeric" }, { label: "Estado", align: "start", kind: "text" }] as const;

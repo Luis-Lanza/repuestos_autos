@@ -484,6 +484,23 @@ function assertTicket11RegistrationAllowlist(libDiff: string) {
   );
 }
 
+function changedPathsFromGitOutput(trackedChanges: string, untrackedFiles: string): string[] {
+  return [...new Set(`${trackedChanges}\n${untrackedFiles}`.split("\n").map((path) => path.trim()).filter(Boolean))].sort();
+}
+
+const preExistingUnrelatedOddTaskBaseline = new Set([
+  "odd/tasks/configurable-product-locations.md",
+  "odd/tasks/developer-toolchain-rc-upgrade.md",
+  "odd/tasks/inventory-pr-delivery.md",
+  "odd/tasks/inventory-redesign.md",
+  "odd/tasks/product-status-documentation.md",
+  "odd/tasks/sales-explicit-product-details.md",
+]);
+
+function excludePreExistingUnrelatedOddTaskBaseline(changedPaths: string[]): string[] {
+  return changedPaths.filter((path) => !preExistingUnrelatedOddTaskBaseline.has(path));
+}
+
 function assertW9ProtectedDiffPolicy(
   changedPaths: string[],
   currentPackageValue: Record<string, any>,
@@ -509,6 +526,12 @@ function assertW9ProtectedDiffPolicy(
     "src/commands/onboarding.ts",
     "src-tauri/src/infrastructure/sqlite/mod.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0016_product_images.sql",
+    "src-tauri/src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql",
+    "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
+    "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+    "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/tests/dashboard_reporting.rs",
+    "src-tauri/tests/sale_cost_snapshot.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
     "src-tauri/src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql",
     "src-tauri/src/infrastructure/sqlite/catalog_repository.rs",
@@ -527,6 +550,11 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/app-shell.mounted.test.ts",
     "src/ui/inventory/inventory-screen.ts",
     "src/commands/onboarding.test.ts",
+    "src/commands/dashboard.ts",
+    "src/commands/dashboard.test.ts",
+    "src/ui/dashboard/dashboard-screen.ts",
+    "src/ui/dashboard/dashboard-screen.mounted.test.ts",
+    "docs/design/dashboard-figma-handoff.md",
     "src/ui/onboarding/onboarding-form.test.ts",
     "src/ui/onboarding/onboarding-form.ts",
     "src/ui/onboarding/onboarding-flow.test.ts",
@@ -549,6 +577,7 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/visual-system/location-picker-flow.ts",
     "src/ui/visual-system/location-picker.ts",
     "src/ui/w9-evidence-audit.test.ts",
+    "odd/tasks/dashboard-realized-gross-profit.md",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
@@ -646,8 +675,11 @@ test("W9 audits Spanish presentation, money, whole units, and non-color state cu
 });
 
 test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam", () => {
-  const changedProtectedPaths = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-  const changedPaths = changedProtectedPaths ? changedProtectedPaths.split("\n").sort() : [];
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = excludePreExistingUnrelatedOddTaskBaseline(
+    changedPathsFromGitOutput(trackedChanges, untrackedFiles),
+  );
   const libDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
   const commandSeamDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/tests/command_seam.rs"], { cwd: root, encoding: "utf8" });
   assertW9ProtectedDiffPolicy(
@@ -707,6 +739,80 @@ test("W9 allows the authorized catalog edit dialog accessible-label test correct
   );
 });
 
+test("W9 excludes only the fixed unrelated ODD baseline and keeps candidate paths live", () => {
+  const baselinePaths = [
+    "odd/tasks/configurable-product-locations.md",
+    "odd/tasks/developer-toolchain-rc-upgrade.md",
+    "odd/tasks/inventory-pr-delivery.md",
+    "odd/tasks/inventory-redesign.md",
+    "odd/tasks/product-status-documentation.md",
+    "odd/tasks/sales-explicit-product-details.md",
+  ];
+  assert.deepEqual(excludePreExistingUnrelatedOddTaskBaseline(baselinePaths), []);
+  assert.deepEqual(
+    excludePreExistingUnrelatedOddTaskBaseline([
+      ...baselinePaths,
+      "odd/tasks/dashboard-realized-gross-profit.md",
+      "odd/tasks/new-unrelated-task.md",
+    ]),
+    ["odd/tasks/dashboard-realized-gross-profit.md", "odd/tasks/new-unrelated-task.md"],
+  );
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(
+    ["odd/tasks/dashboard-realized-gross-profit.md"],
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ));
+  assert.throws(
+    () => assertW9ProtectedDiffPolicy(
+      excludePreExistingUnrelatedOddTaskBaseline(["odd/tasks/new-unrelated-task.md"]),
+      currentPackage,
+      baselinePackage,
+      currentLock,
+      baselineLock,
+      "",
+    ),
+    /unexpected protected-path drift/,
+  );
+});
+
+test("W9 includes untracked paths in the exact protected-path allowlist", () => {
+  const intendedUntrackedPaths = changedPathsFromGitOutput(
+    "",
+    [
+      "src-tauri/src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql",
+      "src-tauri/tests/sale_cost_snapshot.rs",
+    ].join("\n"),
+  );
+  assert.deepEqual(intendedUntrackedPaths, [
+    "src-tauri/src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql",
+    "src-tauri/tests/sale_cost_snapshot.rs",
+  ]);
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(
+    intendedUntrackedPaths,
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ));
+
+  const unrelatedUntrackedPath = changedPathsFromGitOutput("", "src-tauri/tests/unrelated_protected_test.rs");
+  assert.throws(
+    () => assertW9ProtectedDiffPolicy(
+      unrelatedUntrackedPath,
+      currentPackage,
+      baselinePackage,
+      currentLock,
+      baselineLock,
+      "",
+    ),
+    /unexpected protected-path drift/,
+  );
+});
+
 test("W9 rejects arbitrary protected-path and package-lock drift", () => {
   const ticket11Diff = ticket11RegistrationMarkers.map((marker) => `+ ${marker}`).join("\n");
   for (const changedPaths of [
@@ -737,13 +843,24 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
   );
 });
 
-test("W9 allows only the exact Dashboard module-registration paths", () => {
-  const dashboardRegistrationPaths = [
+test("W9 allows only the exact Dashboard and realized-profit paths", () => {
+  const dashboardPaths = [
     "src-tauri/src/application/mod.rs",
     "src-tauri/src/commands/mod.rs",
     "src-tauri/src/infrastructure/sqlite/mod.rs",
+    "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+    "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
+    "src-tauri/src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql",
+    "src-tauri/tests/dashboard_reporting.rs",
+    "src-tauri/tests/sale_cost_snapshot.rs",
+    "src/commands/dashboard.ts",
+    "src/commands/dashboard.test.ts",
+    "src/ui/dashboard/dashboard-screen.ts",
+    "src/ui/dashboard/dashboard-screen.mounted.test.ts",
+    "docs/design/dashboard-figma-handoff.md",
   ];
-  for (const changedPath of dashboardRegistrationPaths) {
+  for (const changedPath of dashboardPaths) {
     assert.doesNotThrow(
       () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
       changedPath,
@@ -751,13 +868,13 @@ test("W9 allows only the exact Dashboard module-registration paths", () => {
   }
 
   for (const changedPath of [
-    "src-tauri/src/application/reporting/mod.rs",
-    "src-tauri/src/commands/dashboard.rs",
-    "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+    "src-tauri/src/application/reporting/other_report.rs",
+    "src-tauri/src/commands/unrelated_dashboard.rs",
+    "src-tauri/src/infrastructure/sqlite/other_dashboard_repository.rs",
+    "src-tauri/src/infrastructure/sqlite/migrations/0022_unrelated.sql",
     "src-tauri/src/infrastructure/sqlite/migrations/0018_unrelated.sql",
     "src-tauri/src/infrastructure/sqlite/another_repository.rs",
     "src-tauri/tests/catalog_images.rs",
-    "src-tauri/tests/dashboard_reporting.rs",
     "src-tauri/src/application",
     "src-tauri/src/commands",
     "src-tauri/src/infrastructure/sqlite",
