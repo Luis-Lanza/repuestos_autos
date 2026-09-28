@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { OnboardingScreen } from "./onboarding-screen.ts";
 
 const category = { category_id: 1, name: "Filtros", fields: [{ definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] }] };
+const decimalCategory = { category_id: 1, name: "Filtros", fields: [{ definition_id: 11, label: "Longitud", field_type: "number", required: true, options: [] }] };
 const success = () => ({ kind: "success", categories: [category] });
 async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1");
@@ -36,6 +37,25 @@ test("renders shared Spanish panels and submits required purchase and sale price
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
 });
+test("submits finite decimal values for number category attributes", async () => {
+  let request: unknown;
+  mockIPC((command, payload) => command === "list_categories_command" ? { kind: "success", categories: [decimalCategory] } : command === "create_product_command" ? (request = payload, { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true }) : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  const attribute = await screen.findByRole("spinbutton", { name: "Longitud" });
+  assert.equal(attribute.getAttribute("step"), "any");
+  await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1");
+  await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00");
+  await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50");
+  await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00");
+  await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
+  await user.type(attribute, "1.25");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 11, value: "1.25" }] } });
+  assert.ok(await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true }));
+});
+
 test("optionally assigns a generated active location after product creation", async () => {
   const calls: Array<{ command: string; payload: unknown }> = [];
   mockIPC((command, payload) => {
@@ -90,6 +110,38 @@ test("keeps product creation successful when the follow-up location assignment f
   const feedback = await screen.findByText(/Producto creado: FIL-1.*No se pudo asignar la ubicación principal/);
   assert.equal(feedback.getAttribute("role"), "status");
   assert.equal(screen.queryByRole("alert"), null);
+});
+
+test("focuses and explains a missing required category attribute before submission", async () => {
+  let calls = 0;
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? (calls++, undefined) : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1");
+  await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00");
+  await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50");
+  await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00");
+  await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  const attribute = screen.getByRole("textbox", { name: "Marca" });
+  assert.equal(document.activeElement, attribute);
+  assert.equal(attribute.getAttribute("aria-invalid"), "true");
+  assert.ok(screen.getByText("Completá este campo."));
+  assert.equal(calls, 0);
+});
+
+test("shows actionable fallback when the backend rejects a category attribute", async () => {
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? { kind: "error", code: "invalid_attribute_value", message: "raw detail" } : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  const feedback = await screen.findByRole("alert");
+  assert.equal(feedback.textContent, "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones.");
+  assert.equal(screen.queryByText(/Producto creado:/), null);
 });
 
 test("shows the safe specific create-product failure reason", async () => {

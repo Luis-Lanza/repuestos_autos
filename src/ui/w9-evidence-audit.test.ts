@@ -524,6 +524,8 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/app-shell.mounted.test.ts",
     "src/ui/inventory/inventory-screen.ts",
     "src/commands/onboarding.test.ts",
+    "src/ui/onboarding/onboarding-form.test.ts",
+    "src/ui/onboarding/onboarding-form.ts",
     "src/ui/onboarding/onboarding-flow.test.ts",
     "src/ui/onboarding/onboarding-flow.ts",
     "src/ui/onboarding/onboarding-screen.mounted.test.ts",

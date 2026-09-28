@@ -4,7 +4,7 @@ import { CATALOG_TARGET, catalogMaintenanceCommands, productLocationCommands, ty
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { LocationPicker } from "../visual-system/location-picker.ts";
 import { Panel } from "../visual-system/structure.ts";
-import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole } from "./onboarding-form.ts";
+import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
 import { canSubmitCategory, canSubmitProduct, createOnboardingFlow, initialOnboardingState } from "./onboarding-flow.ts";
 
 interface Props { onBack: () => void }
@@ -74,8 +74,13 @@ export function OnboardingScreen({ onBack }: Props) {
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmitProduct(state) || productLock.current) return;
-    const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(purchasePrice) === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parsePositiveWhole(stock) === null ? "stock" : (selected.fields.find((field) => field.required && !(attributes[field.definition_id] ?? "").trim()) ? "attribute" : "");
-    if (productErrors) { setFieldError(productErrors); focus(productErrors === "category" ? "product-category" : productErrors === "sku" ? "product-sku" : productErrors === "name" ? "product-name" : productErrors === "purchase-price" ? "purchase-price" : productErrors === "list-price" ? "list-price" : productErrors === "minimum-price" ? "minimum-sale-price" : productErrors === "stock" ? "opening-stock" : `attribute-${selected?.fields.find((field) => field.required && !(attributes[field.definition_id] ?? "").trim())?.definition_id}`); return; }
+    const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(purchasePrice) === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parsePositiveWhole(stock) === null ? "stock" : "";
+    const attributeError = selected && !productErrors ? validateCategoryAttributes(selected, attributes) : null;
+    if (productErrors || attributeError) {
+      setFieldError(attributeError ? `attribute-${attributeError.definitionId}` : productErrors);
+      focus(attributeError ? `attribute-${attributeError.definitionId}` : productErrors === "category" ? "product-category" : productErrors === "sku" ? "product-sku" : productErrors === "name" ? "product-name" : productErrors === "purchase-price" ? "purchase-price" : productErrors === "list-price" ? "list-price" : productErrors === "minimum-price" ? "minimum-sale-price" : "opening-stock");
+      return;
+    }
     const id = ++mutation.current; productLock.current = true; setFieldError(""); dispatch({ type: "product_started", requestId: id });
     try {
       const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: parseBsToCentavos(purchasePrice)!, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(selected!, attributes) });
@@ -101,13 +106,15 @@ export function OnboardingScreen({ onBack }: Props) {
         dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.${locationMessage}` });
         setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setAttributes({}); setPrimaryLocationId("");
       }
-      else dispatch({ type: "product_failed", requestId: id, message: response.message });
+      else if (response.code === "invalid_attribute_value") {
+        dispatch({ type: "product_failed", requestId: id, message: "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones." });
+      } else dispatch({ type: "product_failed", requestId: id, message: response.message });
     } catch { if (mounted.current && id === mutation.current) dispatch({ type: "product_failed", requestId: id }); }
     finally { productLock.current = false; }
   };
   const pending = state.categoryStatus === "pending" || state.productStatus === "pending";
   const feedback = state.feedback && (state.categoryStatus === "error" || state.productStatus === "error" || state.categoryStatus === "success" || state.productStatus === "success") ? h(Feedback, { kind: state.categoryStatus === "error" || state.productStatus === "error" ? "error" : "success" } as never, state.feedback) : null;
-  const fieldControl = (field: Category["fields"][number]) => field.field_type === FIELD_TYPE.OPTION ? h("select", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) }, h("option", { value: "" }, "Seleccioná"), field.options.map((option) => h("option", { key: option, value: option }, option))) : h("input", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, type: field.field_type === FIELD_TYPE.NUMBER ? "number" : "text", value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) });
+  const fieldControl = (field: Category["fields"][number]) => field.field_type === FIELD_TYPE.OPTION ? h("select", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) }, h("option", { value: "" }, "Seleccioná"), field.options.map((option) => h("option", { key: option, value: option }, option))) : h("input", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, type: field.field_type === FIELD_TYPE.NUMBER ? "number" : "text", step: field.field_type === FIELD_TYPE.NUMBER ? "any" : undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) });
 
   return h("main", { "aria-labelledby": "onboarding-heading", "data-ui-onboarding": true },
     h("h1", { id: "onboarding-heading" }, "Alta de productos"), h(Action, { variant: "tertiary", onClick: onBack }, "Volver a ventas"), feedback,
@@ -127,7 +134,7 @@ export function OnboardingScreen({ onBack }: Props) {
         h(Field, { kind: "quantity", label: "Stock inicial (unidades enteras)", error: fieldError === "stock" ? "Ingresá una cantidad entera mayor que cero." : undefined, control: h("input", { id: "opening-stock", value: stock, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setStock(event.target.value) }) } as never),
         h(LocationPicker, { id: "product-primary-location", label: "Ubicación principal (opcional)", locations: productLocations, segments: locationSegments, selectedId: primaryLocationId, disabled: pending, status: locationsStatus, onChange: setPrimaryLocationId }),
         locationsStatus === "error" ? h("p", null, "Podés asignar la ubicación después desde Catálogo.") : null,
-        selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === "attribute" && field.required && !(attributes[field.definition_id] ?? "").trim() ? "Completá este campo." : undefined, control: fieldControl(field) } as never)),
+        selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === `attribute-${field.definition_id}` ? validateCategoryAttributes(selected!, attributes)?.message : undefined, control: fieldControl(field) } as never)),
         h(Action, { variant: "primary", type: "submit", pending: state.productStatus === "pending", pendingLabel: "Creando producto…" }, "Crear producto"))))
   );
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Category } from "../../commands/onboarding.ts";
-import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole } from "./onboarding-form.ts";
+import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole, validateCategoryAttributes } from "./onboarding-form.ts";
 
 const category: Category = { category_id: 1, name: "Filtros", fields: [
   { definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] },
@@ -10,6 +10,16 @@ const category: Category = { category_id: 1, name: "Filtros", fields: [
 
 test("preserves required blank attributes and omits optional blank attributes", () => {
   assert.deepEqual(attributeValuesFor(category, { 10: "", 11: "" }), [{ definition_id: 10, value: "" }]);
+});
+test("validates required attributes, finite numbers, and exact option membership", () => {
+  const typedCategory: Category = { ...category, fields: [
+    ...category.fields,
+    { definition_id: 12, label: "Cantidad", field_type: "number", required: false, options: [] },
+  ] };
+  assert.deepEqual(validateCategoryAttributes(typedCategory, { 10: "  " }), { definitionId: 10, message: "Completá este campo." });
+  assert.deepEqual(validateCategoryAttributes(typedCategory, { 10: "ACDelco", 11: "Metal" }), { definitionId: 11, message: "Seleccioná una opción válida." });
+  assert.deepEqual(validateCategoryAttributes(typedCategory, { 10: "ACDelco", 11: "Goma", 12: "Infinity" }), { definitionId: 12, message: "Ingresá un número válido y finito." });
+  assert.deepEqual(validateCategoryAttributes(typedCategory, { 10: "ACDelco", 11: "Goma", 12: "12.5" }), null);
 });
 test("parses comma and dot decimals into integer centavos", () => {
   assert.equal(parseBsToCentavos("125,50"), 12550); assert.equal(parseBsToCentavos("125.5"), 12550);

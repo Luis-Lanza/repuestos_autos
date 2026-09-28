@@ -15,6 +15,19 @@ export function parsePositiveWhole(value: string): number | null {
   return Number.isSafeInteger(quantity) && quantity > 0 ? quantity : null;
 }
 
+export interface AttributeValidationError { definitionId: number; message: string }
+
+export function validateCategoryAttributes(category: Category, values: Readonly<Record<number, string>>): AttributeValidationError | null {
+  for (const field of category.fields) {
+    const value = values[field.definition_id] ?? "";
+    if (field.required && !value.trim()) return { definitionId: field.definition_id, message: "Completá este campo." };
+    if (!value.trim()) continue;
+    if (field.field_type === "number" && (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim()) || !Number.isFinite(Number(value)))) return { definitionId: field.definition_id, message: "Ingresá un número válido y finito." };
+    if (field.field_type === "option" && !field.options.includes(value)) return { definitionId: field.definition_id, message: "Seleccioná una opción válida." };
+  }
+  return null;
+}
+
 export function attributeValuesFor(category: Category, values: Readonly<Record<number, string>>): AttributeValueInput[] {
   return category.fields.filter((field) => field.required || (values[field.definition_id] ?? "") !== "").map((field) => ({
     definition_id: field.definition_id, value: values[field.definition_id] ?? "",
