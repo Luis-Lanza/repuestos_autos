@@ -30,6 +30,8 @@ Category fields are created only during onboarding. The existing category editor
 - [x] T3 Expose schema editing through typed Tauri/TypeScript contracts and enforce stale product-schema handling. Route: delegated direct; trigger: multi-file write. Checks: Rust command registration/contracts, TypeScript runtime decoders, malformed payloads, and product mutation conflict tests.
 - [x] T4 Add accessible Manage Categories editor controls for adding and retiring fields. Route: delegated direct; trigger: multi-file write. Checks: flow and mounted tests for drafts, confirmation, pending/error/stale states, keyboard accessibility, and existing product form/detail behavior.
 - [x] T5 Run focused end-to-end seam validation and independent verification. Route: delegated direct; trigger: verification. Checks: full Rust suite, full frontend suite, test typecheck, and diff check all pass.
+- [x] T6 Refine category editor visuals from Windows review. Route: delegated direct; trigger: multi-file write. Checks: mounted editor scroll/save behavior and focused mounted suite.
+- [x] T7 Fix Windows visual defects in the category editor: prevent sticky identity overlap, compact/align required checkbox, and add accessible per-draft discard. Route: delegated direct; trigger: multi-file write. Checks: mounted interactions preserve remaining drafts, category save action, and retirement confirmation.
 
 ## Acceptance Criteria
 - A category can gain a valid field through its edit dialog.
@@ -61,6 +63,7 @@ Category fields are created only during onboarding. The existing category editor
 - 2026-09-27: Fixed two independently verified T4 regressions: retired required product attributes are omitted from edit form state, field validation, and edit requests while backend detail continues to retain historical definitions/values; a stale category-schema product edit now reloads selected authoritative detail through the established stale-record recovery flow. Added unit and mounted regression coverage, including existing stale-product recovery behavior.
 - T5 final stale current-schema assertion now compares against `CURRENT_SCHEMA_VERSION`; `cargo test --manifest-path src-tauri/Cargo.toml` passed, `npm test` passed (307 tests), `npm run typecheck:tests` passed, and `git diff --check` passed.
 - T6 Windows visual refinement: active category definitions now render as compact immutable rows, retired definitions remain compact history, drafts use compact grouped controls, and the dialog footer owns the single primary save action. Category name edits remain supported through that action, including when schema changes are submitted first; the dialog content is its sole internal scroll region. Retirement confirmation and dialog semantics remain unchanged. The focused mounted suite passed (33 tests); `git diff --check` passed.
+- T7 Windows visual correction: removed sticky positioning from the category identity banner so it cannot cover the category-name label/content; required checkbox and label now form a compact inline row; every unsaved draft has an accessible Discard action that removes only that draft. Mounted coverage verifies individual discard while retaining another draft and its entered value; existing mounted assertions continue to cover one primary save and confirmed retirement. Exact mounted runner passed (34 tests); `git diff --check` passed.
 
 ## Next Step
-- T1–T6 are complete; focused mounted category validation and diff check passed.
+- T1–T7 are complete; focused mounted category validation and diff check passed.

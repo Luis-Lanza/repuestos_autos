@@ -304,6 +304,29 @@ test("adds category fields and retires existing fields only after confirmation",
   await waitFor(() => assert.deepEqual(schemaRequest, { category_id: 4, expected_revision: 2, fields: [{ definition_id: null, label: "Length", field_type: "text", required: false, options: [] }] }));
 });
 
+test("keeps category identity out of the sticky scroll layer and supports discarding only an unsaved draft", async () => {
+  mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  assert.ok(dialog.querySelector("[data-ui-catalog-identity]"));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  const firstDraft = within(dialog).getByRole("group", { name: "Campo nuevo 1" });
+  const secondDraft = within(dialog).getByRole("group", { name: "Campo nuevo 2" });
+  const required = within(firstDraft).getByRole("checkbox", { name: "Obligatorio" });
+  assert.ok(required.id);
+  await userEvent.type(within(secondDraft).getByRole("textbox", { name: "Nombre del campo" }), "Keep this draft");
+  assert.ok(within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" }));
+  await userEvent.click(within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" }));
+  assert.equal(dialog.querySelectorAll("[data-ui-category-schema-draft]").length, 1);
+  assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Keep this draft");
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-catalog-identity\] \{(?![^}]*position:\s*sticky)[^}]*display:\s*flex/);
+  assert.match(css, /\[data-ui-category-schema-draft\] \[data-ui-kind="checkbox"\] \{ grid-column: 1; display: flex; align-items: center/);
+  assert.match(css, /\[data-ui-category-schema-draft\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 1rem; block-size: 1rem/);
+});
+
 test("keeps one compact scroll region and one category save action", async () => {
   mockIPC((command) => command === "catalog_metadata_detail_command" ? { ...categoryDetail, attribute_definitions: [{ definition_id: 11, label: "Material", field_type: "text" as const, required: false, options: [], active: true }] } : baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));

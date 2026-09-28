@@ -292,6 +292,11 @@ export function CatalogMaintenanceScreen() {
   };
   const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : { ...current, [field]: value });
   const addCategoryField = () => setForm((current) => current?.category_fields ? { ...current, category_fields: [...current.category_fields, { definition_id: null, label: "", field_type: "text", required: false, options: "", active: true }] } : current);
+  const removeCategoryFieldDraft = (index: number) => setForm((current) => {
+    const field = current?.category_fields?.[index];
+    if (!current?.category_fields || field?.definition_id !== null) return current;
+    return { ...current, category_fields: current.category_fields.filter((_, fieldIndex) => fieldIndex !== index) };
+  });
   const changeCategoryField = (index: number, field: string, value: string | boolean) => setForm((current) => current?.category_fields ? { ...current, category_fields: current.category_fields.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) } : current);
   const requestCategoryFieldRetirement = (index: number) => {
     const field = form?.category_fields?.[index];
@@ -405,7 +410,7 @@ export function CatalogMaintenanceScreen() {
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
     retirementConfirmation ? createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",
