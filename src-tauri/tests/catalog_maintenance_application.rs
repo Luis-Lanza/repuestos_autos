@@ -6,7 +6,8 @@ use repuestos_autos::application::catalog::{
     MaintainCatalogUseCase,
 };
 use repuestos_autos::domain::catalog::{
-    AttributeDefinition, CatalogActivity, CatalogIntent, CatalogSnapshot, CatalogTarget, FieldType,
+    AttributeDefinition, CatalogActivity, CatalogIntent, CatalogSnapshot, CatalogTarget,
+    CategoryFieldLifecycle, CategorySchemaPlan, ExistingCategorySchemaField, FieldType,
     ValidatedAttributeValue,
 };
 use repuestos_autos::infrastructure::sqlite::{open_seeded_catalog, SqliteCatalogRepository};
@@ -44,6 +45,29 @@ impl CatalogMetadataRepository for MetadataRepository {
     ) -> rusqlite::Result<bool> {
         Ok(self.duplicate)
     }
+    fn category_schema(
+        &self,
+        _: &rusqlite::Transaction<'_>,
+        _: i64,
+    ) -> rusqlite::Result<Vec<ExistingCategorySchemaField>> {
+        Ok(vec![ExistingCategorySchemaField {
+            definition_id: 1,
+            label: "Material".into(),
+            field_type: FieldType::Text,
+            required: false,
+            options: vec![],
+            lifecycle: CategoryFieldLifecycle::Active,
+        }])
+    }
+    fn apply_category_schema(
+        &self,
+        _: &rusqlite::Transaction<'_>,
+        _: i64,
+        revision: i64,
+        _: &CategorySchemaPlan,
+    ) -> rusqlite::Result<CatalogSnapshot> {
+        Ok(snapshot(CatalogTarget::Category, revision + 1))
+    }
     fn product_metadata_for_normalized_patch(
         &self,
         _: &rusqlite::Transaction<'_>,
@@ -52,6 +76,7 @@ impl CatalogMetadataRepository for MetadataRepository {
         _: &str,
     ) -> rusqlite::Result<Option<ProductMetadata>> {
         Ok(Some(ProductMetadata {
+            category_revision: 0,
             definitions: vec![AttributeDefinition {
                 id: 1,
                 field_type: FieldType::Number,
@@ -115,6 +140,7 @@ fn product(revision: i64) -> EditCatalogInput {
         2_000,
         4_000,
         3_000,
+        0,
         vec![repuestos_autos::application::catalog::AttributeValueInput {
             definition_id: 1,
             value: "2".into(),
@@ -174,4 +200,12 @@ fn product_patches_advance_or_reject_normalized_names_and_guarded_stale_writes()
     for (duplicate, revision, write_stale, expected) in cases {
         assert_eq!(edit(product(revision), duplicate, write_stale), expected);
     }
+    assert_eq!(
+        edit(
+            EditCatalogInput::product(1, 0, "FLT-002", "Premium Filter", 2_000, 4_000, 3_000, 1, vec![]),
+            false,
+            false,
+        ),
+        Err(MaintainCatalogError::StaleCategorySchema)
+    );
 }

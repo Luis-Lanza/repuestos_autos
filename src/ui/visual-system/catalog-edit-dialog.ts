@@ -18,6 +18,11 @@ export interface CatalogEditDialogProps {
   onChange: (field: string, value: string) => void;
   onSubmit: () => void;
   onLifecycle: () => void;
+  onAddCategoryField?: () => void;
+  onChangeCategoryField?: (index: number, field: string, value: string | boolean) => void;
+  onRetireCategoryField?: (index: number) => void;
+  onRemoveCategoryFieldDraft?: (index: number) => void;
+  onSaveCategorySchema?: () => void;
   imageThumbnail?: string | null;
   imagePending?: boolean;
   imageFeedback?: string | null;
@@ -38,7 +43,7 @@ interface CatalogMetadataEditorProps {
   onSubmit: () => void;
 }
 
-export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback, fieldErrors, onChange, onSubmit }: CatalogMetadataEditorProps) {
+export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }: CatalogMetadataEditorProps & Pick<CatalogEditDialogProps, "onAddCategoryField" | "onChangeCategoryField" | "onRetireCategoryField" | "onRemoveCategoryFieldDraft">) {
   const attribute = (definition: CatalogMetadataDetail["attribute_definitions"][number]) => {
     const field = `attribute-${definition.definition_id}`;
     const label = `${definition.label}${definition.required ? " (obligatorio)" : " (opcional)"}`;
@@ -62,18 +67,37 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
       detail.target === "product" ? createElement("span", null, `Categoría: ${detail.category_id}`) : null),
     detail.activity === "archived" ? createElement(Feedback, { kind: "advisory" } as never, "Registro archivado. Editar metadatos no lo reactiva.") : null,
     createElement(Field, { kind: "text", label: detail.target === "category" ? "Nombre de la categoría" : "Nombre del producto", error: fieldErrors.name, control: createElement("input", { id: "catalog-edit-name", ref: nameRef, disabled: pending, value: form.name, onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("name", event.target.value) }) } as never),
+    detail.target === "category" ? createElement("fieldset", { "data-ui-category-schema": true },
+      createElement("legend", null, "Campos de la categoría"),
+      createElement("p", null, "Los campos retirados quedan como historial y no se pueden editar ni reactivar."),
+      (form.category_fields ?? []).map((field, index) => field.active
+        ? field.definition_id !== null
+          ? createElement("div", { key: field.definition_id, role: "group", "aria-label": `Campo ${field.label}`, "data-ui-category-schema-field": true, "data-ui-category-schema-existing": true },
+            createElement("strong", null, field.label),
+            createElement("span", null, `Tipo: ${field.field_type === "text" ? "Texto" : field.field_type === "number" ? "Número" : "Opciones"}`),
+            createElement("span", null, field.required ? "Obligatorio" : "Opcional"),
+            createElement(Action, { variant: "destructive", disabled: pending, onClick: () => onRetireCategoryField?.(index), "aria-label": `Retirar ${field.label}` }, "Retirar"))
+          : createElement("div", { key: `new-${index}`, role: "group", "aria-label": `Campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`, "data-ui-category-schema-field": true, "data-ui-category-schema-draft": true },
+            createElement("div", { "data-ui-category-schema-draft-controls": true },
+              createElement("div", { "data-ui-category-schema-draft-name": true }, createElement(Field, { kind: "text", label: "Nombre del campo", control: createElement("input", { disabled: pending, value: field.label, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "label", event.currentTarget.value) }) } as never)),
+              createElement(Field, { kind: "select", label: "Tipo", control: createElement("select", { disabled: pending, value: field.field_type, onChange: (event: ChangeEvent<HTMLSelectElement>) => onChangeCategoryField?.(index, "field_type", event.currentTarget.value) }, createElement("option", { value: "text" }, "Texto"), createElement("option", { value: "number" }, "Número"), createElement("option", { value: "option" }, "Opciones")) } as never),
+              createElement(Field, { kind: "checkbox", label: "Obligatorio", control: createElement("input", { type: "checkbox", disabled: pending, checked: field.required, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "required", event.currentTarget.checked) }) } as never),
+              createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => onRemoveCategoryFieldDraft?.(index), "aria-label": `Descartar campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`, "data-ui-category-schema-discard": true }, "×")),
+            field.field_type === "option" ? createElement("div", { "data-ui-category-schema-options": true }, createElement(Field, { kind: "text", label: "Opciones (separadas por coma)", control: createElement("input", { disabled: pending, value: field.options, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "options", event.currentTarget.value) }) } as never)) : null)
+        : createElement("p", { key: field.definition_id ?? `new-${index}`, "data-ui-retired-category-field": true }, `${field.label} — Retirado (histórico; no editable ni reactivable)`)),
+      createElement(Action, { variant: "secondary", disabled: pending, onClick: onAddCategoryField }, "Agregar campo")) : null,
     detail.target === "product" ? createElement("fieldset", null,
       createElement("legend", null, "Datos generales"),
       createElement(Field, { kind: "sku", label: "SKU", error: fieldErrors.sku, control: createElement("input", { id: "catalog-edit-sku", disabled: pending, value: form.sku ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("sku", event.target.value) }) } as never),
       createElement(Field, { kind: "money", label: "Precio actual de compra (Bs)", hint: "Costo actual de compra. Se guarda en centavos.", error: fieldErrors.purchase_price_centavos, control: createElement("input", { id: "catalog-edit-purchase-price", disabled: pending, value: form.purchase_price_centavos ?? "", "aria-required": true, onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("purchase_price_centavos", event.target.value) }) } as never),
       createElement(Field, { kind: "money", label: "Precio de venta (Bs)", hint: "Referencia para nuevas ventas. Se guarda en centavos.", error: fieldErrors.sale_price_centavos, control: createElement("input", { id: "catalog-edit-sale-price", disabled: pending, value: form.sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("sale_price_centavos", event.target.value) }) } as never),
       createElement(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de venta.", error: fieldErrors.minimum_sale_price_centavos, control: createElement("input", { id: "catalog-edit-minimum-price", disabled: pending, value: form.minimum_sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("minimum_sale_price_centavos", event.target.value) }) } as never),
-      detail.attribute_definitions.length ? createElement("fieldset", null, createElement("legend", null, "Atributos dinámicos"), detail.attribute_definitions.map(attribute)) : null) : null,
+      detail.attribute_definitions.some((field) => field.active !== false) ? createElement("fieldset", null, createElement("legend", null, "Atributos dinámicos"), detail.attribute_definitions.filter((field) => field.active !== false).map(attribute)) : null) : null,
     createElement("button", { type: "submit", tabIndex: -1, "aria-hidden": "true", hidden: true }, "Guardar"),
     feedback ? createElement(Feedback, { kind: "error" } as never, feedback) : null);
 }
 
-export function CatalogEditDialog({ record, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, imageThumbnail = null, imagePending = false, imageFeedback = null, onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onReload, onCancel }: CatalogEditDialogProps) {
+export function CatalogEditDialog({ record, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, imageThumbnail = null, imagePending = false, imageFeedback = null, onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft, onSaveCategorySchema, onReload, onCancel }: CatalogEditDialogProps) {
   const nameRef = useRef<HTMLInputElement>(null);
   const hasFocusedDetail = useRef(false);
   const dialogPending = loading || pending;
@@ -90,16 +114,16 @@ export function CatalogEditDialog({ record, detail, form, loading, pending, feed
     purpose: "routine",
     title,
     description: detail ? "Editá los metadatos del registro seleccionado y guardá los cambios." : loading ? "Cargando el detalle autorizado del registro seleccionado…" : "No se pudo cargar el detalle del registro seleccionado.",
-    confirmLabel: "Guardar metadatos",
+    confirmLabel: detail?.target === "category" ? "Guardar cambios" : "Guardar metadatos",
     pending: dialogPending || imagePending,
     pendingLabel: imagePending ? "Procesando imagen…" : loading ? "Cargando detalle…" : "Guardando metadatos…",
     confirmDisabled: !detail || !form || recoveryRequired || imagePending,
     dialogId: "catalog-edit-dialog",
     dialogDataAttribute: "catalog-edit-dialog",
     onCancel,
-    onConfirm: onSubmit,
+    onConfirm: detail?.target === "category" ? onSaveCategorySchema ?? onSubmit : onSubmit,
     children: detail && form ? createElement("div", { "data-ui-catalog-edit-content": true },
-      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit }),
+      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }),
       detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
         createElement("h3", null, "Imagen del producto"),
         imageThumbnail ? createElement("img", { src: imageThumbnail, alt: `Imagen de ${detail.name}`, "data-ui-catalog-product-image-preview": true }) : createElement("p", null, "Sin imagen"),

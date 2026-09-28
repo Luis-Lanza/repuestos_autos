@@ -14,10 +14,13 @@ const browseProduct = { product_id: 1, category_id: 4, sku: "FIL-PRE-014", name:
 const browse = (products = [browseProduct]) => ({ kind: "success", products, categories: [{ category_id: 4, name: "Filtros" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const categoryDetail = { target: "category" as const, entity_id: 4, name: "Filtros", activity: "active" as const, revision: 2, attribute_definitions: [] };
 const productDetail = {
-  target: "product" as const, entity_id: 1, category_id: 4, sku: "FIL-PRE-014", name: "Filtro Premium",
+  target: "product" as const, entity_id: 1, category_id: 4, category_revision: 1, sku: "FIL-PRE-014", name: "Filtro Premium",
   purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, activity: "active" as const, revision: 7,
-  attribute_definitions: [{ definition_id: 10, label: "Marca", field_type: "text" as const, required: true, options: [] }],
-  attribute_values: [{ definition_id: 10, value: "Bosch" }],
+  attribute_definitions: [
+    { definition_id: 10, label: "Marca", field_type: "text" as const, required: true, options: [], active: true },
+    { definition_id: 11, label: "Código histórico", field_type: "text" as const, required: true, options: [], active: false },
+  ],
+  attribute_values: [{ definition_id: 10, value: "Bosch" }, { definition_id: 11, value: "LEGACY-11" }],
 };
 const brakeProduct = { ...browseProduct, product_id: 2, sku: "BRK-001", name: "Pastilla de freno" };
 
@@ -264,6 +267,122 @@ test("keeps browsing free of the inline editor and opens a named category modal 
   await waitFor(() => assert.equal(document.activeElement, opener));
 });
 
+test("adds category fields and retires existing fields only after confirmation", async () => {
+  const detail = { ...categoryDetail, attribute_definitions: [
+    { definition_id: 11, label: "Material", field_type: "text" as const, required: true, options: [], active: true },
+    { definition_id: 12, label: "Legacy code", field_type: "number" as const, required: false, options: [], active: false },
+  ] };
+  let schemaRequest: Record<string, unknown> | undefined;
+  mockIPC((command, payload) => {
+    if (command === "catalog_metadata_detail_command") return detail;
+    if (command === "edit_category_schema_command") { schemaRequest = payload?.request as Record<string, unknown>; return { kind: "success", entity_id: 4, target: "category", label: "", activity: "active", revision: 3 }; }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  assert.ok(within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }));
+  const existingField = within(dialog).getByRole("group", { name: "Campo Material" });
+  assert.match(existingField.textContent ?? "", /Texto.*Obligatorio/);
+  assert.equal(within(existingField).queryByRole("textbox"), null);
+  assert.ok(within(dialog).getByText(/Legacy code — Retirado.*no editable ni reactivable/));
+  assert.equal(within(dialog).queryByRole("button", { name: /Reactivar.*Legacy code/ }), null);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Retirar Material" });
+  assert.equal(schemaRequest, undefined);
+  await userEvent.click(within(confirmation).getByRole("button", { name: "Volver" }));
+  assert.ok(within(dialog).getByRole("button", { name: "Retirar Material" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
+  await userEvent.click(within(await screen.findByRole("dialog", { name: "Retirar Material" })).getByRole("button", { name: "Confirmar retiro" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  const draft = within(dialog).getByRole("group", { name: "Campo nuevo 1" });
+  const fieldNames = within(draft).getAllByRole("textbox", { name: "Nombre del campo" });
+  assert.equal(fieldNames.length, 1);
+  await userEvent.type(fieldNames[0], "Length");
+  assert.equal(within(dialog).getAllByRole("button", { name: /Guardar/ }).length, 1);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
+  await waitFor(() => assert.deepEqual(schemaRequest, { category_id: 4, expected_revision: 2, fields: [{ definition_id: null, label: "Length", field_type: "text", required: false, options: [] }] }));
+});
+
+test("keeps category identity out of the sticky scroll layer and supports discarding only an unsaved draft", async () => {
+  mockIPC((command) => command === "catalog_metadata_detail_command" ? categoryDetail : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  assert.ok(dialog.querySelector("[data-ui-catalog-identity]"));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  const firstDraft = within(dialog).getByRole("group", { name: "Campo nuevo 1" });
+  const secondDraft = within(dialog).getByRole("group", { name: "Campo nuevo 2" });
+  const required = within(firstDraft).getByRole("checkbox", { name: "Obligatorio" });
+  assert.ok(required.id);
+  assert.ok(firstDraft.querySelector("[data-ui-category-schema-draft-name]")?.contains(within(firstDraft).getByRole("textbox", { name: "Nombre del campo" })));
+  const discard = within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" });
+  assert.equal(discard.textContent, "×");
+  assert.equal(discard.getAttribute("data-ui-category-schema-discard"), "true");
+  assert.equal(firstDraft.querySelector("fieldset"), null);
+  assert.equal(firstDraft.querySelector("[data-ui-category-schema-draft-heading]"), null);
+  assert.equal(firstDraft.querySelectorAll("[data-ui-category-schema-draft-controls] > *").length, 4);
+  assert.equal(within(firstDraft).queryByRole("textbox", { name: "Opciones (separadas por coma)" }), null);
+  await userEvent.selectOptions(within(firstDraft).getByRole("combobox", { name: "Tipo" }), "option");
+  assert.ok(within(firstDraft).getByRole("textbox", { name: "Opciones (separadas por coma)" }));
+  await userEvent.selectOptions(within(firstDraft).getByRole("combobox", { name: "Tipo" }), "text");
+  assert.equal(within(firstDraft).queryByRole("textbox", { name: "Opciones (separadas por coma)" }), null);
+  await userEvent.type(within(secondDraft).getByRole("textbox", { name: "Nombre del campo" }), "Keep this draft");
+  assert.ok(discard);
+  await userEvent.click(within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" }));
+  assert.equal(dialog.querySelectorAll("[data-ui-category-schema-draft]").length, 1);
+  assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Keep this draft");
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-catalog-identity\] \{(?![^}]*position:\s*sticky)[^}]*display:\s*flex/);
+  assert.match(css, /\[data-ui-category-schema-draft-name\] \{ flex: 1 1 0; min-inline-size: 0; \}/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{ display: flex; flex-wrap: nowrap/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] > \[data-ui-field="select"\] \{ flex: 0 0 9rem; min-inline-size: 9rem; \}/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] > label \{ min-inline-size: 0; min-height: 0; white-space: nowrap; \}/);
+  assert.match(css, /@media \(max-width: 699px\) \{\s*\[data-ui-category-schema-draft-controls\] \{ flex-wrap: wrap; \}\s*\[data-ui-category-schema-draft-name\] \{ flex-basis: 100%; \}/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 1rem; block-size: 1rem; flex: 0 0 1rem; appearance: auto/);
+  assert.match(css, /\[data-ui-category-schema-discard\] \{ flex: 0 0 auto; inline-size: 2\.5rem; min-block-size: 2\.5rem/);
+  assert.match(css, /\[data-ui-category-schema-existing\] \{ min-block-size: 3rem/);
+  assert.match(css, /\[data-ui-retired-category-field\] \{ display: flex; min-block-size: 3rem/);
+  assert.match(css, /@media \(min-width: 700px\) \{\s*\[data-ui-catalog-edit-dialog\] \{ inline-size: min\(680px, 100%\)/);
+  assert.match(css, /\[data-ui-category-schema-options\] \{ inline-size: 100%; min-inline-size: 0/);
+});
+
+test("keeps one compact scroll region and one category save action", async () => {
+  mockIPC((command) => command === "catalog_metadata_detail_command" ? { ...categoryDetail, attribute_definitions: [{ definition_id: 11, label: "Material", field_type: "text" as const, required: false, options: [], active: true }] } : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  assert.equal(within(dialog).getAllByRole("button", { name: /Guardar/ }).length, 1);
+  assert.equal(dialog.querySelectorAll("[data-ui-catalog-edit-content]").length, 1);
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-catalog-edit-dialog\][^{]*\{[^}]*overflow: hidden/);
+  assert.match(css, /\[data-ui-catalog-edit-dialog\] \[data-ui-catalog-edit-content\][^{]*\{[^}]*overflow-y: auto/);
+});
+
+test("reloads authoritative category fields after a stale schema result without repeating the mutation", async () => {
+  let details = 0;
+  let schemaCalls = 0;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") { details += 1; return { ...categoryDetail, revision: details === 1 ? 2 : 4, attribute_definitions: [{ definition_id: 21, label: details === 1 ? "Old" : "Current", field_type: "text" as const, required: false, options: [], active: true }] }; }
+    if (command === "edit_category_schema_command") { schemaCalls += 1; return { kind: "error", code: "stale_category_schema", message: "Stale" }; }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre del campo" }), "Nuevo");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
+  const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
+  assert.equal(schemaCalls, 1);
+  assert.ok(within(dialog).getByRole("alert").textContent?.includes("Recargá antes de guardar"));
+  await userEvent.click(retry);
+  await waitFor(() => assert.ok(within(dialog).getByRole("group", { name: "Campo Current" })));
+  assert.equal(schemaCalls, 1);
+  assert.equal(details, 2);
+});
+
 test("loads product detail before editing and confirms archive with adjacent feedback and refreshed browse", async () => {
   let listCalls = 0;
   let browseCalls = 0;
@@ -456,7 +575,7 @@ test("recovers an edited detail after list refresh failure without repeating the
   const name = within(dialog).getByRole("textbox", { name: "Nombre de la categoría" });
   await userEvent.clear(name);
   await userEvent.type(name, "Filtros nuevos");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
   assert.equal(editCalls, 1);
   assert.equal((name as HTMLInputElement).disabled, true);
@@ -529,15 +648,15 @@ test("rehydrates authoritative detail before unlocking stale edit recovery", asy
   const name = within(dialog).getByRole("textbox", { name: "Nombre de la categoría" });
   await userEvent.clear(name);
   await userEvent.type(name, "Cambio en conflicto");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
   assert.equal(editCalls, 1);
-  assert.equal((within(dialog).getByRole("button", { name: "Guardar metadatos" }) as HTMLButtonElement).disabled, true);
+  assert.equal((within(dialog).getByRole("button", { name: "Guardar cambios" }) as HTMLButtonElement).disabled, true);
   await userEvent.click(retry);
   await waitFor(() => assert.equal(detailCalls, 2));
   await waitFor(() => assert.equal((within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).value, "Filtros autoritativos"));
   assert.equal(editCalls, 1);
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   await waitFor(() => assert.equal(editCalls, 2));
   assert.equal(editRequests[1].expected_revision, 4);
 });
@@ -607,6 +726,78 @@ test("locks modal controls and Escape while lifecycle is pending", async () => {
   assert.ok(screen.getByRole("dialog", { name: "Archivar Filtros" }));
   assert.equal((within(confirmation).getByRole("button", { name: "Archivando…" }) as HTMLButtonElement).disabled, true);
   resolveMaintain({ kind: "success", ...activeCategory, activity: "archived", revision: 3 });
+});
+
+test("keeps historical retired values out of product edit controls while preserving authoritative detail", async () => {
+  let editRequest: Record<string, unknown> | undefined;
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return productDetail;
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") { editRequest = payload?.request as Record<string, unknown>; return { kind: "success", ...activeProduct, revision: 8 }; }
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  assert.ok(within(dialog).getByRole("textbox", { name: "Marca (obligatorio)" }));
+  assert.equal(within(dialog).queryByRole("textbox", { name: "Código histórico (obligatorio)" }), null);
+  assert.equal(productDetail.attribute_values.find((value) => value.definition_id === 11)?.value, "LEGACY-11");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.ok(editRequest));
+  assert.deepEqual(editRequest?.attribute_values, [{ definition_id: 10, value: "Bosch" }]);
+});
+
+test("recovers stale category-schema product edits by reloading authoritative selected detail", async () => {
+  let detailCalls = 0;
+  let editCalls = 0;
+  let listCalls = 0;
+  const currentDetail = { ...productDetail, name: "Filtro actualizado desde otra sesión", category_revision: 2, revision: 8 };
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") { listCalls += 1; return { kind: "success", records: [activeCategory] }; }
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return detailCalls++ === 0 ? productDetail : currentDetail;
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") { editCalls += 1; return { kind: "error", code: "stale_category_schema", message: "Stale schema" }; }
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
+  assert.equal(editCalls, 1);
+  assert.equal(detailCalls, 1);
+  assert.equal(listCalls, 1);
+  assert.match(within(dialog).getByRole("alert").textContent ?? "", /campos de la categoría cambiaron/i);
+  await userEvent.click(retry);
+  await waitFor(() => assert.equal(detailCalls, 2));
+  await waitFor(() => assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del producto" }) as HTMLInputElement).value, currentDetail.name));
+  assert.equal(listCalls, 2);
+  assert.equal(editCalls, 1);
+});
+
+test("preserves stale product-record recovery behavior", async () => {
+  let detailCalls = 0;
+  let editCalls = 0;
+  mockIPC((command) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, name: detailCalls++ === 0 ? productDetail.name : "Authoritative product", revision: 9 };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") { editCalls += 1; return { kind: "error", code: "stale_catalog_record", message: "Stale record" }; }
+    throw new Error(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  await userEvent.clear(within(dialog).getByRole("textbox", { name: "Nombre del producto" }));
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre del producto" }), "My stale edit");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(await within(dialog).findByRole("button", { name: "Reintentar actualización" }));
+  await waitFor(() => assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del producto" }) as HTMLInputElement).value, "Authoritative product"));
+  assert.equal(editCalls, 1);
 });
 
 test("replaces a product image through the native picker and reloads its authoritative thumbnail", async () => {

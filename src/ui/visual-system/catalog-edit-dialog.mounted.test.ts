@@ -57,7 +57,7 @@ test("recovery preserves the detail while disabling incompatible actions and exp
   const dialog = screen.getByRole("dialog", { name: "Editar Filtros" });
   assert.equal((within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).disabled, true);
   assert.equal((within(dialog).getByRole("button", { name: "Archivar" }) as HTMLButtonElement).disabled, true);
-  assert.equal((within(dialog).getByRole("button", { name: "Guardar metadatos" }) as HTMLButtonElement).disabled, true);
+  assert.equal((within(dialog).getByRole("button", { name: "Guardar cambios" }) as HTMLButtonElement).disabled, true);
   assert.ok(within(dialog).getByRole("alert"));
   await userEvent.click(within(dialog).getByRole("button", { name: "Reintentar actualización" }));
   assert.equal(reloads, 1);

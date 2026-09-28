@@ -1,9 +1,14 @@
 use repuestos_autos::application::catalog::{
-    AttributeValueInput, EditCatalogInput, EditCatalogUseCase, MaintainCatalogError,
-    MaintainCatalogInput, MaintainCatalogUseCase,
+    AttributeValueInput, EditCatalogInput, EditCatalogUseCase, EditCategorySchemaError,
+    EditCategorySchemaInput, EditCategorySchemaUseCase, MaintainCatalogError, MaintainCatalogInput,
+    MaintainCatalogUseCase,
 };
-use repuestos_autos::domain::catalog::{CatalogActivity, CatalogIntent, CatalogTarget};
-use repuestos_autos::infrastructure::sqlite::{open_seeded_catalog, SqliteCatalogRepository};
+use repuestos_autos::domain::catalog::{
+    CatalogActivity, CatalogIntent, CatalogTarget, CategorySchemaField, FieldType,
+};
+use repuestos_autos::infrastructure::sqlite::{
+    open_database, open_seeded_catalog, production_database_config, SqliteCatalogRepository,
+};
 
 fn maintain(
     connection: &mut rusqlite::Connection,
@@ -32,18 +37,35 @@ fn category_metadata_reports_authoritative_active_product_counts() {
         SqliteCatalogRepository,
     )
     .unwrap();
-    assert!(categories.iter().any(|category| category.active_product_count == 0));
-    let category = categories.iter().find(|category| category.active_product_count > 0).unwrap();
+    assert!(categories
+        .iter()
+        .any(|category| category.active_product_count == 0));
+    let category = categories
+        .iter()
+        .find(|category| category.active_product_count > 0)
+        .unwrap();
     assert_eq!(category.active_product_count, 1);
     let category_id = category.category_id;
 
-    connection.execute("UPDATE products SET active = 0 WHERE category_id = ?1", [category_id]).unwrap();
+    connection
+        .execute(
+            "UPDATE products SET active = 0 WHERE category_id = ?1",
+            [category_id],
+        )
+        .unwrap();
     let categories = repuestos_autos::application::catalog::list_category_metadata(
         &connection,
         SqliteCatalogRepository,
     )
     .unwrap();
-    assert_eq!(categories.iter().find(|category| category.category_id == category_id).unwrap().active_product_count, 0);
+    assert_eq!(
+        categories
+            .iter()
+            .find(|category| category.category_id == category_id)
+            .unwrap()
+            .active_product_count,
+        0
+    );
 }
 
 #[test]
@@ -164,6 +186,7 @@ fn metadata_edits_guard_revisions_replace_values_refresh_search_and_audit_togeth
             2_000,
             4_000,
             3_000,
+            0,
             vec![
                 AttributeValueInput {
                     definition_id: 2,
@@ -253,7 +276,7 @@ fn failed_metadata_audit_rolls_back_the_guarded_write_and_fts_document() {
     connection.execute_batch("CREATE TRIGGER reject_metadata_audit BEFORE INSERT ON catalog_audit BEGIN SELECT RAISE(ABORT, 'forced'); END;").unwrap();
     assert_eq!(
         EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository).execute(
-            EditCatalogInput::product(1, 0, "NUE-002", "Other", 2_000, 4_000, 3_000, vec![])
+            EditCatalogInput::product(1, 0, "NUE-002", "Other", 2_000, 4_000, 3_000, 0, vec![])
         ),
         Err(MaintainCatalogError::PersistenceFailure)
     );
@@ -273,6 +296,416 @@ fn failed_metadata_audit_rolls_back_the_guarded_write_and_fts_document() {
             .is_empty()
     );
     assert_eq!(count(&connection, "catalog_audit"), 0);
+}
+
+#[test]
+fn category_schema_edits_add_retire_audit_and_preserve_definition_ids_and_historical_values() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch(
+        "INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (71, 1, 'Material', 'text', 0);
+         INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 71, 'Vintage steel', 'Vintage steel');",
+    ).unwrap();
+    let retained = CategorySchemaField {
+        definition_id: Some(71),
+        label: "Material".into(),
+        field_type: FieldType::Text,
+        required: false,
+        options: vec![],
+    };
+    let added = CategorySchemaField {
+        definition_id: None,
+        label: "Length".into(),
+        field_type: FieldType::Number,
+        required: true,
+        options: vec![],
+    };
+    let updated = EditCategorySchemaUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCategorySchemaInput {
+            category_id: 1,
+            expected_revision: 0,
+            fields: vec![retained, added],
+        })
+        .unwrap();
+    assert_eq!(updated.revision, 1);
+    let added_id: i64 = connection
+        .query_row(
+            "SELECT id FROM attribute_definitions WHERE category_id = 1 AND label = 'Length'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(added_id > 71);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT active FROM attribute_definitions WHERE id = 71",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap(),
+        true
+    );
+
+    let retired = EditCategorySchemaUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCategorySchemaInput {
+            category_id: 1,
+            expected_revision: 1,
+            fields: vec![],
+        })
+        .unwrap();
+    assert_eq!(retired.revision, 2);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT active FROM attribute_definitions WHERE id = 71",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap(),
+        false
+    );
+    assert_eq!(connection.query_row(
+        "SELECT text_value FROM product_attribute_values WHERE product_id = 1 AND definition_id = 71", [], |row| row.get::<_, String>(0),
+    ).unwrap(), "Vintage steel");
+    assert_eq!(connection.query_row(
+        "SELECT COUNT(*) FROM catalog_audit WHERE entity_type = 'category' AND operation = 'edit_metadata' AND revision IN (1, 2)", [], |row| row.get::<_, i64>(0),
+    ).unwrap(), 2);
+    let details = repuestos_autos::application::catalog::read_catalog_metadata_detail(
+        &connection,
+        CatalogTarget::Category,
+        1,
+    )
+    .unwrap()
+    .unwrap();
+    let repuestos_autos::application::catalog::CatalogMetadataDetail::Category {
+        attribute_definitions,
+        ..
+    } = details
+    else {
+        panic!("expected category details")
+    };
+    assert!(attribute_definitions
+        .iter()
+        .any(|field| field.definition_id == 71 && !field.active));
+
+    let replacement = EditCategorySchemaUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCategorySchemaInput {
+            category_id: 1,
+            expected_revision: 2,
+            fields: vec![CategorySchemaField {
+                definition_id: None,
+                label: "Material".into(),
+                field_type: FieldType::Option,
+                required: true,
+                options: vec!["Steel".into()],
+            }],
+        })
+        .unwrap();
+    assert_eq!(replacement.revision, 3);
+    let replacement_id: i64 = connection.query_row(
+        "SELECT id FROM attribute_definitions WHERE category_id = 1 AND label = 'Material' AND active = 1",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_ne!(replacement_id, 71);
+    assert_eq!(connection.query_row(
+        "SELECT COUNT(*) FROM attribute_definitions WHERE category_id = 1 AND label = 'Material'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).unwrap(), 2);
+    assert_eq!(connection.query_row(
+        "SELECT text_value FROM product_attribute_values WHERE product_id = 1 AND definition_id = 71",
+        [],
+        |row| row.get::<_, String>(0),
+    ).unwrap(), "Vintage steel");
+    let foreign_key_violations: i64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(foreign_key_violations, 0);
+}
+
+#[test]
+fn category_schema_edit_rejects_stale_revision_and_rolls_back_when_audit_fails() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let mut input = EditCategorySchemaInput {
+        category_id: 2,
+        expected_revision: 1,
+        fields: vec![CategorySchemaField {
+            definition_id: None,
+            label: "Length".into(),
+            field_type: FieldType::Number,
+            required: false,
+            options: vec![],
+        }],
+    };
+    assert_eq!(
+        EditCategorySchemaUseCase::new(&mut connection, SqliteCatalogRepository)
+            .execute(input.clone()),
+        Err(EditCategorySchemaError::StaleCategory)
+    );
+    connection.execute_batch("CREATE TRIGGER reject_category_schema_audit BEFORE INSERT ON catalog_audit WHEN new.entity_type = 'category' BEGIN SELECT RAISE(ABORT, 'forced'); END;").unwrap();
+    input.expected_revision = 0;
+    assert_eq!(
+        EditCategorySchemaUseCase::new(&mut connection, SqliteCatalogRepository).execute(input),
+        Err(EditCategorySchemaError::PersistenceFailure)
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT revision FROM categories WHERE id = 2", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM attribute_definitions WHERE category_id = 2",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(count(&connection, "catalog_audit"), 0);
+}
+
+#[test]
+fn product_edit_preserves_retired_values_and_detail_exposes_them() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch(
+        "INSERT INTO attribute_definitions (id, category_id, label, field_type, required, active)
+         VALUES (71, 1, 'Legacy material', 'text', 0, 0), (72, 1, 'Current length', 'number', 1, 1);
+         INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value)
+         VALUES (1, 71, 'Vintage steel', 'Vintage steel');
+         INSERT INTO product_attribute_values (product_id, definition_id, number_value, searchable_value)
+         VALUES (1, 72, 12.5, '12.5');",
+    ).unwrap();
+
+    EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCatalogInput::product(
+            1,
+            0,
+            "FLT-001",
+            "Oil filter",
+            2_000,
+            2_500,
+            2_500,
+            0,
+            vec![AttributeValueInput {
+                definition_id: 72,
+                value: "15.5".into(),
+            }],
+        ))
+        .unwrap();
+
+    assert_eq!(connection.query_row(
+        "SELECT text_value FROM product_attribute_values WHERE product_id = 1 AND definition_id = 71",
+        [],
+        |row| row.get::<_, String>(0),
+    ).unwrap(), "Vintage steel");
+    let details = repuestos_autos::application::catalog::read_catalog_metadata_detail(
+        &connection,
+        CatalogTarget::Product,
+        1,
+    )
+    .unwrap()
+    .unwrap();
+    let repuestos_autos::application::catalog::CatalogMetadataDetail::Product {
+        attribute_definitions,
+        attribute_values,
+        ..
+    } = details
+    else {
+        panic!("expected product details")
+    };
+    assert!(attribute_definitions
+        .iter()
+        .any(|field| field.definition_id == 71 && !field.active));
+    assert!(attribute_values
+        .iter()
+        .any(|value| value.definition_id == 71 && value.value == "Vintage steel"));
+}
+
+#[test]
+fn version_nineteen_schema_migrates_and_validates_field_lifecycle_metadata() {
+    let connection = open_seeded_catalog().unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        19
+    );
+    let columns = connection
+        .prepare("PRAGMA table_info(attribute_definitions)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, bool>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert!(columns
+        .iter()
+        .any(|(name, data_type, not_null, default_value)| {
+            name == "active"
+                && data_type == "INTEGER"
+                && *not_null
+                && default_value.as_deref() == Some("1")
+        }));
+    let table_sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attribute_definitions'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(table_sql
+        .to_ascii_lowercase()
+        .contains("check (active in (0, 1))"));
+
+    let index_columns = connection
+        .prepare("PRAGMA index_info(attribute_definitions_category_active_idx)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(2))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(index_columns, ["category_id", "active", "id"]);
+    let directory = std::env::temp_dir().join(format!(
+        "category-field-schema-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    drop(open_database(&config).unwrap());
+    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    malformed
+        .execute_batch(
+            "DROP INDEX attribute_definitions_category_active_idx;
+         CREATE INDEX attribute_definitions_category_active_idx
+         ON attribute_definitions (active, category_id, id);",
+        )
+        .unwrap();
+    drop(malformed);
+    assert!(open_database(&config).is_err());
+
+    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    malformed.execute_batch(
+        "DROP INDEX attribute_definitions_category_active_idx;
+         CREATE INDEX attribute_definitions_category_active_idx
+         ON attribute_definitions (category_id, active, id);
+         DROP INDEX attribute_definitions_active_category_label_idx;
+         CREATE INDEX attribute_definitions_active_category_label_idx
+         ON attribute_definitions (category_id, label) WHERE active = 1;",
+    ).unwrap();
+    drop(malformed);
+    assert!(open_database(&config).is_err());
+
+    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    malformed.execute_batch(
+        "DROP INDEX attribute_definitions_category_active_idx;
+         CREATE INDEX attribute_definitions_category_active_idx
+         ON attribute_definitions (category_id, active, id);
+         DROP INDEX attribute_definitions_active_category_label_idx;
+         CREATE UNIQUE INDEX attribute_definitions_active_category_label_idx
+         ON attribute_definitions (category_id, label) WHERE active = 1 OR active = 0;",
+    ).unwrap();
+    drop(malformed);
+    assert!(open_database(&config).is_err());
+
+    let malformed = rusqlite::Connection::open(directory.join("repuestos-autos.sqlite3")).unwrap();
+    malformed
+        .execute_batch(
+            "DROP INDEX attribute_definitions_category_active_idx;
+             CREATE INDEX attribute_definitions_category_active_idx
+             ON attribute_definitions (category_id, active, id);
+             DROP INDEX attribute_definitions_active_category_label_idx;
+             CREATE UNIQUE INDEX attribute_definitions_active_category_label_idx
+             ON attribute_definitions (category_id, label) WHERE active = 1;
+             CREATE UNIQUE INDEX differently_named_global_category_label
+             ON attribute_definitions (category_id, label);",
+        )
+        .unwrap();
+    drop(malformed);
+    assert!(open_database(&config).is_err());
+}
+
+#[test]
+fn version_nineteen_migration_preserves_definition_options_values_and_foreign_keys() {
+    let directory = std::env::temp_dir().join(format!(
+        "category-field-migration-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let legacy = open_database(&config).unwrap();
+    legacy
+        .execute_batch(
+            "INSERT INTO attribute_definitions (id, category_id, label, field_type, required)
+         VALUES (81, 1, 'Legacy migration field', 'option', 1);
+         INSERT INTO attribute_options (definition_id, value) VALUES (81, 'Original option');
+         INSERT INTO product_attribute_values
+             (product_id, definition_id, option_value, searchable_value)
+         VALUES (1, 81, 'Original option', 'Original option');
+         DROP INDEX attribute_definitions_active_category_label_idx;
+         CREATE UNIQUE INDEX legacy_attribute_definition_category_label
+         ON attribute_definitions (category_id, label);
+         PRAGMA user_version = 18;",
+        )
+        .unwrap();
+    drop(legacy);
+
+    let migrated = open_database(&config).unwrap();
+    assert_eq!(
+        migrated
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        19
+    );
+    assert_eq!(migrated.query_row(
+        "SELECT id FROM attribute_definitions WHERE category_id = 1 AND label = 'Legacy migration field'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ).unwrap(), 81);
+    assert_eq!(
+        migrated
+            .query_row(
+                "SELECT value FROM attribute_options WHERE definition_id = 81",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "Original option"
+    );
+    assert_eq!(migrated.query_row(
+        "SELECT option_value FROM product_attribute_values WHERE product_id = 1 AND definition_id = 81",
+        [],
+        |row| row.get::<_, String>(0),
+    ).unwrap(), "Original option");
+    assert_eq!(
+        migrated
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            },)
+            .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -316,11 +749,7 @@ fn product_image_validation_enforces_byte_and_dimension_boundaries() {
         ProductImage::new("image/png", vec![0; MAX_PRODUCT_IMAGE_BYTES + 1]).unwrap_err(),
         ProductImageValidationError::ImageTooLarge
     );
-    assert!(ProductImage::new(
-        "image/png",
-        generated_png(MAX_PRODUCT_IMAGE_DIMENSION, 1)
-    )
-    .is_ok());
+    assert!(ProductImage::new("image/png", generated_png(MAX_PRODUCT_IMAGE_DIMENSION, 1)).is_ok());
     assert_eq!(
         ProductImage::new(
             "image/png",
@@ -343,17 +772,21 @@ fn product_image_repository_replaces_reads_removes_and_rejects_missing_products(
     let first = ProductImage::new("image/png", generated_png(1, 1)).unwrap();
     let replacement = ProductImage::new("image/webp", generated_webp(1, 1)).unwrap();
     replace_product_image(&mut connection, 1, 0, &first).unwrap();
-    assert!(connection.execute(
-        "UPDATE product_images SET thumbnail_mime_type = 'image/jpeg', thumbnail_bytes = NULL
+    assert!(connection
+        .execute(
+            "UPDATE product_images SET thumbnail_mime_type = 'image/jpeg', thumbnail_bytes = NULL
          WHERE product_id = 1",
-        [],
-    ).is_err());
+            [],
+        )
+        .is_err());
     let stored_first = read_product_image(&connection, 1).unwrap().unwrap();
     assert_eq!(stored_first, first);
     let first_thumbnail = stored_first.thumbnail().unwrap();
     assert_eq!(first_thumbnail.mime_type(), "image/jpeg");
     assert_eq!(
-        image::load_from_memory(first_thumbnail.bytes()).unwrap().dimensions(),
+        image::load_from_memory(first_thumbnail.bytes())
+            .unwrap()
+            .dimensions(),
         (1, 1)
     );
 
@@ -363,10 +796,17 @@ fn product_image_repository_replaces_reads_removes_and_rejects_missing_products(
     assert_eq!(stored_replacement.bytes(), replacement.bytes());
     let thumbnail = stored_replacement.thumbnail().unwrap();
     assert_eq!(thumbnail.mime_type(), "image/jpeg");
-    assert_eq!(image::load_from_memory(thumbnail.bytes()).unwrap().dimensions(), (1, 1));
+    assert_eq!(
+        image::load_from_memory(thumbnail.bytes())
+            .unwrap()
+            .dimensions(),
+        (1, 1)
+    );
     let large = ProductImage::new("image/png", generated_png(600, 300)).unwrap();
     let large_thumbnail = large.thumbnail().unwrap();
-    let dimensions = image::load_from_memory(large_thumbnail.bytes()).unwrap().dimensions();
+    let dimensions = image::load_from_memory(large_thumbnail.bytes())
+        .unwrap()
+        .dimensions();
     assert!(dimensions.0 <= 256 && dimensions.1 <= 256);
     assert_eq!(count(&connection, "product_images"), 1);
     assert_eq!(count(&connection, "product_images"), 1);
@@ -390,11 +830,13 @@ fn persisted_jpeg_thumbnail_rejects_png_or_webp_bytes() {
         let mut connection = open_seeded_catalog().unwrap();
         let original = ProductImage::new("image/png", generated_png(3, 3)).unwrap();
         replace_product_image(&mut connection, 1, 0, &original).unwrap();
-        connection.execute(
-            "UPDATE product_images SET thumbnail_mime_type = 'image/jpeg', thumbnail_bytes = ?1
+        connection
+            .execute(
+                "UPDATE product_images SET thumbnail_mime_type = 'image/jpeg', thumbnail_bytes = ?1
              WHERE product_id = 1",
-            [mislabeled_bytes],
-        ).unwrap();
+                [mislabeled_bytes],
+            )
+            .unwrap();
 
         assert_eq!(
             read_product_image(&connection, 1),
@@ -411,11 +853,13 @@ fn legacy_product_image_without_thumbnail_is_readable_and_replacement_derives_on
 
     let mut connection = open_seeded_catalog().unwrap();
     let old_bytes = generated_png(3, 2);
-    connection.execute(
-        "INSERT INTO product_images (product_id, mime_type, image_bytes)
+    connection
+        .execute(
+            "INSERT INTO product_images (product_id, mime_type, image_bytes)
          VALUES (?1, ?2, ?3)",
-        rusqlite::params![1, "image/png", old_bytes],
-    ).unwrap();
+            rusqlite::params![1, "image/png", old_bytes],
+        )
+        .unwrap();
     let old = read_product_image(&connection, 1).unwrap().unwrap();
     assert!(old.thumbnail().is_none());
 
@@ -429,8 +873,7 @@ fn legacy_product_image_without_thumbnail_is_readable_and_replacement_derives_on
 #[test]
 fn failed_product_image_replacement_keeps_the_previous_record() {
     use repuestos_autos::application::catalog::{
-        read_product_image, replace_product_image, ProductImage,
-        ProductImagePersistenceError,
+        read_product_image, replace_product_image, ProductImage, ProductImagePersistenceError,
     };
 
     let mut connection = open_seeded_catalog().unwrap();
@@ -454,9 +897,17 @@ fn product_image_replace_and_remove_advance_revision_and_reject_stale_writes() {
 
     let mut connection = open_seeded_catalog().unwrap();
     let image = ProductImage::new("image/png", generated_png(2, 2)).unwrap();
-    assert_eq!(replace_product_image(&mut connection, 1, 0, &image).unwrap(), 1);
     assert_eq!(
-        connection.query_row("SELECT revision FROM products WHERE id = 1", [], |row| row.get::<_, i64>(0)).unwrap(),
+        replace_product_image(&mut connection, 1, 0, &image).unwrap(),
+        1
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT revision FROM products WHERE id = 1", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
         1
     );
     assert_eq!(
@@ -475,16 +926,19 @@ fn product_image_replace_and_remove_advance_revision_and_reject_stale_writes() {
 #[test]
 fn product_thumbnail_read_rejects_non_jpeg_persisted_bytes() {
     use repuestos_autos::application::catalog::{
-        read_product_image_thumbnail, replace_product_image, ProductImage, ProductImagePersistenceError,
+        read_product_image_thumbnail, replace_product_image, ProductImage,
+        ProductImagePersistenceError,
     };
 
     let mut connection = open_seeded_catalog().unwrap();
     let image = ProductImage::new("image/png", generated_png(2, 2)).unwrap();
     replace_product_image(&mut connection, 1, 0, &image).unwrap();
-    connection.execute(
-        "UPDATE product_images SET thumbnail_bytes = ?1 WHERE product_id = 1",
-        [generated_png(2, 2)],
-    ).unwrap();
+    connection
+        .execute(
+            "UPDATE product_images SET thumbnail_bytes = ?1 WHERE product_id = 1",
+            [generated_png(2, 2)],
+        )
+        .unwrap();
     assert_eq!(
         read_product_image_thumbnail(&connection, 1),
         Err(ProductImagePersistenceError::PersistenceFailure)
@@ -500,7 +954,9 @@ fn product_thumbnail_read_returns_only_bounded_jpeg_with_revision_identity() {
     let mut connection = open_seeded_catalog().unwrap();
     let image = ProductImage::new("image/png", generated_png(600, 300)).unwrap();
     replace_product_image(&mut connection, 1, 0, &image).unwrap();
-    let thumbnail = read_product_image_thumbnail(&connection, 1).unwrap().unwrap();
+    let thumbnail = read_product_image_thumbnail(&connection, 1)
+        .unwrap()
+        .unwrap();
     assert_eq!(thumbnail.product_id, 1);
     assert_eq!(thumbnail.revision, 1);
     assert_eq!(thumbnail.mime_type, "image/jpeg");

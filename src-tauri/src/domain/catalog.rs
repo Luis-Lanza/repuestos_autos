@@ -28,12 +28,43 @@ impl FieldType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CategoryFieldDraft {
     pub label: String,
     pub field_type: FieldType,
     pub required: bool,
     pub options: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CategoryFieldLifecycle {
+    Active,
+    Retired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CategorySchemaField {
+    pub definition_id: Option<i64>,
+    pub label: String,
+    pub field_type: FieldType,
+    pub required: bool,
+    pub options: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExistingCategorySchemaField {
+    pub definition_id: i64,
+    pub label: String,
+    pub field_type: FieldType,
+    pub required: bool,
+    pub options: Vec<String>,
+    pub lifecycle: CategoryFieldLifecycle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CategorySchemaPlan {
+    pub additions: Vec<CategoryFieldDraft>,
+    pub retire_definition_ids: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +155,80 @@ pub enum MaintenanceError {
     MinimumSalePriceExceedsSalePrice,
     InvalidAttributeValue,
     LifecycleBlocked,
+    InvalidCategorySchema,
+    ImmutableCategoryField,
+}
+
+pub fn plan_category_schema_edit(
+    existing: &[ExistingCategorySchemaField],
+    requested: &[CategorySchemaField],
+) -> Result<CategorySchemaPlan, MaintenanceError> {
+    let active = existing
+        .iter()
+        .filter(|field| field.lifecycle == CategoryFieldLifecycle::Active);
+    let mut seen_ids = HashSet::new();
+    let mut additions = Vec::new();
+    let mut candidate = Vec::new();
+    let mut retained = HashSet::new();
+    for field in requested {
+        if field.label.trim().is_empty() {
+            return Err(MaintenanceError::InvalidCategorySchema);
+        }
+        match field.definition_id {
+            Some(id) => {
+                if !seen_ids.insert(id) {
+                    return Err(MaintenanceError::InvalidCategorySchema);
+                }
+                let original = existing
+                    .iter()
+                    .find(|original| original.definition_id == id)
+                    .ok_or(MaintenanceError::InvalidCategorySchema)?;
+                if original.lifecycle != CategoryFieldLifecycle::Active {
+                    return Err(MaintenanceError::InvalidCategorySchema);
+                }
+                if original.label != field.label.trim()
+                    || original.field_type != field.field_type
+                    || original.required != field.required
+                    || original.options
+                        != field
+                            .options
+                            .iter()
+                            .map(|option| option.trim().to_owned())
+                            .collect::<Vec<_>>()
+                {
+                    return Err(MaintenanceError::ImmutableCategoryField);
+                }
+                retained.insert(id);
+                candidate.push(CategoryFieldDraft {
+                    label: original.label.clone(),
+                    field_type: original.field_type,
+                    required: original.required,
+                    options: original.options.clone(),
+                });
+            }
+            None => additions.push(CategoryFieldDraft {
+                label: field.label.trim().to_owned(),
+                field_type: field.field_type,
+                required: field.required,
+                options: field
+                    .options
+                    .iter()
+                    .map(|option| option.trim().to_owned())
+                    .collect(),
+            }),
+        }
+    }
+    let retire_definition_ids = active
+        .filter(|field| !retained.contains(&field.definition_id))
+        .map(|field| field.definition_id)
+        .collect::<Vec<_>>();
+    candidate.extend(additions.iter().cloned());
+    validate_category("category", &candidate)
+        .map_err(|_| MaintenanceError::InvalidCategorySchema)?;
+    Ok(CategorySchemaPlan {
+        additions,
+        retire_definition_ids,
+    })
 }
 
 pub fn validate_maintenance_category(name: &str) -> Result<(), MaintenanceError> {
@@ -152,13 +257,19 @@ pub fn validate_maintenance_product(
     if sku.trim().is_empty() || name.trim().is_empty() {
         return Err(MaintenanceError::InvalidProduct);
     }
-    validate_current_prices(purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos)
-        .map_err(|error| match error {
-            CatalogValidationError::InvalidPurchasePrice => MaintenanceError::InvalidPurchasePrice,
-            CatalogValidationError::InvalidSalePrice => MaintenanceError::InvalidSalePrice,
-            CatalogValidationError::InvalidMinimumSalePrice => MaintenanceError::InvalidMinimumSalePrice,
-            _ => MaintenanceError::MinimumSalePriceExceedsSalePrice,
-        })?;
+    validate_current_prices(
+        purchase_price_centavos,
+        sale_price_centavos,
+        minimum_sale_price_centavos,
+    )
+    .map_err(|error| match error {
+        CatalogValidationError::InvalidPurchasePrice => MaintenanceError::InvalidPurchasePrice,
+        CatalogValidationError::InvalidSalePrice => MaintenanceError::InvalidSalePrice,
+        CatalogValidationError::InvalidMinimumSalePrice => {
+            MaintenanceError::InvalidMinimumSalePrice
+        }
+        _ => MaintenanceError::MinimumSalePriceExceedsSalePrice,
+    })?;
     validate_attribute_values(definitions, values)
         .map_err(|_| MaintenanceError::InvalidAttributeValue)
 }
@@ -231,8 +342,7 @@ pub fn validate_product(
     if sale_price_centavos <= 0 || sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
         return Err(CatalogValidationError::InvalidSalePrice);
     }
-    if minimum_sale_price_centavos <= 0
-        || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
+    if minimum_sale_price_centavos <= 0 || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
     {
         return Err(CatalogValidationError::InvalidMinimumSalePrice);
     }
@@ -257,7 +367,8 @@ pub fn validate_current_prices(
     if sale_price_centavos <= 0 || sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
         return Err(CatalogValidationError::InvalidSalePrice);
     }
-    if minimum_sale_price_centavos <= 0 || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS {
+    if minimum_sale_price_centavos <= 0 || minimum_sale_price_centavos > MAX_CATALOG_PRICE_CENTAVOS
+    {
         return Err(CatalogValidationError::InvalidMinimumSalePrice);
     }
     if minimum_sale_price_centavos > sale_price_centavos {

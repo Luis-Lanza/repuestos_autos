@@ -30,7 +30,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 17] = [
+const MIGRATIONS: [&str; 18] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -58,6 +58,7 @@ const MIGRATIONS: [&str; 17] = [
     include_str!("../src/infrastructure/sqlite/migrations/0016_product_images.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
@@ -563,11 +564,11 @@ fn rejects_invalid_and_unsupported_candidates_without_source_mutation() {
 }
 
 #[test]
-fn v16_product_images_remain_thumbnail_free_when_staged_under_v18() {
+fn v16_product_images_remain_thumbnail_free_when_staged_under_current_schema() {
     let directory = temporary_directory("v16-product-image-upgrade");
     fs::create_dir_all(&directory).unwrap();
     let source = directory.join("v16.sqlite3");
-    let stage = directory.join("staging/v18.sqlite3");
+    let stage = directory.join("staging/current.sqlite3");
     versioned_database(&source, 16);
     Connection::open(&source)
         .unwrap()
@@ -579,7 +580,7 @@ fn v16_product_images_remain_thumbnail_free_when_staged_under_v18() {
         .unwrap();
 
     let metadata = stage_and_validate(&source, &stage).unwrap();
-    assert_eq!(metadata.schema_version, 18);
+    assert_eq!(metadata.schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         Connection::open(&stage)
             .unwrap()
@@ -595,11 +596,11 @@ fn v16_product_images_remain_thumbnail_free_when_staged_under_v18() {
 }
 
 #[test]
-fn stages_v17_backup_to_v18_without_fabricating_historical_purchase_prices() {
+fn stages_v17_backup_to_current_schema_without_fabricating_historical_purchase_prices() {
     let directory = temporary_directory("v17-purchase-price-upgrade");
     fs::create_dir_all(&directory).unwrap();
     let source = directory.join("v17.sqlite3");
-    let stage = directory.join("staging/v18.sqlite3");
+    let stage = directory.join("staging/current.sqlite3");
     versioned_database(&source, 17);
     let source_before = fs::read(&source).unwrap();
 

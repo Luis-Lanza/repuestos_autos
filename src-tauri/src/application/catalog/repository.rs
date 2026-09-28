@@ -1,7 +1,8 @@
 use rusqlite::{Connection, Result, Transaction};
 
 use crate::domain::catalog::{
-    AttributeDefinition, CatalogSnapshot, CatalogTarget, TransitionPlan, ValidatedAttributeValue,
+    AttributeDefinition, CatalogSnapshot, CatalogTarget, CategorySchemaPlan,
+    ExistingCategorySchemaField, TransitionPlan, ValidatedAttributeValue,
 };
 
 use super::{CategoryMetadataSummary, CreateProductInput, ProductBrowseAttribute};
@@ -45,6 +46,18 @@ pub trait CatalogMetadataRepository {
         revision: i64,
         name: &str,
     ) -> Result<CatalogSnapshot>;
+    fn category_schema(
+        &self,
+        transaction: &Transaction<'_>,
+        category_id: i64,
+    ) -> Result<Vec<ExistingCategorySchemaField>>;
+    fn apply_category_schema(
+        &self,
+        transaction: &Transaction<'_>,
+        category_id: i64,
+        revision: i64,
+        plan: &CategorySchemaPlan,
+    ) -> Result<CatalogSnapshot>;
     #[expect(
         clippy::too_many_arguments,
         reason = "the repository seam keeps the validated product patch fields explicit"
@@ -64,6 +77,7 @@ pub trait CatalogMetadataRepository {
 }
 
 pub struct ProductMetadata {
+    pub category_revision: i64,
     pub definitions: Vec<AttributeDefinition>,
     pub duplicate_normalized_identity: bool,
 }

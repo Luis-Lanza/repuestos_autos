@@ -3,7 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { createCatalogEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState } from "./catalog-maintenance-flow.ts";
+import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState } from "./catalog-maintenance-flow.ts";
 import { CatalogMaintenanceRecovery, CatalogMetadataEditor, CatalogSuccessNotice, loadCatalogDetail, reloadCatalogRecords } from "./catalog-maintenance-screen.ts";
 import { createCatalogMaintenanceCommands } from "../../commands/catalog.ts";
 
@@ -47,11 +47,12 @@ test("surfaces loading, unavailable, validation, conflict, failure, recovery, an
 });
 
 test("loads editable metadata, validates typed values, and reloads stable conflicts", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
   const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "detail_started" });
   const ready = createCatalogMaintenanceFlow(loading, { type: "detail_loaded", detail });
   const pending = createCatalogMaintenanceFlow(ready, { type: "edit_started" });
   const conflict = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_catalog_record" });
+  const staleSchema = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_category_schema" });
   const unavailable = createCatalogMaintenanceFlow(ready, { type: "detail_failed", code: "catalog_unavailable" });
   const reactivated = createCatalogMaintenanceFlow({ ...ready, records: [archived], selected: archived }, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3 } });
   assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "30,00", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } });
@@ -60,9 +61,11 @@ test("loads editable metadata, validates typed values, and reloads stable confli
   const legacyDetail = { ...detail, sale_price_centavos: undefined, list_price_centavos: 3000, purchase_price_centavos: null } as unknown as typeof detail;
   assert.deepEqual(formForCatalogDetail(legacyDetail).sale_price_centavos, "30,00");
   assert.deepEqual(formForCatalogDetail(legacyDetail).purchase_price_centavos, "");
-  assert.deepEqual(createCatalogEditRequest(detail, formForCatalogDetail(detail)), { target: "product", entity_id: 1, expected_revision: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper" }] });
+  assert.deepEqual(createCatalogEditRequest(detail, formForCatalogDetail(detail)), { target: "product", entity_id: 1, expected_revision: 2, expected_category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper" }] });
   assert.equal(pending.status, "pending");
   assert.equal(conflict.recovery_required, true);
+  assert.equal(staleSchema.recovery_required, true);
+  assert.equal(staleSchema.feedback, "Los campos de la categoría cambiaron. Recargá antes de guardar este producto.");
   assert.equal(unavailable.status, "unavailable");
   assert.deepEqual([reactivated.records[0].activity, reactivated.selected?.activity, reactivated.detail?.activity], ["active", "active", "active"]);
   assert.deepEqual([reactivated.records[0].revision, reactivated.selected?.revision, reactivated.detail?.revision], [3, 3, 3]);
@@ -87,6 +90,36 @@ test("loads editable metadata, validates typed values, and reloads stable confli
   assert.match(screen, /Registro archivado/);
 });
 
+test("excludes retired required attributes from product edit inputs, validation, and requests", () => {
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 8, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "active" as const, revision: 3, attribute_definitions: [
+    { definition_id: 4, label: "Material", field_type: "text" as const, required: true, options: [], active: true },
+    { definition_id: 9, label: "Legacy serial", field_type: "text" as const, required: true, options: [], active: false },
+  ], attribute_values: [{ definition_id: 4, value: "Steel" }, { definition_id: 9, value: "Historic-9" }] };
+  const form = formForCatalogDetail(detail);
+  assert.deepEqual(form.attribute_values, { 4: "Steel" });
+  assert.deepEqual(fieldErrorsForCatalogEdit(detail, form), {});
+  form.attribute_values[9] = "must not be sent";
+  const request = createCatalogEditRequest(detail, form);
+  assert.deepEqual(request?.attribute_values, [{ definition_id: 4, value: "Steel" }]);
+  assert.equal(request?.attribute_values.some((value) => value.definition_id === 9), false);
+});
+
+test("prepares active category schema drafts while excluding retired definitions", () => {
+  const detail = { target: "category" as const, entity_id: 2, name: "Filters", activity: "active" as const, revision: 4, attribute_definitions: [
+    { definition_id: 5, label: "Material", field_type: "option" as const, required: true, options: ["Steel", "Paper"], active: true },
+    { definition_id: 6, label: "Legacy", field_type: "text" as const, required: false, options: [], active: false },
+  ] };
+  const form = formForCatalogDetail(detail);
+  assert.deepEqual(form.category_fields?.map(({ definition_id, active }) => ({ definition_id, active })), [{ definition_id: 5, active: true }, { definition_id: 6, active: false }]);
+  form.category_fields?.push({ definition_id: null, label: "Length", field_type: "number", required: false, options: "", active: true });
+  assert.deepEqual(createCategorySchemaEditRequest(detail, form), { category_id: 2, expected_revision: 4, fields: [
+    { definition_id: 5, label: "Material", field_type: "option", required: true, options: ["Steel", "Paper"] },
+    { definition_id: null, label: "Length", field_type: "number", required: false, options: [] },
+  ] });
+  form.category_fields![2].label = " ";
+  assert.equal(createCategorySchemaEditRequest(detail, form), null);
+});
+
 test("keeps selected detail identity through failure and retries the same request", async () => {
   const calls: string[] = [];
   const detail = { target: "category" as const, entity_id: 2, name: "Filters", activity: "active" as const, revision: 1, attribute_definitions: [] };
@@ -100,7 +133,7 @@ test("keeps selected detail identity through failure and retries the same reques
   await reloadCatalogRecords(commands, dispatch, (next) => { form = next; }, state.selected);
   assert.deepEqual(calls, ["catalog_metadata_detail_command", "list_catalog_categories_command", "catalog_metadata_detail_command"]);
   assert.equal(state.detail?.target, "category");
-  assert.deepEqual(form, { name: "Filters", attribute_values: {} });
+  assert.deepEqual(form, { name: "Filters", attribute_values: {}, category_fields: [] });
 });
 
 test("keeps success announced during refresh and scopes validation to invalid fields", () => {

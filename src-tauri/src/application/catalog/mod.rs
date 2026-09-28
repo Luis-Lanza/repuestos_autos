@@ -3,22 +3,22 @@ use rusqlite::{params, Connection, OptionalExtension, Result, TransactionBehavio
 use serde::{Deserialize, Serialize};
 
 use crate::domain::catalog::{
-    plan_transition, validate_category, validate_current_prices, validate_product, AttributeValueDraft, CatalogIntent,
-    CatalogSnapshot, CatalogTarget, CatalogValidationError, CategoryFieldDraft, FieldType,
-    MaintenanceError,
+    plan_category_schema_edit, plan_transition, validate_category, validate_current_prices,
+    validate_product, AttributeValueDraft, CatalogIntent, CatalogSnapshot, CatalogTarget,
+    CatalogValidationError, CategoryFieldDraft, CategorySchemaField, FieldType, MaintenanceError,
 };
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
-pub mod repository;
 pub(crate) mod bootstrap_demo;
+pub mod repository;
 
 pub use bootstrap_demo::{
     bootstrap_demo_catalog, BootstrapDemoError, BootstrapDemoOutcome, BootstrapDemoSummary,
 };
 
 use repository::{
-    CatalogCategoryRepository, CatalogMaintenanceRepository, CatalogMetadataRepository,
-    CreateProductRepository, CatalogBrowseRepository,
+    CatalogBrowseRepository, CatalogCategoryRepository, CatalogMaintenanceRepository,
+    CatalogMetadataRepository, CreateProductRepository,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +48,7 @@ impl MaintainCatalogInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaintainCatalogError {
     MissingCatalogRecord,
+    StaleCategorySchema,
     InvalidPricing,
     LifecycleBlocked,
     StaleCatalogRecord,
@@ -69,6 +70,7 @@ pub enum EditCatalogInput {
         purchase_price_centavos: i64,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        expected_category_revision: i64,
         attribute_values: Vec<AttributeValueInput>,
     },
 }
@@ -88,6 +90,7 @@ impl EditCatalogInput {
         purchase_price_centavos: i64,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        expected_category_revision: i64,
         attribute_values: Vec<AttributeValueInput>,
     ) -> Self {
         Self::Product {
@@ -98,6 +101,7 @@ impl EditCatalogInput {
             purchase_price_centavos,
             sale_price_centavos,
             minimum_sale_price_centavos,
+            expected_category_revision,
             attribute_values,
         }
     }
@@ -165,6 +169,7 @@ where
                 purchase_price_centavos,
                 sale_price_centavos,
                 minimum_sale_price_centavos,
+                expected_category_revision,
                 attribute_values,
                 ..
             } => {
@@ -178,6 +183,9 @@ where
                     )
                     .map_err(|_| MaintainCatalogError::PersistenceFailure)?
                     .ok_or(MaintainCatalogError::MissingCatalogRecord)?;
+                if metadata.category_revision != expected_category_revision {
+                    return Err(MaintainCatalogError::StaleCategorySchema);
+                }
                 let values = attribute_values
                     .iter()
                     .map(|value| AttributeValueDraft {
@@ -319,8 +327,7 @@ impl ProductImage {
         let dimensions = image::ImageReader::with_format(std::io::Cursor::new(&bytes), format)
             .into_dimensions()
             .map_err(|_| ProductImageValidationError::InvalidImage)?;
-        if dimensions.0 > MAX_PRODUCT_IMAGE_DIMENSION
-            || dimensions.1 > MAX_PRODUCT_IMAGE_DIMENSION
+        if dimensions.0 > MAX_PRODUCT_IMAGE_DIMENSION || dimensions.1 > MAX_PRODUCT_IMAGE_DIMENSION
         {
             return Err(ProductImageValidationError::ImageTooLarge);
         }
@@ -461,13 +468,8 @@ pub fn read_product_image(
         .read_product_image(connection, product_id)
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
         .map(|(mime_type, bytes, thumbnail_mime_type, thumbnail_bytes)| {
-            ProductImage::from_persisted(
-                &mime_type,
-                bytes,
-                thumbnail_mime_type,
-                thumbnail_bytes,
-            )
-            .map_err(|_| ProductImagePersistenceError::PersistenceFailure)
+            ProductImage::from_persisted(&mime_type, bytes, thumbnail_mime_type, thumbnail_bytes)
+                .map_err(|_| ProductImagePersistenceError::PersistenceFailure)
         })
         .transpose()
 }
@@ -496,12 +498,22 @@ pub fn read_product_image_thumbnail(
     connection: &Connection,
     product_id: i64,
 ) -> std::result::Result<Option<ProductImageThumbnailRead>, ProductImagePersistenceError> {
-    let Some((revision, mime_type, bytes)) = connection.query_row(
-        "SELECT p.revision, i.thumbnail_mime_type, i.thumbnail_bytes
+    let Some((revision, mime_type, bytes)) = connection
+        .query_row(
+            "SELECT p.revision, i.thumbnail_mime_type, i.thumbnail_bytes
          FROM products p JOIN product_images i ON i.product_id = p.id WHERE p.id = ?1",
-        [product_id],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<Vec<u8>>>(2)?)),
-    ).optional().map_err(|_| ProductImagePersistenceError::PersistenceFailure)? else {
+            [product_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
+    else {
         return Ok(None);
     };
     let (Some(mime_type), Some(bytes)) = (mime_type, bytes) else {
@@ -531,24 +543,47 @@ pub fn read_product_image_thumbnail(
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
         .decode()
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
-    Ok(Some(ProductImageThumbnailRead { product_id, revision, mime_type: "image/jpeg", bytes }))
+    Ok(Some(ProductImageThumbnailRead {
+        product_id,
+        revision,
+        mime_type: "image/jpeg",
+        bytes,
+    }))
 }
 
-fn product_revision(connection: &Connection, product_id: i64) -> Result<i64, ProductImagePersistenceError> {
-    connection.query_row("SELECT revision FROM products WHERE id = ?1", [product_id], |row| row.get(0))
+fn product_revision(
+    connection: &Connection,
+    product_id: i64,
+) -> Result<i64, ProductImagePersistenceError> {
+    connection
+        .query_row(
+            "SELECT revision FROM products WHERE id = ?1",
+            [product_id],
+            |row| row.get(0),
+        )
         .optional()
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?
         .ok_or(ProductImagePersistenceError::MissingProduct)
 }
 
 fn check_image_revision(current: i64, expected: i64) -> Result<(), ProductImagePersistenceError> {
-    if expected < 0 || current != expected { Err(ProductImagePersistenceError::StaleCatalogRecord) } else { Ok(()) }
+    if expected < 0 || current != expected {
+        Err(ProductImagePersistenceError::StaleCatalogRecord)
+    } else {
+        Ok(())
+    }
 }
 
-fn advance_product_revision(connection: &Connection, product_id: i64, expected: i64) -> Result<i64, ProductImagePersistenceError> {
+fn advance_product_revision(
+    connection: &Connection,
+    product_id: i64,
+    expected: i64,
+) -> Result<i64, ProductImagePersistenceError> {
     let changed = connection.execute("UPDATE products SET revision = revision + 1 WHERE id = ?1 AND revision = ?2 AND revision < 9223372036854775807", rusqlite::params![product_id, expected])
         .map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
-    if changed != 1 { return Err(ProductImagePersistenceError::StaleCatalogRecord); }
+    if changed != 1 {
+        return Err(ProductImagePersistenceError::StaleCatalogRecord);
+    }
     Ok(expected + 1)
 }
 
@@ -652,9 +687,23 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
         ProductActivityFilter::All => "c.active = 1",
     };
     let (search_clause, category_clause) = if query.is_some() {
-        ("search.content MATCH ?1", if input.category_id.is_some() { "AND p.category_id = ?2" } else { "" })
+        (
+            "search.content MATCH ?1",
+            if input.category_id.is_some() {
+                "AND p.category_id = ?2"
+            } else {
+                ""
+            },
+        )
     } else {
-        ("1 = 1", if input.category_id.is_some() { "AND p.category_id = ?1" } else { "" })
+        (
+            "1 = 1",
+            if input.category_id.is_some() {
+                "AND p.category_id = ?1"
+            } else {
+                ""
+            },
+        )
     };
     let count_sql = format!(
         "SELECT COUNT(*) FROM catalog_product_search search
@@ -665,13 +714,16 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
            AND {activity_clause} AND {stock_clause}"
     );
     let mut count_args: Vec<&dyn rusqlite::ToSql> = Vec::new();
-    if let Some(ref query) = query { count_args.push(query); }
-    if let Some(ref category_id) = input.category_id { count_args.push(category_id); }
-    let total = connection.query_row(
-        &count_sql,
-        rusqlite::params_from_iter(count_args),
-        |row| row.get::<_, i64>(0),
-    )?;
+    if let Some(ref query) = query {
+        count_args.push(query);
+    }
+    if let Some(ref category_id) = input.category_id {
+        count_args.push(category_id);
+    }
+    let total =
+        connection.query_row(&count_sql, rusqlite::params_from_iter(count_args), |row| {
+            row.get::<_, i64>(0)
+        })?;
     let total_pages = (total + input.page_size - 1) / input.page_size;
     let offset = (input.page - 1)
         .checked_mul(input.page_size)
@@ -691,41 +743,47 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
          LIMIT ?{limit_index} OFFSET ?{offset_index}"
     );
     let mut product_args: Vec<&dyn rusqlite::ToSql> = Vec::new();
-    if let Some(ref query) = query { product_args.push(query); }
-    if let Some(ref category_id) = input.category_id { product_args.push(category_id); }
+    if let Some(ref query) = query {
+        product_args.push(query);
+    }
+    if let Some(ref category_id) = input.category_id {
+        product_args.push(category_id);
+    }
     product_args.push(&input.page_size);
     product_args.push(&offset);
     let mut products = connection
         .prepare(&products_sql)?
-        .query_map(
-            rusqlite::params_from_iter(product_args),
-            |row| {
-                Ok(ProductBrowseResult {
-                    product_id: row.get(0)?,
-                    category_id: row.get(1)?,
-                    sku: row.get(2)?,
-                    name: row.get(3)?,
-                    category_name: row.get(4)?,
-                    available_quantity: row.get(5)?,
-                    purchase_price_centavos: row.get(6)?,
-                    sale_price_centavos: row.get(7)?,
-                    minimum_sale_price_centavos: row.get(8)?,
-                    revision: row.get(9)?,
-                    attribute_values: Vec::new(),
-                })
-            },
-        )?
+        .query_map(rusqlite::params_from_iter(product_args), |row| {
+            Ok(ProductBrowseResult {
+                product_id: row.get(0)?,
+                category_id: row.get(1)?,
+                sku: row.get(2)?,
+                name: row.get(3)?,
+                category_name: row.get(4)?,
+                available_quantity: row.get(5)?,
+                purchase_price_centavos: row.get(6)?,
+                sale_price_centavos: row.get(7)?,
+                minimum_sale_price_centavos: row.get(8)?,
+                revision: row.get(9)?,
+                attribute_values: Vec::new(),
+            })
+        })?
         .collect::<Result<Vec<_>>>()?;
-    let product_ids = products.iter().map(|product| product.product_id).collect::<Vec<_>>();
+    let product_ids = products
+        .iter()
+        .map(|product| product.product_id)
+        .collect::<Vec<_>>();
     let attributes = repository.load_page_attributes(connection, &product_ids)?;
     for (product_id, attribute) in attributes {
-        if let Some(product) = products.iter_mut().find(|product| product.product_id == product_id) {
+        if let Some(product) = products
+            .iter_mut()
+            .find(|product| product.product_id == product_id)
+        {
             product.attribute_values.push(attribute);
         }
     }
-    let mut categories = connection.prepare(
-        "SELECT id, name FROM categories WHERE active = 1 ORDER BY lower(name), id",
-    )?;
+    let mut categories = connection
+        .prepare("SELECT id, name FROM categories WHERE active = 1 ORDER BY lower(name), id")?;
     let categories = categories
         .query_map([], |row| {
             Ok(ProductBrowseCategory {
@@ -767,6 +825,7 @@ pub struct CategoryField {
     pub field_type: String,
     pub required: bool,
     pub options: Vec<String>,
+    pub active: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -848,6 +907,7 @@ pub enum CatalogMetadataDetail {
     Product {
         entity_id: i64,
         category_id: i64,
+        category_revision: i64,
         sku: String,
         name: String,
         purchase_price_centavos: Option<i64>,
@@ -1042,6 +1102,82 @@ pub fn create_category(
         .ok_or(CreateCategoryError::Persistence)
 }
 
+#[derive(Clone, Debug)]
+pub struct EditCategorySchemaInput {
+    pub category_id: i64,
+    pub expected_revision: i64,
+    pub fields: Vec<CategorySchemaField>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditCategorySchemaError {
+    MissingCategory,
+    StaleCategory,
+    InvalidSchema,
+    ImmutableField,
+    PersistenceFailure,
+}
+
+pub struct EditCategorySchemaUseCase<'connection, Repository> {
+    connection: &'connection mut Connection,
+    repository: Repository,
+}
+
+impl<'connection, Repository> EditCategorySchemaUseCase<'connection, Repository>
+where
+    Repository: CatalogMetadataRepository,
+{
+    pub fn new(connection: &'connection mut Connection, repository: Repository) -> Self {
+        Self {
+            connection,
+            repository,
+        }
+    }
+
+    pub fn execute(
+        self,
+        input: EditCategorySchemaInput,
+    ) -> Result<CatalogSnapshot, EditCategorySchemaError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| EditCategorySchemaError::PersistenceFailure)?;
+        let snapshot = self
+            .repository
+            .load(&transaction, CatalogTarget::Category, input.category_id)
+            .map_err(|_| EditCategorySchemaError::PersistenceFailure)?
+            .ok_or(EditCategorySchemaError::MissingCategory)?;
+        if snapshot.revision != input.expected_revision {
+            return Err(EditCategorySchemaError::StaleCategory);
+        }
+        let existing = self
+            .repository
+            .category_schema(&transaction, input.category_id)
+            .map_err(|_| EditCategorySchemaError::PersistenceFailure)?;
+        let plan =
+            plan_category_schema_edit(&existing, &input.fields).map_err(|error| match error {
+                MaintenanceError::ImmutableCategoryField => EditCategorySchemaError::ImmutableField,
+                _ => EditCategorySchemaError::InvalidSchema,
+            })?;
+        let result = self
+            .repository
+            .apply_category_schema(
+                &transaction,
+                input.category_id,
+                input.expected_revision,
+                &plan,
+            )
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => EditCategorySchemaError::StaleCategory,
+                _ => EditCategorySchemaError::PersistenceFailure,
+            })?;
+        transaction
+            .commit()
+            .map_err(|_| EditCategorySchemaError::PersistenceFailure)?;
+        Ok(result)
+    }
+}
+
 pub fn create_product(
     connection: &mut Connection,
     input: CreateProductInput,
@@ -1080,11 +1216,13 @@ pub fn read_catalog_metadata_detail(
             )
             .optional()?
             .map(|(category_id, sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, active, revision)| {
+                let category_revision = connection.query_row("SELECT revision FROM categories WHERE id = ?1", [category_id], |row| row.get(0))?;
                 let mut statement = connection.prepare("SELECT definition_id, searchable_value FROM product_attribute_values WHERE product_id = ?1 ORDER BY definition_id")?;
                 let attribute_values = statement.query_map([entity_id], |row| Ok(AttributeValueInput { definition_id: row.get(0)?, value: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
                 Ok(CatalogMetadataDetail::Product {
                     entity_id,
                     category_id,
+                    category_revision,
                     sku,
                     name,
                     purchase_price_centavos,
@@ -1101,7 +1239,7 @@ pub fn read_catalog_metadata_detail(
 }
 
 fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec<CategoryField>> {
-    let mut statement = connection.prepare("SELECT id, label, field_type, required FROM attribute_definitions WHERE category_id = ?1 ORDER BY id")?;
+    let mut statement = connection.prepare("SELECT id, label, field_type, required, active FROM attribute_definitions WHERE category_id = ?1 ORDER BY id")?;
     let fields = statement
         .query_map([category_id], |row| {
             Ok((
@@ -1109,12 +1247,13 @@ fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, bool>(3)?,
+                row.get::<_, bool>(4)?,
             ))
         })?
         .collect::<Result<Vec<_>>>()?;
     fields
         .into_iter()
-        .map(|(definition_id, label, field_type, required)| {
+        .map(|(definition_id, label, field_type, required, active)| {
             let mut options = connection.prepare(
                 "SELECT value FROM attribute_options WHERE definition_id = ?1 ORDER BY rowid",
             )?;
@@ -1127,6 +1266,7 @@ fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec
                 field_type,
                 required,
                 options: option_values,
+                active,
             })
         })
         .collect()
