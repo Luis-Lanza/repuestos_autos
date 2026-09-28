@@ -1,12 +1,13 @@
 import { createElement, type ChangeEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
 
-import { CATALOG_INTENT, browseProducts, catalogMaintenanceCommands, catalogProductImageCommands, type CatalogMaintenanceRecord, type CatalogMetadataDetail } from "../../commands/catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, browseProducts, catalogMaintenanceCommands, catalogProductImageCommands, productLocationCommands, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { Action, Feedback } from "../visual-system/controls.ts";
 import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { createCatalogEditRequest, createCategorySchemaEditRequest, createCatalogMaintenanceFlow, fieldErrorsForCatalogEdit, filterCatalogCategories, formForCatalogDetail, initialCatalogMaintenanceState, type CatalogEditFieldErrors, type CatalogEditForm, type CatalogMaintenanceAction } from "./catalog-maintenance-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readCatalogViewMode, writeCatalogViewMode, type CatalogViewMode, type ProductBrowserState } from "./product-browser.ts";
+import { LocationManagementScreen } from "./location-management-screen.ts";
 
 export { CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 
@@ -40,6 +41,8 @@ export async function reloadCatalogRecords(commands: CatalogLoadCommands, dispat
 export function CatalogMaintenanceScreen() {
   const [state, dispatch] = useReducer(createCatalogMaintenanceFlow, initialCatalogMaintenanceState);
   const [form, setForm] = useState<CatalogEditForm | null>(null);
+  const [productLocations, setProductLocations] = useState<ProductLocationRecord[]>([]);
+  const [productLocationsStatus, setProductLocationsStatus] = useState<"loading" | "ready" | "error">("loading");
   const [imageThumbnail, setImageThumbnail] = useState<string | null>(null);
   const [imagePending, setImagePending] = useState(false);
   const [imageFeedback, setImageFeedback] = useState<string | null>(null);
@@ -52,7 +55,7 @@ export function CatalogMaintenanceScreen() {
   const imageMutationLocked = useRef(false);
   const refreshDetailAfterRecovery = useRef(false);
   const [catalogViewMode, setCatalogViewMode] = useState<CatalogViewMode>(readCatalogViewMode);
-  const [catalogSubview, setCatalogSubview] = useState<"products" | "categories">("products");
+  const [catalogSubview, setCatalogSubview] = useState<"products" | "categories" | "locations">("products");
   const [categoryQuery, setCategoryQuery] = useState("");
   const [categoryActionPending, setCategoryActionPending] = useState<number | null>(null);
   const [categoryActionFeedback, setCategoryActionFeedback] = useState<Record<number, string>>({});
@@ -66,7 +69,7 @@ export function CatalogMaintenanceScreen() {
   browserRef.current = browser;
   const mutationLocked = useRef(false);
   useEffect(() => () => { mounted.current = false; attempt.current += 1; browseAttempt.current += 1; browseThumbnailAttempt.current += 1; detailThumbnailAttempt.current += 1; mutationLocked.current = true; imageMutationLocked.current = true; }, []);
-  useEffect(() => { (catalogSubview === "categories" ? categoryManagementHeading.current : catalogMainHeading.current)?.focus(); }, [catalogSubview]);
+  useEffect(() => { (catalogSubview === "categories" ? categoryManagementHeading.current : catalogSubview === "products" ? catalogMainHeading.current : null)?.focus(); }, [catalogSubview]);
 
   const browserSnapshot = (): BrowserSnapshot => {
     const current = browserRef.current;
@@ -103,11 +106,20 @@ export function CatalogMaintenanceScreen() {
     setImageThumbnail(null);
     setImageFeedback(null);
     setForm(null);
+    setProductLocations([]);
+    setProductLocationsStatus("loading");
     dispatch({ type: "detail_started", record });
     const response = await catalogMaintenanceCommands.detail(record);
     if (!mounted.current || current !== attempt.current) return;
-    if (response.kind === "success") { setForm(formForCatalogDetail(response.detail)); refreshDetailAfterRecovery.current = false; dispatch({ type: "detail_loaded", detail: response.detail }); }
-    else dispatch({ type: "detail_failed", code: response.code });
+    if (response.kind === "success") {
+      if (response.detail.target === CATALOG_TARGET.PRODUCT) {
+        const locations = await productLocationCommands.list(false);
+        if (!mounted.current || current !== attempt.current) return;
+        if (locations.kind === "locations_success") { setProductLocations(locations.locations.filter((location) => location.active)); setProductLocationsStatus("ready"); }
+        else setProductLocationsStatus("error");
+      } else setProductLocationsStatus("ready");
+      setForm(formForCatalogDetail(response.detail)); refreshDetailAfterRecovery.current = false; dispatch({ type: "detail_loaded", detail: response.detail });
+    } else dispatch({ type: "detail_failed", code: response.code });
   };
   useEffect(() => {
     const current = ++detailThumbnailAttempt.current;
@@ -255,16 +267,30 @@ export function CatalogMaintenanceScreen() {
     dispatch({ type: "edit_started" });
     const response = await catalogMaintenanceCommands.edit(request);
     if (!mounted.current) return;
-    mutationLocked.current = false;
     if (response.kind === "error") {
+      mutationLocked.current = false;
       refreshDetailAfterRecovery.current = response.code === "stale_catalog_record" || response.code === "stale_category_schema";
       dispatch({ type: "edit_failed", code: response.code });
       return;
     }
-    dispatch({ type: "edit_succeeded", record: response });
+    let updatedRevision = response.revision;
+    if (detail.target === CATALOG_TARGET.PRODUCT && (form.primary_location_id ?? null) !== detail.primary_location_id) {
+      const assignment = await productLocationCommands.assignPrimary({ product_id: detail.entity_id, expected_revision: response.revision, location_id: form.primary_location_id ?? null });
+      if (!mounted.current) return;
+      if (assignment.kind !== "assignment_success" || assignment.product_id !== detail.entity_id || assignment.location_id !== (form.primary_location_id ?? null)) {
+        mutationLocked.current = false;
+        refreshDetailAfterRecovery.current = true;
+        dispatch({ type: "location_assignment_failed" });
+        return;
+      }
+      updatedRevision = assignment.revision;
+    }
+    mutationLocked.current = false;
+    const updatedRecord = { ...response, revision: updatedRevision };
+    dispatch({ type: "edit_succeeded", record: updatedRecord });
     refreshDetailAfterRecovery.current = true;
     const refreshed = await refreshCatalogList(true);
-    if (refreshed && mounted.current) await loadDetail({ target: response.target, entity_id: response.entity_id, label: response.label, activity: response.activity, revision: response.revision });
+    if (refreshed && mounted.current) await loadDetail({ target: response.target, entity_id: response.entity_id, label: response.label, activity: response.activity, revision: updatedRevision });
   };
   const mutateImage = async (operation: "choose" | "remove") => {
     const detail = state.detail;
@@ -290,7 +316,7 @@ export function CatalogMaintenanceScreen() {
     const refreshed = await refreshCatalogList(true);
     if (refreshed && mounted.current) await loadDetail({ target: detail.target, entity_id: detail.entity_id, label: `${detail.sku} — ${detail.name}`, activity: detail.activity, revision: response.revision });
   };
-  const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : { ...current, [field]: value });
+  const change = (field: string, value: string) => setForm((current) => !current ? current : field.startsWith("attribute-") ? { ...current, attribute_values: { ...current.attribute_values, [Number(field.slice(10))]: value } } : field === "primary_location_id" ? { ...current, primary_location_id: value === "" ? null : Number(value) } : { ...current, [field]: value });
   const addCategoryField = () => setForm((current) => current?.category_fields ? { ...current, category_fields: [...current.category_fields, { definition_id: null, label: "", field_type: "text", required: false, options: "", active: true }] } : current);
   const removeCategoryFieldDraft = (index: number) => setForm((current) => {
     const field = current?.category_fields?.[index];
@@ -360,7 +386,9 @@ export function CatalogMaintenanceScreen() {
     createElement("p", null, "Editá metadatos desde el detalle de categorías y productos."),
     createElement("nav", { "aria-label": "Vistas del catálogo", "data-ui-catalog-navigation": true },
       createElement(Action, { variant: catalogSubview === "products" ? "secondary" : "tertiary", "aria-current": catalogSubview === "products" ? "page" : undefined, onClick: () => setCatalogSubview("products") }, "Productos"),
-      createElement(Action, { variant: catalogSubview === "categories" ? "secondary" : "tertiary", "aria-current": catalogSubview === "categories" ? "page" : undefined, onClick: () => setCatalogSubview("categories") }, "Gestionar categorías")),
+      createElement(Action, { variant: catalogSubview === "categories" ? "secondary" : "tertiary", "aria-current": catalogSubview === "categories" ? "page" : undefined, onClick: () => setCatalogSubview("categories") }, "Gestionar categorías"),
+      createElement(Action, { variant: catalogSubview === "locations" ? "secondary" : "tertiary", "aria-current": catalogSubview === "locations" ? "page" : undefined, onClick: () => setCatalogSubview("locations") }, "Gestionar ubicaciones")),
+    catalogSubview === "locations" ? createElement(LocationManagementScreen) : null,
     catalogSubview === "categories" ? createElement("section", { "aria-labelledby": "catalog-category-management-heading", "data-ui-category-management": true },
       createElement("div", { "data-ui-category-management-header": true },
         createElement("h2", { id: "catalog-category-management-heading", ref: categoryManagementHeading, tabIndex: -1 }, "Gestión de categorías")),
@@ -410,7 +438,7 @@ export function CatalogMaintenanceScreen() {
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
     retirementConfirmation ? createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",

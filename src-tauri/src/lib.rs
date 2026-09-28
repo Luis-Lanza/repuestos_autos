@@ -319,6 +319,14 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         choose_product_image_command,
         remove_product_image_command,
         catalog_product_image_thumbnail_command,
+        location_schema_command,
+        save_location_schema_command,
+        list_product_locations_command,
+        create_product_location_command,
+        activate_product_location_command,
+        deactivate_product_location_command,
+        delete_product_location_command,
+        assign_product_primary_location_command,
         list_categories_command,
         create_category_command,
         create_product_command,
@@ -728,6 +736,62 @@ fn sale_history_detail_command(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn location_schema_command(state: tauri::State<AppState>) -> commands::catalog::ProductLocationResponse {
+    state.with_read(|connection| Ok(commands::catalog::location_schema(connection)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn save_location_schema_command(state: tauri::State<AppState>, request: commands::catalog::SaveLocationSchemaRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_write(|connection| Ok(commands::catalog::save_location_schema(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_product_locations_command(state: tauri::State<AppState>, request: commands::catalog::ListProductLocationsRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_read(|connection| Ok(commands::catalog::list_product_locations(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn create_product_location_command(state: tauri::State<AppState>, request: commands::catalog::CreateProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_write(|connection| Ok(commands::catalog::create_product_location(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn activate_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_write(|connection| Ok(commands::catalog::set_product_location_activity(connection, request, true)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn deactivate_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_write(|connection| Ok(commands::catalog::set_product_location_activity(connection, request, false)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn delete_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_write(|connection| Ok(commands::catalog::delete_product_location(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn assign_product_primary_location_command(state: tauri::State<AppState>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+    state.with_write(|connection| Ok(commands::catalog::assign_product_primary_location(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn list_categories_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::onboarding::ListCategoriesResponse, String> {
@@ -908,6 +972,23 @@ mod command_surface_tests {
             let response = get_ipc_response(&window, request_with(command, serde_json::json!({ "product_id": 1, "expected_revision": 0 }))).unwrap();
             let value = response.deserialize::<serde_json::Value>().unwrap();
             assert!(!value.to_string().contains("path"));
+        }
+    }
+
+    #[test]
+    fn registers_product_location_contract_commands_at_the_tauri_command_seam() {
+        let (_app, window) = test_window();
+        assert!(get_ipc_response(&window, request("location_schema_command")).is_ok());
+        assert!(get_ipc_response(&window, request_with("save_location_schema_command", serde_json::json!({ "expected_revision": 0, "segments": ["Zone"] }))).is_ok());
+        assert!(get_ipc_response(&window, request_with("list_product_locations_command", serde_json::json!({ "include_inactive": false }))).is_ok());
+        assert!(get_ipc_response(&window, request_with("create_product_location_command", serde_json::json!({ "values": ["A1"] }))).is_ok());
+        for (command, payload) in [
+            ("activate_product_location_command", serde_json::json!({ "location_id": 1, "expected_revision": 0 })),
+            ("deactivate_product_location_command", serde_json::json!({ "location_id": 1, "expected_revision": 0 })),
+            ("delete_product_location_command", serde_json::json!({ "location_id": 1, "expected_revision": 0 })),
+            ("assign_product_primary_location_command", serde_json::json!({ "product_id": 1, "expected_revision": 0, "location_id": 1 })),
+        ] {
+            assert!(get_ipc_response(&window, request_with(command, payload)).is_ok(), "{command}");
         }
     }
 

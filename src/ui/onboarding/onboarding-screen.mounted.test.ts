@@ -27,6 +27,38 @@ test("renders shared Spanish panels and submits required purchase and sale price
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByRole("status")).textContent, "Producto creado: FIL-1. Stock inicial: 3 unidades.");
 });
+test("optionally assigns a generated active location after product creation", async () => {
+  const calls: Array<{ command: string; payload: unknown }> = [];
+  mockIPC((command, payload) => {
+    calls.push({ command, payload });
+    if (command === "list_categories_command") return success();
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "create_product_command") return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true };
+    if (command === "catalog_metadata_detail_command") return { target: "product", entity_id: 2, category_id: 1, category_revision: 1, sku: "FIL-1", name: "Filtro", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_id: null, activity: "active", revision: 0, attribute_definitions: [], attribute_values: [] };
+    if (command === "assign_product_primary_location_command") return { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1");
+  await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00");
+  await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50");
+  await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00");
+  await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
+  await screen.findByRole("option", { name: "A1-SHELF2" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Ubicación principal (opcional)" }), "8");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.ok(await screen.findByText(/Producto creado: FIL-1.*Ubicación principal: A1-SHELF2/));
+  assert.deepEqual(calls.filter((call) => call.command === "assign_product_primary_location_command")[0], {
+    command: "assign_product_primary_location_command",
+    payload: { request: { product_id: 2, expected_revision: 0, location_id: 8 } },
+  });
+  assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
+});
+
 test("prevents duplicate category submission and localizes failure", async () => {
   let resolve!: (value: unknown) => void, calls = 0;
   mockIPC((command) => command === "list_categories_command" ? { kind: "success", categories: [] } : command === "create_category_command" ? (calls++, new Promise((done) => { resolve = done; })) : undefined);

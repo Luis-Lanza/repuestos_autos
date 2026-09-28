@@ -20,7 +20,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 19;
+pub const CURRENT_SCHEMA_VERSION: i64 = 20;
 const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
@@ -325,8 +325,18 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         version = 19;
     }
 
+    if version == 19 {
+        let transaction = connection.transaction()?;
+        validate_version_nineteen_schema(&transaction)?;
+        transaction.execute_batch(include_str!("migrations/0020_product_locations.sql"))?;
+        validate_version_twenty_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 20)?;
+        transaction.commit()?;
+        version = 20;
+    }
+
     if version == CURRENT_SCHEMA_VERSION {
-        validate_version_nineteen_schema(connection)?;
+        validate_version_twenty_schema(connection)?;
     }
 
     Ok(())
@@ -979,6 +989,39 @@ fn normalize_product_images_ddl(sql: &str) -> String {
 fn validate_version_nineteen_schema(connection: &Connection) -> Result<()> {
     validate_version_eighteen_schema(connection)?;
     validate_category_field_lifecycle_schema(connection)
+}
+
+fn validate_version_twenty_schema(connection: &Connection) -> Result<()> {
+    validate_version_nineteen_schema(connection)?;
+    if !has_columns(connection, "products", &["primary_location_id"])?
+        || !has_columns(connection, "location_schema", &["id", "revision"])?
+        || !has_columns(connection, "location_segments", &["id", "schema_id", "position", "label"])?
+        || !has_columns(connection, "product_locations", &["id", "code", "active", "revision"])?
+        || !has_columns(connection, "product_location_values", &["location_id", "segment_id", "value"])?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    for trigger in [
+        "location_segments_append_only_when_used",
+        "location_segments_immutable_when_used_update",
+        "location_segments_immutable_when_used_delete",
+        "product_locations_code_immutable",
+        "product_location_values_immutable",
+        "product_locations_validate_delete",
+        "products_primary_location_active_insert",
+        "products_primary_location_active_update",
+        "product_locations_cannot_deactivate_assigned",
+    ] {
+        if !schema_object_exists(connection, "trigger", trigger)? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    if !schema_object_exists(connection, "index", "products_primary_location_idx")?
+        || connection.query_row("SELECT COUNT(*) FROM location_schema WHERE id = 1", [], |row| row.get::<_, i64>(0))? != 1
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    validate_foreign_keys(connection)
 }
 
 fn validate_category_field_lifecycle_schema(connection: &Connection) -> Result<()> {

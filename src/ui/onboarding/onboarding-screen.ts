@@ -1,5 +1,6 @@
 import { createElement as h, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createCategory, createProduct, FIELD_TYPE, listCategories, type Category, type CategoryFieldInput, type FieldType } from "../../commands/onboarding.ts";
+import { CATALOG_TARGET, catalogMaintenanceCommands, productLocationCommands, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { attributeValuesFor, parseBsToCentavos, parsePositiveWhole } from "./onboarding-form.ts";
@@ -22,6 +23,9 @@ export function OnboardingScreen({ onBack }: Props) {
   const [minimumSalePrice, setMinimumSalePrice] = useState("");
   const [stock, setStock] = useState("");
   const [attributes, setAttributes] = useState<Record<number, string>>({});
+  const [productLocations, setProductLocations] = useState<ProductLocationRecord[]>([]);
+  const [locationsStatus, setLocationsStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [primaryLocationId, setPrimaryLocationId] = useState("");
   const [fieldError, setFieldError] = useState("");
   const mounted = useRef(true), request = useRef(0), mutation = useRef(0), categoryLock = useRef(false), productLock = useRef(false);
   const selected = state.categories.find((category) => category.category_id === Number(selectedId));
@@ -37,7 +41,13 @@ export function OnboardingScreen({ onBack }: Props) {
       if (response.kind === "success" && response.categories[0]) setSelectedId(String(response.categories[0].category_id));
     } catch { if (mounted.current && id === request.current) dispatch({ type: "categories_failed", requestId: id }); }
   };
-  useEffect(() => { void loadCategories(); return () => { mounted.current = false; request.current++; mutation.current++; }; }, []);
+  const loadProductLocations = async () => {
+    const response = await productLocationCommands.list(false);
+    if (!mounted.current) return;
+    if (response.kind === "locations_success") { setProductLocations(response.locations.filter((location) => location.active)); setLocationsStatus("ready"); }
+    else { setProductLocations([]); setLocationsStatus("error"); }
+  };
+  useEffect(() => { void loadCategories(); void loadProductLocations(); return () => { mounted.current = false; request.current++; mutation.current++; }; }, []);
 
   const addField = () => {
     if (!pendingField.label.trim()) return;
@@ -67,7 +77,22 @@ export function OnboardingScreen({ onBack }: Props) {
     try {
       const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: parseBsToCentavos(purchasePrice)!, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(selected!, attributes) });
       if (!mounted.current || id !== mutation.current) return;
-      if (response.kind === "success") { dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.` }); setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setAttributes({}); }
+      if (response.kind === "success") {
+        let locationMessage = "";
+        if (primaryLocationId) {
+          const detail = await catalogMaintenanceCommands.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: response.product_id });
+          const assignment = detail.kind === "success" && detail.detail.target === CATALOG_TARGET.PRODUCT && detail.detail.entity_id === response.product_id
+            ? await productLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: detail.detail.revision, location_id: Number(primaryLocationId) })
+            : null;
+          const location = productLocations.find((item) => item.location_id === Number(primaryLocationId));
+          locationMessage = assignment?.kind === "assignment_success" && assignment.product_id === response.product_id && assignment.location_id === Number(primaryLocationId) && location
+            ? ` Ubicación principal: ${location.code}.`
+            : " No se pudo asignar la ubicación principal; podés corregirla desde el Catálogo.";
+        }
+        if (!mounted.current || id !== mutation.current) return;
+        dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.${locationMessage}` });
+        setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setAttributes({}); setPrimaryLocationId("");
+      }
       else dispatch({ type: "product_failed", requestId: id });
     } catch { if (mounted.current && id === mutation.current) dispatch({ type: "product_failed", requestId: id }); }
     finally { productLock.current = false; }
@@ -92,6 +117,7 @@ export function OnboardingScreen({ onBack }: Props) {
         h(Field, { kind: "money", label: "Precio de venta (Bs)", hint: "Usá coma decimal; se envían centavos enteros.", error: fieldError === "list-price" ? "Ingresá un precio de venta válido en Bs." : undefined, control: h("input", { id: "list-price", value: listPrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setListPrice(event.target.value) }) } as never),
             h(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de venta.", error: fieldError === "minimum-price" ? "Ingresá un precio mínimo válido y menor o igual al precio de venta." : undefined, control: h("input", { id: "minimum-sale-price", value: minimumSalePrice, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setMinimumSalePrice(event.target.value) }) } as never),
         h(Field, { kind: "quantity", label: "Stock inicial (unidades enteras)", error: fieldError === "stock" ? "Ingresá una cantidad entera mayor que cero." : undefined, control: h("input", { id: "opening-stock", value: stock, disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setStock(event.target.value) }) } as never),
+        h(Field, { kind: "select", label: "Ubicación principal (opcional)", hint: locationsStatus === "loading" ? "Cargando ubicaciones activas…" : locationsStatus === "error" ? "No se pudieron cargar las ubicaciones; podés asignarla después desde Catálogo." : undefined, control: h("select", { id: "product-primary-location", value: primaryLocationId, disabled: pending || locationsStatus !== "ready", onChange: (event: ChangeEvent<HTMLSelectElement>) => setPrimaryLocationId(event.target.value) }, h("option", { value: "" }, "Sin ubicación asignada"), productLocations.map((location) => h("option", { key: location.location_id, value: location.location_id }, location.code))) } as never),
         selected?.fields.map((field) => h(Field, { key: field.definition_id, kind: field.field_type === FIELD_TYPE.OPTION ? "select" : "text", label: field.label, hint: field.required ? "Campo obligatorio." : "Campo opcional.", error: fieldError === "attribute" && field.required && !(attributes[field.definition_id] ?? "").trim() ? "Completá este campo." : undefined, control: fieldControl(field) } as never)),
         h(Action, { variant: "primary", type: "submit", pending: state.productStatus === "pending", pendingLabel: "Creando producto…" }, "Crear producto"))))
   );

@@ -15,7 +15,7 @@ const browse = (products = [browseProduct]) => ({ kind: "success", products, cat
 const categoryDetail = { target: "category" as const, entity_id: 4, name: "Filtros", activity: "active" as const, revision: 2, attribute_definitions: [] };
 const productDetail = {
   target: "product" as const, entity_id: 1, category_id: 4, category_revision: 1, sku: "FIL-PRE-014", name: "Filtro Premium",
-  purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, activity: "active" as const, revision: 7,
+  purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_id: null, activity: "active" as const, revision: 7,
   attribute_definitions: [
     { definition_id: 10, label: "Marca", field_type: "text" as const, required: true, options: [], active: true },
     { definition_id: 11, label: "Código histórico", field_type: "text" as const, required: true, options: [], active: false },
@@ -726,6 +726,58 @@ test("locks modal controls and Escape while lifecycle is pending", async () => {
   assert.ok(screen.getByRole("dialog", { name: "Archivar Filtros" }));
   assert.equal((within(confirmation).getByRole("button", { name: "Archivando…" }) as HTMLButtonElement).disabled, true);
   resolveMaintain({ kind: "success", ...activeCategory, activity: "archived", revision: 3 });
+});
+
+test("selects and revision-checks an optional generated primary location in product editing", async () => {
+  const requests: Array<{ command: string; payload: unknown }> = [];
+  let assigned = false;
+  mockIPC((command, payload) => {
+    requests.push({ command, payload });
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse([{ ...browseProduct, primary_location_code: assigned ? "A1-SHELF2" : null, revision: assigned ? 9 : 7 }]);
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, primary_location_id: assigned ? 9 : null, revision: assigned ? 9 : 7 };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 9, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "edit_catalog_command") return { kind: "success", entity_id: 1, target: "product", label: "Filtro Premium · FIL-PRE-014", activity: "active", revision: 8 };
+    if (command === "assign_product_primary_location_command") { assigned = true; return { kind: "assignment_success", product_id: 1, location_id: 9, revision: 9 }; }
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  const location = await within(dialog).findByRole("combobox", { name: "Ubicación principal (opcional)" });
+  await userEvent.selectOptions(location, "9");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.ok(requests.some((request) => request.command === "assign_product_primary_location_command")));
+  assert.deepEqual(requests.find((request) => request.command === "assign_product_primary_location_command")?.payload, { request: { product_id: 1, expected_revision: 8, location_id: 9 } });
+  await waitFor(() => assert.equal((within(dialog).getByRole("combobox", { name: "Ubicación principal (opcional)" }) as HTMLSelectElement).value, "9"));
+});
+
+test("recovers after product metadata saves but primary-location assignment fails without repeating the save", async () => {
+  let detailCalls = 0;
+  let editCalls = 0;
+  mockIPC((command) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, revision: detailCalls++ === 0 ? 7 : 8, primary_location_id: null };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 9, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "edit_catalog_command") { editCalls += 1; return { kind: "success", entity_id: 1, target: "product", label: "Filtro Premium · FIL-PRE-014", activity: "active", revision: 8 }; }
+    if (command === "assign_product_primary_location_command") return { kind: "error", code: "stale_location", message: "Stale assignment" };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  await userEvent.selectOptions(await within(dialog).findByRole("combobox", { name: "Ubicación principal (opcional)" }), "9");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
+  assert.equal(editCalls, 1);
+  assert.match(within(dialog).getByRole("alert").textContent ?? "", /no se pudo asignar la ubicación principal/i);
+  await userEvent.click(retry);
+  await waitFor(() => assert.equal(detailCalls, 2));
+  assert.equal(editCalls, 1);
+  assert.equal((within(dialog).getByRole("combobox", { name: "Ubicación principal (opcional)" }) as HTMLSelectElement).value, "");
 });
 
 test("keeps historical retired values out of product edit controls while preserving authoritative detail", async () => {

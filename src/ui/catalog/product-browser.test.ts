@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 
 import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
 
-const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("names Seleccionar actions by product and SKU without changing visible copy or selection", async () => {
   const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "FLT-2" }];
@@ -115,6 +115,19 @@ test("Catalog, Gallery, and Sales display canonical sale price ahead of legacy a
   assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByText("Bs 30,00").textContent, "Bs 30,00");
   view.rerender(createElement(ProductBrowser, { ...props, presentation: "sales" }));
   assert.equal(within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByText("Bs 30,00").textContent, "Bs 30,00");
+});
+
+test("Catalog shows the same assigned generated location in Table and Gallery without adding it to Sales rows", async () => {
+  const product = { ...page.products[0], primary_location_code: "A1-SHELF2" };
+  const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
+  const props = { state, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+  const view = render(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "table" }));
+  assert.equal(screen.getByTestId("catalog-table-identity").querySelector("[data-ui-catalog-primary-location]")?.textContent, "Ubicación principal: A1-SHELF2");
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "catalog", catalogViewMode: "gallery" }));
+  assert.equal(screen.getByRole("list", { name: "Resultados del catálogo" }).querySelector("[data-ui-catalog-primary-location]")?.textContent, "Ubicación principal: A1-SHELF2");
+  view.rerender(createElement(ProductBrowser, { ...props, presentation: "sales" }));
+  const salesRow = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByRole("listitem");
+  assert.equal(salesRow.querySelector("[data-ui-sales-primary-location]"), null);
 });
 
 test("Catalog browse falls back to the legacy list price when canonical sale price is absent", () => {

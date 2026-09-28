@@ -7,7 +7,7 @@ const RESPONSE_KIND = { SUCCESS: "success", ERROR: "error" } as const;
 const ERROR_CODE = { VALIDATION: "validation_error", LIFECYCLE: "lifecycle_blocked", STALE: "stale_catalog_record", STALE_SCHEMA: "stale_category_schema", PERSISTENCE: "persistence_failure", UNAVAILABLE: "catalog_unavailable", IMAGE_UNAVAILABLE: "image_unavailable", INVALID_PURCHASE: "invalid_purchase_price", INVALID_SALE: "invalid_sale_price", INVALID_MINIMUM: "invalid_minimum_sale_price", MINIMUM_ABOVE_SALE: "minimum_sale_price_exceeds_sale_price" } as const;
 export interface ProductSearchResult { product_id: number; sku: string; name: string; category_name: string; available_quantity: number; purchase_price_centavos: number | null; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; revision: number; }
 export interface ProductBrowseAttribute { definition_id: number; label: string; value: string; }
-export interface ProductBrowseResult extends ProductSearchResult { category_id: number; attribute_values: ProductBrowseAttribute[]; }
+export interface ProductBrowseResult extends ProductSearchResult { category_id: number; primary_location_code: string | null; attribute_values: ProductBrowseAttribute[]; }
 export interface ProductBrowseCategory { category_id: number; name: string; }
 export type ProductStockState = "all" | "low_stock" | "out_of_stock" | "available" | "alerts";
 export type ProductActivityState = "active" | "archived" | "all";
@@ -19,7 +19,7 @@ export interface MaintainCatalogInput { target: CatalogMaintenanceRecord["target
 export interface CatalogAttributeDefinition { definition_id: number; label: string; field_type: (typeof ATTRIBUTE_FIELD_TYPE)[keyof typeof ATTRIBUTE_FIELD_TYPE]; required: boolean; options: string[]; active?: boolean; }
 export interface CatalogAttributeValue { definition_id: number; value: string; }
 export interface CategoryMetadataDetail { target: typeof CATALOG_TARGET.CATEGORY; entity_id: number; name: string; activity: CatalogMaintenanceRecord["activity"]; revision: number; attribute_definitions: CatalogAttributeDefinition[]; }
-export interface ProductMetadataDetail { target: typeof CATALOG_TARGET.PRODUCT; entity_id: number; category_id: number; category_revision: number; sku: string; name: string; purchase_price_centavos: number | null; sale_price_centavos: number; minimum_sale_price_centavos: number; activity: CatalogMaintenanceRecord["activity"]; revision: number; attribute_definitions: CatalogAttributeDefinition[]; attribute_values: CatalogAttributeValue[]; }
+export interface ProductMetadataDetail { target: typeof CATALOG_TARGET.PRODUCT; entity_id: number; category_id: number; category_revision: number; sku: string; name: string; purchase_price_centavos: number | null; sale_price_centavos: number; minimum_sale_price_centavos: number; primary_location_id: number | null; activity: CatalogMaintenanceRecord["activity"]; revision: number; attribute_definitions: CatalogAttributeDefinition[]; attribute_values: CatalogAttributeValue[]; }
 export type CatalogMetadataDetail = CategoryMetadataDetail | ProductMetadataDetail;
 export interface CatalogDetailInput { target: CatalogMaintenanceRecord["target"]; entity_id: number; }
 export interface ProductImageInput { product_id: number; expected_revision: number; }
@@ -64,10 +64,10 @@ const browseAttribute = (value: unknown): ProductBrowseAttribute | null => respo
   : null;
 const browseProduct = (value: unknown): ProductBrowseResult | null => {
   const product = searchProduct(value);
-  if (!product || !responseRecord(value) || !positiveSafeInteger(value.category_id) || !Array.isArray(value.attribute_values)) return null;
+  if (!product || !responseRecord(value) || !positiveSafeInteger(value.category_id) || (value.primary_location_code !== undefined && value.primary_location_code !== null && typeof value.primary_location_code !== "string") || !Array.isArray(value.attribute_values)) return null;
   const attributeValues = value.attribute_values.map(browseAttribute);
   return attributeValues.every((item): item is ProductBrowseAttribute => item !== null)
-    ? { ...product, category_id: value.category_id, attribute_values: attributeValues }
+    ? { ...product, category_id: value.category_id, primary_location_code: typeof value.primary_location_code === "string" && value.primary_location_code.trim() ? value.primary_location_code : null, attribute_values: attributeValues }
     : null;
 };
 const browsePage = (value: unknown): ProductBrowsePage | null => {
@@ -93,8 +93,8 @@ const detail = (value: unknown): CatalogMetadataDetail | null => {
   if (value.target === CATALOG_TARGET.CATEGORY) return { target: value.target, entity_id: value.entity_id, name: value.name, activity: value.activity, revision: value.revision, attribute_definitions: definitions };
   const sale = positiveSafeInteger(value.sale_price_centavos) ? value.sale_price_centavos : value.list_price_centavos;
   const purchase = value.purchase_price_centavos;
-  return value.target === CATALOG_TARGET.PRODUCT && positiveSafeInteger(value.category_id) && nonNegativeSafeInteger(value.category_revision) && typeof value.sku === "string" && positiveSafeInteger(sale) && (purchase === undefined || purchase === null || positiveSafeInteger(purchase)) && positiveSafeInteger(value.minimum_sale_price_centavos) && value.minimum_sale_price_centavos <= sale && Array.isArray(value.attribute_values) && value.attribute_values.every(attributeValue)
-    ? { target: value.target, entity_id: value.entity_id, category_id: value.category_id, category_revision: value.category_revision, sku: value.sku, name: value.name, purchase_price_centavos: purchase === undefined ? null : purchase as number | null, sale_price_centavos: sale, minimum_sale_price_centavos: value.minimum_sale_price_centavos, activity: value.activity, revision: value.revision, attribute_definitions: definitions, attribute_values: value.attribute_values.map((item) => attributeValue(item) as CatalogAttributeValue) }
+  return value.target === CATALOG_TARGET.PRODUCT && positiveSafeInteger(value.category_id) && nonNegativeSafeInteger(value.category_revision) && typeof value.sku === "string" && positiveSafeInteger(sale) && (purchase === undefined || purchase === null || positiveSafeInteger(purchase)) && positiveSafeInteger(value.minimum_sale_price_centavos) && value.minimum_sale_price_centavos <= sale && (value.primary_location_id === null || positiveSafeInteger(value.primary_location_id)) && Array.isArray(value.attribute_values) && value.attribute_values.every(attributeValue)
+    ? { target: value.target, entity_id: value.entity_id, category_id: value.category_id, category_revision: value.category_revision, sku: value.sku, name: value.name, purchase_price_centavos: purchase === undefined ? null : purchase as number | null, sale_price_centavos: sale, minimum_sale_price_centavos: value.minimum_sale_price_centavos, primary_location_id: value.primary_location_id as number | null, activity: value.activity, revision: value.revision, attribute_definitions: definitions, attribute_values: value.attribute_values.map((item) => attributeValue(item) as CatalogAttributeValue) }
     : null;
 };
 
@@ -161,3 +161,49 @@ export const searchProducts = createSearchProductsCommand(invoke as Invoke);
 export const browseProducts = createBrowseProductsCommand(invoke as Invoke);
 export const catalogMaintenanceCommands = createCatalogMaintenanceCommands(invoke as Invoke);
 export const catalogProductImageCommands = createCatalogProductImageCommands(invoke as Invoke);
+
+export interface ProductLocationSegment { id: number; label: string; position: number; }
+export interface ProductLocationSchema { revision: number; segments: ProductLocationSegment[]; }
+export interface ProductLocationRecord { location_id: number; code: string; values: string[]; active: boolean; revision: number; }
+export type ProductLocationErrorCode = "validation_error" | "location_schema_in_use" | "duplicate_location_code" | "location_unavailable" | "location_inactive" | "location_in_use" | "stale_location" | "persistence_failure";
+export type ProductLocationError = { kind: "error"; code: ProductLocationErrorCode; message: string };
+export type ProductLocationResponse = { kind: "schema_success"; schema: ProductLocationSchema } | { kind: "locations_success"; locations: ProductLocationRecord[] } | { kind: "location_success"; location: ProductLocationRecord } | { kind: "assignment_success"; product_id: number; location_id: number | null; revision: number } | { kind: "deleted" } | ProductLocationError;
+export interface SaveProductLocationSchemaInput { expected_revision: number; segments: string[]; }
+export interface ProductLocationLifecycleInput { location_id: number; expected_revision: number; }
+export interface AssignProductLocationInput { product_id: number; expected_revision: number; location_id: number | null; }
+
+const LOCATION_ERROR_CODES: readonly ProductLocationErrorCode[] = ["validation_error", "location_schema_in_use", "duplicate_location_code", "location_unavailable", "location_inactive", "location_in_use", "stale_location", "persistence_failure"];
+const productLocationSegment = (value: unknown): ProductLocationSegment | null => responseRecord(value) && positiveSafeInteger(value.id) && typeof value.label === "string" && value.label.trim().length > 0 && nonNegativeSafeInteger(value.position) ? { id: value.id, label: value.label, position: value.position } : null;
+const productLocationSchema = (value: unknown): ProductLocationSchema | null => {
+  if (!responseRecord(value) || !nonNegativeSafeInteger(value.revision) || !Array.isArray(value.segments)) return null;
+  const segments = value.segments.map(productLocationSegment);
+  if (!segments.every((segment): segment is ProductLocationSegment => segment !== null) || segments.some((segment, index) => segment.position !== index)) return null;
+  return { revision: value.revision, segments };
+};
+const productLocationRecord = (value: unknown): ProductLocationRecord | null => responseRecord(value) && positiveSafeInteger(value.location_id) && typeof value.code === "string" && value.code.length > 0 && Array.isArray(value.values) && value.values.every((item) => typeof item === "string") && typeof value.active === "boolean" && nonNegativeSafeInteger(value.revision) ? { location_id: value.location_id, code: value.code, values: [...value.values], active: value.active, revision: value.revision } : null;
+const productLocationError = (value: RecordValue): ProductLocationError | null => LOCATION_ERROR_CODES.includes(value.code as ProductLocationErrorCode) && typeof value.message === "string" ? { kind: "error", code: value.code as ProductLocationErrorCode, message: value.code === "persistence_failure" ? "The location change could not be completed." : value.message } : null;
+const decodeProductLocationResponse = (value: unknown): ProductLocationResponse | null => {
+  if (!responseRecord(value) || typeof value.kind !== "string") return null;
+  if (value.kind === "error") return productLocationError(value);
+  if (value.kind === "schema_success") { const schema = productLocationSchema(value.schema); return schema ? { kind: value.kind, schema } : null; }
+  if (value.kind === "locations_success" && Array.isArray(value.locations)) { const locations = value.locations.map(productLocationRecord); return locations.every((item): item is ProductLocationRecord => item !== null) ? { kind: value.kind, locations } : null; }
+  if (value.kind === "location_success") { const location = productLocationRecord(value.location); return location ? { kind: value.kind, location } : null; }
+  if (value.kind === "assignment_success" && positiveSafeInteger(value.product_id) && (value.location_id === null || positiveSafeInteger(value.location_id)) && nonNegativeSafeInteger(value.revision)) return { kind: value.kind, product_id: value.product_id, location_id: value.location_id as number | null, revision: value.revision };
+  if (value.kind === "deleted") return { kind: "deleted" };
+  return null;
+};
+const locationFailure = (): ProductLocationError => ({ kind: "error", code: "persistence_failure", message: "The location change could not be completed." });
+export function createProductLocationCommands(command: Invoke) {
+  const invokeLocation = (name: string, payload?: Record<string, unknown>): Promise<ProductLocationResponse> => command(name, payload).then(decodeProductLocationResponse).then((decoded) => decoded ?? locationFailure()).catch(locationFailure);
+  return {
+    schema: () => invokeLocation("location_schema_command"),
+    saveSchema: (input: SaveProductLocationSchemaInput) => invokeLocation("save_location_schema_command", { request: { expected_revision: input.expected_revision, segments: [...input.segments] } }),
+    list: (include_inactive = false) => invokeLocation("list_product_locations_command", { request: { include_inactive } }),
+    create: (values: string[]) => invokeLocation("create_product_location_command", { request: { values: [...values] } }),
+    activate: (input: ProductLocationLifecycleInput) => invokeLocation("activate_product_location_command", { request: { location_id: input.location_id, expected_revision: input.expected_revision } }),
+    deactivate: (input: ProductLocationLifecycleInput) => invokeLocation("deactivate_product_location_command", { request: { location_id: input.location_id, expected_revision: input.expected_revision } }),
+    delete: (input: ProductLocationLifecycleInput) => invokeLocation("delete_product_location_command", { request: { location_id: input.location_id, expected_revision: input.expected_revision } }),
+    assignPrimary: (input: AssignProductLocationInput) => invokeLocation("assign_product_primary_location_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision, location_id: input.location_id } }),
+  };
+}
+export const productLocationCommands = createProductLocationCommands(invoke as Invoke);

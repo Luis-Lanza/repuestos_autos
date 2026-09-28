@@ -10,6 +10,7 @@ use crate::domain::catalog::{
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
 pub(crate) mod bootstrap_demo;
+pub mod locations;
 pub mod repository;
 
 pub use bootstrap_demo::{
@@ -644,6 +645,7 @@ pub struct ProductBrowseResult {
     pub purchase_price_centavos: Option<i64>,
     pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
+    pub primary_location_code: Option<String>,
     pub revision: i64,
     pub attribute_values: Vec<ProductBrowseAttribute>,
 }
@@ -732,11 +734,13 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     let offset_index = limit_index + 1;
     let products_sql = format!(
         "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
-                p.purchase_price_centavos, p.list_price_centavos, p.minimum_unit_price_centavos, p.revision
+                p.purchase_price_centavos, p.list_price_centavos, p.minimum_unit_price_centavos,
+                location.code, p.revision
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
+         LEFT JOIN product_locations location ON location.id = p.primary_location_id
          WHERE {search_clause} {category_clause}
            AND {activity_clause} AND {stock_clause}
          ORDER BY lower(p.name), p.id
@@ -764,7 +768,8 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
                 purchase_price_centavos: row.get(6)?,
                 sale_price_centavos: row.get(7)?,
                 minimum_sale_price_centavos: row.get(8)?,
-                revision: row.get(9)?,
+                primary_location_code: row.get(9)?,
+                revision: row.get(10)?,
                 attribute_values: Vec::new(),
             })
         })?
@@ -913,6 +918,7 @@ pub enum CatalogMetadataDetail {
         purchase_price_centavos: Option<i64>,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        primary_location_id: Option<i64>,
         activity: &'static str,
         revision: i64,
         attribute_definitions: Vec<CategoryField>,
@@ -1210,12 +1216,12 @@ pub fn read_catalog_metadata_detail(
             .transpose(),
         CatalogTarget::Product => connection
             .query_row(
-                "SELECT category_id, sku, name, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, active, revision FROM products WHERE id = ?1",
+                "SELECT category_id, sku, name, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, primary_location_id, active, revision FROM products WHERE id = ?1",
                 [entity_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
             )
             .optional()?
-            .map(|(category_id, sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, active, revision)| {
+            .map(|(category_id, sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, primary_location_id, active, revision)| {
                 let category_revision = connection.query_row("SELECT revision FROM categories WHERE id = ?1", [category_id], |row| row.get(0))?;
                 let mut statement = connection.prepare("SELECT definition_id, searchable_value FROM product_attribute_values WHERE product_id = ?1 ORDER BY definition_id")?;
                 let attribute_values = statement.query_map([entity_id], |row| Ok(AttributeValueInput { definition_id: row.get(0)?, value: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
@@ -1228,6 +1234,7 @@ pub fn read_catalog_metadata_detail(
                     purchase_price_centavos,
                     sale_price_centavos,
                     minimum_sale_price_centavos,
+                    primary_location_id,
                     activity: if active { "active" } else { "archived" },
                     revision,
                     attribute_definitions: load_category_fields(connection, category_id)?,

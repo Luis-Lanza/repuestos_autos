@@ -1,6 +1,6 @@
 import { createElement, useEffect, useRef, type ChangeEvent, type FormEvent, type RefObject } from "react";
 
-import { ATTRIBUTE_FIELD_TYPE, type CatalogMaintenanceRecord, type CatalogMetadataDetail } from "../../commands/catalog.ts";
+import { ATTRIBUTE_FIELD_TYPE, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "./controls.ts";
 import { ConfirmationDialog } from "./confirmation-dialog.ts";
 import type { CatalogEditFieldErrors, CatalogEditForm } from "../catalog/catalog-maintenance-flow.ts";
@@ -15,6 +15,8 @@ export interface CatalogEditDialogProps {
   lifecycleFeedback: string | null;
   recoveryRequired: boolean;
   fieldErrors: CatalogEditFieldErrors;
+  locations?: ProductLocationRecord[];
+  locationsStatus?: "loading" | "ready" | "error";
   onChange: (field: string, value: string) => void;
   onSubmit: () => void;
   onLifecycle: () => void;
@@ -39,11 +41,13 @@ interface CatalogMetadataEditorProps {
   pending: boolean;
   feedback: string | null;
   fieldErrors: CatalogEditFieldErrors;
+  locations?: ProductLocationRecord[];
+  locationsStatus?: "loading" | "ready" | "error";
   onChange: (field: string, value: string) => void;
   onSubmit: () => void;
 }
 
-export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }: CatalogMetadataEditorProps & Pick<CatalogEditDialogProps, "onAddCategoryField" | "onChangeCategoryField" | "onRetireCategoryField" | "onRemoveCategoryFieldDraft">) {
+export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft, locations = [], locationsStatus = "loading" }: CatalogMetadataEditorProps & Pick<CatalogEditDialogProps, "onAddCategoryField" | "onChangeCategoryField" | "onRetireCategoryField" | "onRemoveCategoryFieldDraft">) {
   const attribute = (definition: CatalogMetadataDetail["attribute_definitions"][number]) => {
     const field = `attribute-${definition.definition_id}`;
     const label = `${definition.label}${definition.required ? " (obligatorio)" : " (opcional)"}`;
@@ -92,12 +96,13 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
       createElement(Field, { kind: "money", label: "Precio actual de compra (Bs)", hint: "Costo actual de compra. Se guarda en centavos.", error: fieldErrors.purchase_price_centavos, control: createElement("input", { id: "catalog-edit-purchase-price", disabled: pending, value: form.purchase_price_centavos ?? "", "aria-required": true, onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("purchase_price_centavos", event.target.value) }) } as never),
       createElement(Field, { kind: "money", label: "Precio de venta (Bs)", hint: "Referencia para nuevas ventas. Se guarda en centavos.", error: fieldErrors.sale_price_centavos, control: createElement("input", { id: "catalog-edit-sale-price", disabled: pending, value: form.sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("sale_price_centavos", event.target.value) }) } as never),
       createElement(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", hint: "No puede superar el precio de venta.", error: fieldErrors.minimum_sale_price_centavos, control: createElement("input", { id: "catalog-edit-minimum-price", disabled: pending, value: form.minimum_sale_price_centavos ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("minimum_sale_price_centavos", event.target.value) }) } as never),
+      createElement(Field, { kind: "select", label: "Ubicación principal (opcional)", hint: locationsStatus === "loading" ? "Cargando ubicaciones activas…" : locationsStatus === "error" ? "No se pudieron cargar ubicaciones activas." : undefined, control: createElement("select", { id: "catalog-edit-primary-location", disabled: pending || locationsStatus !== "ready", value: form.primary_location_id == null ? "" : String(form.primary_location_id), onChange: (event: ChangeEvent<HTMLSelectElement>) => onChange("primary_location_id", event.target.value) }, createElement("option", { value: "" }, "Sin ubicación asignada"), locations.map((location) => createElement("option", { key: location.location_id, value: location.location_id }, location.code))) } as never),
       detail.attribute_definitions.some((field) => field.active !== false) ? createElement("fieldset", null, createElement("legend", null, "Atributos dinámicos"), detail.attribute_definitions.filter((field) => field.active !== false).map(attribute)) : null) : null,
     createElement("button", { type: "submit", tabIndex: -1, "aria-hidden": "true", hidden: true }, "Guardar"),
     feedback ? createElement(Feedback, { kind: "error" } as never, feedback) : null);
 }
 
-export function CatalogEditDialog({ record, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, imageThumbnail = null, imagePending = false, imageFeedback = null, onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft, onSaveCategorySchema, onReload, onCancel }: CatalogEditDialogProps) {
+export function CatalogEditDialog({ record, detail, form, loading, pending, feedback, lifecycleFeedback, recoveryRequired, fieldErrors, locations = [], locationsStatus = "loading", imageThumbnail = null, imagePending = false, imageFeedback = null, onChooseImage, onRemoveImage, onChange, onSubmit, onLifecycle, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft, onSaveCategorySchema, onReload, onCancel }: CatalogEditDialogProps) {
   const nameRef = useRef<HTMLInputElement>(null);
   const hasFocusedDetail = useRef(false);
   const dialogPending = loading || pending;
@@ -123,7 +128,7 @@ export function CatalogEditDialog({ record, detail, form, loading, pending, feed
     onCancel,
     onConfirm: detail?.target === "category" ? onSaveCategorySchema ?? onSubmit : onSubmit,
     children: detail && form ? createElement("div", { "data-ui-catalog-edit-content": true },
-      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }),
+      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, locations, locationsStatus, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onRemoveCategoryFieldDraft }),
       detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
         createElement("h3", null, "Imagen del producto"),
         imageThumbnail ? createElement("img", { src: imageThumbnail, alt: `Imagen de ${detail.name}`, "data-ui-catalog-product-image-preview": true }) : createElement("p", null, "Sin imagen"),

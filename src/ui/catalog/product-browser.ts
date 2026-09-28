@@ -170,6 +170,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
       const salesIdentity = createElement("span", { "data-ui-sales-product-identity-text": true }, product.name);
       const salesDetailAction = createElement(Action, { variant: "tertiary", type: "button", "data-ui-sales-product-detail-trigger": true, onClick: showSalesDetail }, "Ver detalles");
       const salesAttributes = (product.attribute_values ?? []).filter((attribute) => attribute.value.trim().length > 0).slice(0, 2);
+      const locationLabel = product.primary_location_code ? `Ubicación principal: ${product.primary_location_code}` : null;
       const salesAttributeSummary = createElement("div", { "data-ui-sales-product-attributes": true }, salesAttributes.map((attribute) => createElement("span", { key: attribute.definition_id }, `${attribute.label}: ${attribute.value}`)));
       const salesTableImage = safeThumbnail ?? createElement("div", { role: "img", "aria-label": "Sin imagen", "data-ui-sales-table-image-placeholder": true }, "Sin imagen");
       return salesGalleryPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product-card": true },
@@ -181,7 +182,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
           salesDetailAction,
           action)) : galleryPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-product-card": true },
         createElement("div", { "data-ui-catalog-image-area": true }, galleryImage),
-        createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name)),
+        createElement("div", { "data-ui-catalog-product-card-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), createElement("span", null, product.category_name), locationLabel ? createElement("span", { "data-ui-catalog-primary-location": true }, locationLabel) : null),
         createElement("span", { "data-ui-money": true }, priceText(salePriceCentavos(product))),
         createElement(Badge, { kind: stockKind(product), text: stockText(product) }),
         action) : salesPresentation ? createElement("li", { key: product.product_id, "data-ui-sales-product": true },
@@ -199,7 +200,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
           salesDetailAction,
           action)) : catalogPresentation ? createElement("li", { key: product.product_id, "data-ui-catalog-table-row": true },
             createElement("div", { "data-testid": "catalog-table-thumbnail", "data-ui-catalog-table-thumbnail": true }, tableImage),
-            createElement("div", { "data-testid": "catalog-table-identity", "data-ui-catalog-table-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku)),
+            createElement("div", { "data-testid": "catalog-table-identity", "data-ui-catalog-table-identity": true }, createElement("strong", null, product.name), createElement("span", { "data-ui-sku": true }, product.sku), locationLabel ? createElement("span", { "data-ui-catalog-primary-location": true }, locationLabel) : null),
             createElement("span", { "data-testid": "catalog-table-price", "data-ui-money": true }, priceText(salePriceCentavos(product))),
             createElement("span", { "data-testid": "catalog-table-category", "data-ui-catalog-table-category": true }, product.category_name),
             createElement("span", { "data-testid": "catalog-table-stock" }, createElement(Badge, { kind: stockKind(product), text: stockText(product) })),
@@ -224,6 +225,7 @@ export function ProductBrowser(props: ProductBrowserProps) {
             createElement("dl", { "data-ui-sales-product-detail-facts": true },
               createElement("dt", null, "SKU"), createElement("dd", null, detailProduct.sku),
               createElement("dt", null, "Categoría"), createElement("dd", null, detailProduct.category_name),
+              createElement("dt", null, "Ubicación principal"), createElement("dd", { "data-ui-sales-primary-location": true }, detailProduct.primary_location_code ?? "Sin ubicación asignada"),
               createElement("dt", null, "Stock"), createElement("dd", null, stockText(detailProduct)),
               createElement("dt", null, "Precio de compra"), createElement("dd", null, detailProduct.purchase_price_centavos === null ? "No registrado" : priceText(detailProduct.purchase_price_centavos)),
               createElement("dt", null, "Precio de venta"), createElement("dd", null, priceText(salePriceCentavos(detailProduct))),
