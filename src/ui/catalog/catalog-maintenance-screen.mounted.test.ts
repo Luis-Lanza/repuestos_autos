@@ -318,9 +318,11 @@ test("keeps category identity out of the sticky scroll layer and supports discar
   assert.ok(required.id);
   assert.ok(firstDraft.querySelector("[data-ui-category-schema-draft-name]")?.contains(within(firstDraft).getByRole("textbox", { name: "Nombre del campo" })));
   const discard = within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" });
-  assert.equal(discard.textContent, "× Descartar");
-  assert.equal(discard.parentElement?.getAttribute("data-ui-category-schema-draft-heading"), "true");
-  assert.equal(firstDraft.querySelectorAll("[data-ui-category-schema-draft-controls] > *").length, 3);
+  assert.equal(discard.textContent, "×");
+  assert.equal(discard.getAttribute("data-ui-category-schema-discard"), "true");
+  assert.equal(firstDraft.querySelector("fieldset"), null);
+  assert.equal(firstDraft.querySelector("[data-ui-category-schema-draft-heading]"), null);
+  assert.equal(firstDraft.querySelectorAll("[data-ui-category-schema-draft-controls] > *").length, 4);
   assert.equal(within(firstDraft).queryByRole("textbox", { name: "Opciones (separadas por coma)" }), null);
   await userEvent.selectOptions(within(firstDraft).getByRole("combobox", { name: "Tipo" }), "option");
   assert.ok(within(firstDraft).getByRole("textbox", { name: "Opciones (separadas por coma)" }));
@@ -333,10 +335,13 @@ test("keeps category identity out of the sticky scroll layer and supports discar
   assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Keep this draft");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-catalog-identity\] \{(?![^}]*position:\s*sticky)[^}]*display:\s*flex/);
-  assert.match(css, /\[data-ui-category-schema-draft-name\] \{[^}]*flex: 1 1 12rem/);
-  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{[^}]*display: flex;[^}]*flex-wrap: wrap/);
+  assert.match(css, /\[data-ui-category-schema-draft-name\] \{ flex: 1 1 14rem; min-inline-size: 10rem; \}/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{ display: flex; flex-wrap: wrap/);
   assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 1rem; block-size: 1rem; flex: 0 0 1rem; appearance: auto/);
-  assert.match(css, /@media \(min-width: 700px\) \{\s*\[data-ui-catalog-edit-dialog\] \{ inline-size: min\(600px, 100%\)/);
+  assert.match(css, /\[data-ui-category-schema-discard\] \{ flex: 0 0 auto; inline-size: 2\.5rem; min-block-size: 2\.5rem/);
+  assert.match(css, /\[data-ui-category-schema-existing\] \{ min-block-size: 3rem/);
+  assert.match(css, /\[data-ui-retired-category-field\] \{ display: flex; min-block-size: 3rem/);
+  assert.match(css, /@media \(min-width: 700px\) \{\s*\[data-ui-catalog-edit-dialog\] \{ inline-size: min\(680px, 100%\)/);
   assert.match(css, /\[data-ui-category-schema-options\] \{ inline-size: 100%; min-inline-size: 0/);
 });
 
