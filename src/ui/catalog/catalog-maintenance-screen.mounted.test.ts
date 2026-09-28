@@ -335,8 +335,11 @@ test("keeps category identity out of the sticky scroll layer and supports discar
   assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Keep this draft");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-catalog-identity\] \{(?![^}]*position:\s*sticky)[^}]*display:\s*flex/);
-  assert.match(css, /\[data-ui-category-schema-draft-name\] \{ flex: 1 1 14rem; min-inline-size: 10rem; \}/);
-  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{ display: flex; flex-wrap: wrap/);
+  assert.match(css, /\[data-ui-category-schema-draft-name\] \{ flex: 1 1 0; min-inline-size: 0; \}/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{ display: flex; flex-wrap: nowrap/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] > \[data-ui-field="select"\] \{ flex: 0 0 9rem; min-inline-size: 9rem; \}/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] > label \{ min-inline-size: 0; min-height: 0; white-space: nowrap; \}/);
+  assert.match(css, /@media \(max-width: 699px\) \{\s*\[data-ui-category-schema-draft-controls\] \{ flex-wrap: wrap; \}\s*\[data-ui-category-schema-draft-name\] \{ flex-basis: 100%; \}/);
   assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 1rem; block-size: 1rem; flex: 0 0 1rem; appearance: auto/);
   assert.match(css, /\[data-ui-category-schema-discard\] \{ flex: 0 0 auto; inline-size: 2\.5rem; min-block-size: 2\.5rem/);
   assert.match(css, /\[data-ui-category-schema-existing\] \{ min-block-size: 3rem/);
