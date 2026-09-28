@@ -2,7 +2,8 @@ use rusqlite::{params, Connection};
 
 use crate::application::reporting::{
     DashboardMetrics, DashboardPayment, DashboardPeriod, DashboardProduct, DashboardRange,
-    DashboardReader, DashboardRecentSale, DashboardReport, DashboardStockAlert, ReportingError,
+    DashboardReader, DashboardRecentSale, DashboardReport, DashboardStockAlert,
+    RealizedGrossProfit, ReportingError,
 };
 
 pub const DASHBOARD_TOP_PRODUCTS_LIMIT: i64 = 5;
@@ -34,6 +35,69 @@ impl<'connection> SqliteDashboardReader<'connection> {
             effective_total_centavos: non_negative(row.1)?,
             net_units_out: non_negative(row.2)?,
             cancelled_sale_count: non_negative(row.3)?,
+            realized_gross_profit: Self::realized_gross_profit(connection, range)?,
+        })
+    }
+
+    fn realized_gross_profit(
+        connection: &Connection,
+        range: &DashboardRange,
+    ) -> Result<RealizedGrossProfit, ReportingError> {
+        let (from, to) = range.bounds();
+        let mut statement = connection
+            .prepare(
+                "SELECT l.quantity, l.negotiated_unit_price_centavos, l.unit_cost_snapshot_centavos,
+                        COALESCE((SELECT SUM(r.quantity) FROM sale_return_lines r WHERE r.sale_line_id = l.id), 0)
+                 FROM sale_lines l JOIN sales s ON s.id = l.sale_id
+                 WHERE s.status = 'confirmed' AND s.confirmed_at >= ?1 AND s.confirmed_at < ?2
+                   AND NOT EXISTS (SELECT 1 FROM sale_cancellations c WHERE c.sale_id = s.id)",
+            )
+            .map_err(|_| ReportingError::Persistence)?;
+        let rows = statement
+            .query_map(params![from, to], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|_| ReportingError::Persistence)?;
+        let mut total = 0_i64;
+        let mut missing_cost_line_count = 0_i64;
+        for row in rows {
+            let (quantity, unit_price, unit_cost, returned_quantity) =
+                row.map_err(|_| ReportingError::Persistence)?;
+            if quantity <= 0
+                || unit_price < 0
+                || returned_quantity < 0
+                || returned_quantity > quantity
+            {
+                return Err(ReportingError::PersistedDataInvalid);
+            }
+            let net_units = quantity
+                .checked_sub(returned_quantity)
+                .ok_or(ReportingError::PersistedDataInvalid)?;
+            if let Some(unit_cost) = unit_cost {
+                if unit_cost < 0 {
+                    return Err(ReportingError::PersistedDataInvalid);
+                }
+                let line_profit = unit_price
+                    .checked_sub(unit_cost)
+                    .and_then(|margin| margin.checked_mul(net_units))
+                    .ok_or(ReportingError::PersistedDataInvalid)?;
+                total = total
+                    .checked_add(line_profit)
+                    .ok_or(ReportingError::PersistedDataInvalid)?;
+            } else {
+                missing_cost_line_count = missing_cost_line_count
+                    .checked_add(1)
+                    .ok_or(ReportingError::PersistedDataInvalid)?;
+            }
+        }
+        Ok(RealizedGrossProfit {
+            amount_centavos: total,
+            missing_cost_line_count,
         })
     }
 

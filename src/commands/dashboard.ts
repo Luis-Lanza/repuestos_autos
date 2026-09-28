@@ -4,11 +4,13 @@ export type DashboardRequest = {
   month_from_utc: string;
   month_to_exclusive_utc: string;
 };
+export type RealizedGrossProfit = { amount_centavos: number; missing_cost_line_count: number };
 export type DashboardMetrics = {
   effective_sale_count: number;
   effective_total_centavos: number;
   net_units_out: number;
   cancelled_sale_count: number;
+  realized_gross_profit: RealizedGrossProfit;
 };
 export type DashboardReport = {
   today: { metrics: DashboardMetrics };
@@ -29,7 +31,15 @@ const nonNegativeInteger = (value: unknown): value is number => safeInteger(valu
 const positiveInteger = (value: unknown): value is number => safeInteger(value) && value > 0;
 const failure = (): DashboardError => ({ kind: "error", code: "persistence_failure", message: errorMessage });
 const decodeError = (value: RecordValue): DashboardError => value.code === "invalid_range" ? { kind: "error", code: "invalid_range", message: "The dashboard date range is invalid." } : value.code === "persistence_failure" ? failure() : failure();
-const metrics = (value: unknown): DashboardMetrics | null => isRecord(value) && nonNegativeInteger(value.effective_sale_count) && nonNegativeInteger(value.effective_total_centavos) && nonNegativeInteger(value.net_units_out) && nonNegativeInteger(value.cancelled_sale_count) ? { effective_sale_count: value.effective_sale_count, effective_total_centavos: value.effective_total_centavos, net_units_out: value.net_units_out, cancelled_sale_count: value.cancelled_sale_count } : null;
+const realizedGrossProfit = (value: unknown): RealizedGrossProfit | null => {
+  if (!isRecord(value) || !safeInteger(value.amount_centavos) || !nonNegativeInteger(value.missing_cost_line_count)) return null;
+  return { amount_centavos: value.amount_centavos, missing_cost_line_count: value.missing_cost_line_count };
+};
+const metrics = (value: unknown): DashboardMetrics | null => {
+  if (!isRecord(value) || !nonNegativeInteger(value.effective_sale_count) || !nonNegativeInteger(value.effective_total_centavos) || !nonNegativeInteger(value.net_units_out) || !nonNegativeInteger(value.cancelled_sale_count)) return null;
+  const profit = realizedGrossProfit(value.realized_gross_profit);
+  return profit ? { effective_sale_count: value.effective_sale_count, effective_total_centavos: value.effective_total_centavos, net_units_out: value.net_units_out, cancelled_sale_count: value.cancelled_sale_count, realized_gross_profit: profit } : null;
+};
 const report = (value: unknown): DashboardReport | null => {
   if (!isRecord(value) || !isRecord(value.today) || !isRecord(value.month)) return null;
   const today = metrics(value.today.metrics); const month = metrics(value.month.metrics);
@@ -41,7 +51,13 @@ const report = (value: unknown): DashboardReport | null => {
   if (top_products.some((item) => item === null) || payment_distribution.some((item) => item === null) || recent_sales.some((item) => item === null) || stock_alerts.some((item) => item === null)) return null;
   return { today: { metrics: today }, month: { metrics: month }, top_products: top_products as DashboardReport["top_products"], payment_distribution: payment_distribution as DashboardReport["payment_distribution"], recent_sales: recent_sales as DashboardReport["recent_sales"], stock_alerts: stock_alerts as DashboardReport["stock_alerts"] };
 };
-const decode = (value: unknown): DashboardResponse => isRecord(value) && value.kind === "success" && report(value.report) ? { kind: "success", report: report(value.report)! } : isRecord(value) && value.kind === "error" ? decodeError(value) : failure();
+const decode = (value: unknown): DashboardResponse => {
+  if (isRecord(value) && value.kind === "success") {
+    const decodedReport = report(value.report);
+    return decodedReport ? { kind: "success", report: decodedReport } : failure();
+  }
+  return isRecord(value) && value.kind === "error" ? decodeError(value) : failure();
+};
 
 export function currentDashboardRequest(now = new Date()): DashboardRequest {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
