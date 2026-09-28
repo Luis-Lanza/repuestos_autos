@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
@@ -209,7 +209,7 @@ test("Sales product identity opens an accessible read-only detail with every ord
     { definition_id: 8, label: "Marca", value: "Bosch" },
   ] };
   const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
-  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {} };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" } };
   const view = render(createElement(ProductBrowser, props));
   for (const mode of ["table", "gallery"] as const) {
     if (mode === "gallery") view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: mode }));
@@ -224,18 +224,46 @@ test("Sales product identity opens an accessible read-only detail with every ord
     await userEvent.click(trigger);
     const detail = screen.getByRole("dialog", { name: "Filter" });
     const closeButton = within(detail).getByRole("button", { name: "Cerrar detalle del producto" });
+    assert.equal(detail.getAttribute("data-ui-density"), "compact");
+    const detailContent = detail.querySelector('[data-ui-sales-detail-content="true"]')!;
+    assert.deepEqual(Array.from(detailContent.children, (child) => child.hasAttribute("data-ui-sales-detail-image-trigger") ? "image" : child.hasAttribute("data-ui-sales-product-detail-facts") ? "facts" : "unexpected"), ["image", "facts"]);
     assert.equal(document.activeElement, closeButton);
+    const zoomTrigger = within(detail).getByRole("button", { name: "Ampliar imagen del producto Filter" });
     await userEvent.keyboard("{Tab}");
-    assert.equal(document.activeElement, closeButton);
+    assert.equal(document.activeElement, zoomTrigger);
     assert.ok(detail.contains(document.activeElement));
     await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
     assert.equal(document.activeElement, closeButton);
     assert.ok(detail.contains(document.activeElement));
-    assert.ok(within(detail).getByRole("img", { name: "Sin imagen" }));
+    assert.equal(zoomTrigger.querySelector("img")?.getAttribute("alt"), "Filter");
+    assert.ok(zoomTrigger.querySelector('[data-ui-sales-image-zoom-icon="true"]'));
     for (const fact of ["SKU", "FLT", "Categoría", "Filters", "Stock", "Disponible: 4", "Precio de compra", "No registrado", "Precio de venta", "Bs 25,00", "Precio mínimo de venta", "Bs 15,00"]) within(detail).getByText(fact);
     const values = Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dt, [data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent);
     assert.deepEqual(values, ["Diámetro", "50 mm", "Material", "Sin dato", "Marca", "Bosch"]);
-    await userEvent.keyboard("{Escape}");
+    zoomTrigger.focus();
+    await userEvent.keyboard("{Enter}");
+    const viewer = screen.getByRole("dialog", { name: "Imagen de Filter" });
+    const viewerClose = within(viewer).getByRole("button", { name: "Cerrar imagen ampliada" });
+    assert.equal(document.activeElement, viewerClose);
+    assert.ok(within(viewer).getByRole("img", { name: "Filter" }));
+    assert.equal(detail.getAttribute("aria-hidden"), "true");
+    fireEvent.keyDown(document, { key: "Escape" });
+    assert.equal(screen.queryByRole("dialog", { name: "Imagen de Filter" }), null);
+    assert.equal(screen.getByRole("dialog", { name: "Filter" }), detail);
+    assert.equal(document.activeElement, zoomTrigger);
+
+    await userEvent.click(zoomTrigger);
+    await userEvent.click(screen.getByRole("button", { name: "Cerrar imagen ampliada" }));
+    assert.equal(screen.getByRole("dialog", { name: "Filter" }), detail);
+    assert.equal(document.activeElement, zoomTrigger);
+    await userEvent.click(zoomTrigger);
+    const viewerBackdrop = screen.getByRole("dialog", { name: "Imagen de Filter" }).parentElement!;
+    fireEvent.mouseDown(viewerBackdrop);
+    assert.equal(screen.queryByRole("dialog", { name: "Imagen de Filter" }), null);
+    assert.equal(screen.getByRole("dialog", { name: "Filter" }), detail);
+    assert.equal(document.activeElement, zoomTrigger);
+
+    fireEvent.keyDown(document, { key: "Escape" });
     assert.equal(screen.queryByRole("dialog", { name: "Filter" }), null);
     assert.equal(document.activeElement, trigger);
   }

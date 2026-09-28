@@ -167,7 +167,7 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
 test("quick product detail uses the browse snapshot without changing browse or Add behavior", async () => {
   const product = { ...products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }, { definition_id: 2, label: "Largo", value: "  " }] };
   const calls: string[] = [];
-  mockIPC((command) => { calls.push(command); return command === "browse_products_command" ? browse([product]) : Promise.reject(new Error(`unexpected command: ${command}`)); });
+  mockNativeIPC((command) => { calls.push(command); return command === "browse_products_command" ? browse([product]) : command === "catalog_product_image_thumbnail_command" ? { kind: "success", product_id: 1, revision: 2, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" } : Promise.reject(new Error(`unexpected command: ${command}`)); });
   render(createElement(SaleScreen));
   const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
   const before = calls.filter((command) => command === "browse_products_command").length;
@@ -182,9 +182,16 @@ test("quick product detail uses the browse snapshot without changing browse or A
     const trigger = actions[0];
     await user().click(trigger);
     const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+    assert.equal(detail.getAttribute("data-ui-density"), "compact");
     assert.deepEqual(Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent), ["Acero", "Sin dato"]);
     assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
     assert.equal(calls.includes("catalog_metadata_detail_command"), false);
+    const zoomTrigger = within(detail).getByRole("button", { name: "Ampliar imagen del producto Filtro aceite" });
+    await user().click(zoomTrigger);
+    assert.equal(screen.getByRole("dialog", { name: "Imagen de Filtro aceite" }).getAttribute("aria-modal"), "true");
+    await user().keyboard("{Escape}");
+    assert.equal(screen.getByRole("dialog", { name: "Filtro aceite" }), detail);
+    assert.equal(document.activeElement, zoomTrigger);
     await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
     assert.equal(document.activeElement, trigger);
   }
