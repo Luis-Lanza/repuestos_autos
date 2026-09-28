@@ -316,15 +316,20 @@ test("keeps category identity out of the sticky scroll layer and supports discar
   const secondDraft = within(dialog).getByRole("group", { name: "Campo nuevo 2" });
   const required = within(firstDraft).getByRole("checkbox", { name: "Obligatorio" });
   assert.ok(required.id);
+  assert.ok(firstDraft.querySelector("[data-ui-category-schema-draft-name]")?.contains(within(firstDraft).getByRole("textbox", { name: "Nombre del campo" })));
+  const discard = within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" });
+  assert.equal(discard.textContent, "× Descartar");
+  assert.equal(discard.parentElement?.getAttribute("data-ui-category-schema-draft-controls"), "true");
   await userEvent.type(within(secondDraft).getByRole("textbox", { name: "Nombre del campo" }), "Keep this draft");
-  assert.ok(within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" }));
+  assert.ok(discard);
   await userEvent.click(within(firstDraft).getByRole("button", { name: "Descartar campo nuevo 1" }));
   assert.equal(dialog.querySelectorAll("[data-ui-category-schema-draft]").length, 1);
   assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Keep this draft");
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-catalog-identity\] \{(?![^}]*position:\s*sticky)[^}]*display:\s*flex/);
-  assert.match(css, /\[data-ui-category-schema-draft\] \[data-ui-kind="checkbox"\] \{ grid-column: 1; display: flex; align-items: center/);
-  assert.match(css, /\[data-ui-category-schema-draft\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 1rem; block-size: 1rem/);
+  assert.match(css, /\[data-ui-category-schema-draft-name\] \{[^}]*grid-column: 1 \/ -1/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \{[^}]*display: flex;[^}]*flex-wrap: wrap/);
+  assert.match(css, /\[data-ui-category-schema-draft-controls\] \[data-ui-kind="checkbox"\] input\[type="checkbox"\] \{ inline-size: 18px; block-size: 18px/);
 });
 
 test("keeps one compact scroll region and one category save action", async () => {

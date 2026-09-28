@@ -32,6 +32,7 @@ Category fields are created only during onboarding. The existing category editor
 - [x] T5 Run focused end-to-end seam validation and independent verification. Route: delegated direct; trigger: verification. Checks: full Rust suite, full frontend suite, test typecheck, and diff check all pass.
 - [x] T6 Refine category editor visuals from Windows review. Route: delegated direct; trigger: multi-file write. Checks: mounted editor scroll/save behavior and focused mounted suite.
 - [x] T7 Fix Windows visual defects in the category editor: prevent sticky identity overlap, compact/align required checkbox, and add accessible per-draft discard. Route: delegated direct; trigger: multi-file write. Checks: mounted interactions preserve remaining drafts, category save action, and retirement confirmation.
+- [x] T8 Correct Windows draft-field layout from screenshot: full-width name row followed by a compact type/required/discard row with responsive wrapping and no overlap. Route: delegated direct; trigger: multi-file write. Checks: mounted coverage asserts the structure, visible `× Descartar` action, native checkbox sizing, and preservation of draft-discard behavior.
 
 ## Acceptance Criteria
 - A category can gain a valid field through its edit dialog.
@@ -64,6 +65,7 @@ Category fields are created only during onboarding. The existing category editor
 - T5 final stale current-schema assertion now compares against `CURRENT_SCHEMA_VERSION`; `cargo test --manifest-path src-tauri/Cargo.toml` passed, `npm test` passed (307 tests), `npm run typecheck:tests` passed, and `git diff --check` passed.
 - T6 Windows visual refinement: active category definitions now render as compact immutable rows, retired definitions remain compact history, drafts use compact grouped controls, and the dialog footer owns the single primary save action. Category name edits remain supported through that action, including when schema changes are submitted first; the dialog content is its sole internal scroll region. Retirement confirmation and dialog semantics remain unchanged. The focused mounted suite passed (33 tests); `git diff --check` passed.
 - T7 Windows visual correction: removed sticky positioning from the category identity banner so it cannot cover the category-name label/content; required checkbox and label now form a compact inline row; every unsaved draft has an accessible Discard action that removes only that draft. Mounted coverage verifies individual discard while retaining another draft and its entered value; existing mounted assertions continue to cover one primary save and confirmed retirement. Exact mounted runner passed (34 tests); `git diff --check` passed.
+- 2026-09-27: T8 Windows screenshot correction: draft field name now occupies its own full-width row; type select, native 18px required checkbox with label, and inline `× Descartar` action share a wrapping responsive row. Mounted test checks the layout hooks and visible action while retaining discard behavior. Exact mounted runner passed (34 tests); `git diff --check` passed.
 
 ## Next Step
-- T1–T7 are complete; focused mounted category validation and diff check passed.
+- T1–T8 are complete; focused mounted category validation and diff check passed.
