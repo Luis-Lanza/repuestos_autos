@@ -160,13 +160,13 @@ fn legacy_facts(path: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 #[test]
-fn migration_v20_adds_global_location_contract_without_changing_stock_balances() {
+fn migration_v20_and_v21_upgrade_contracts_preserve_stock_and_legacy_costs() {
     let directory = temporary_directory("migration-v20-product-locations");
     let path = create_legacy_database(&directory);
     let before = legacy_facts(&path);
     let connection = open_database(&production_database_config(&directory)).unwrap();
 
-    assert_eq!(user_version(&path), 20);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(legacy_facts(&path), before);
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM location_schema", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     assert_eq!(connection.query_row("SELECT primary_location_id FROM products WHERE id = 1", [], |row| row.get::<_, Option<i64>>(0)).unwrap(), None);
@@ -202,6 +202,17 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
             )
             .unwrap(),
         (5_000, 2_500)
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT unit_cost_snapshot_centavos FROM sale_lines WHERE id = 20",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap(),
+        None,
+        "legacy sale costs must remain unknown after migration",
     );
     assert_eq!(
         connection

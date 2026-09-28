@@ -162,7 +162,7 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
         for line in sale.lines() {
             transaction
                 .execute(
-                    "INSERT INTO sale_lines (sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, list_price_snapshot_centavos, line_total_centavos) SELECT ?1, ?2, sku, name, ?3, ?4, ?5, ?6, ?7 FROM products WHERE id = ?2",
+                    "INSERT INTO sale_lines (sale_id, product_id, sku_snapshot, product_name_snapshot, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, list_price_snapshot_centavos, unit_cost_snapshot_centavos, line_total_centavos) SELECT ?1, ?2, sku, name, ?3, ?4, ?5, ?6, purchase_price_centavos, ?7 FROM products WHERE id = ?2",
                     params![sale_id, line.product_id(), line.quantity().value(), line.unit_price().value(), line.minimum_unit_price_snapshot().value(), line.list_price_snapshot().map(MoneyCentavos::value), line.total().value()],
                 )
                 .map_err(|_| ConfirmSaleError::Persistence)?;
