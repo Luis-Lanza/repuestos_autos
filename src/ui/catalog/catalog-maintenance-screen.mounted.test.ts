@@ -282,8 +282,9 @@ test("adds category fields and retires existing fields only after confirmation",
   await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
   assert.ok(within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }));
-  const existingLabel = within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement;
-  assert.equal(existingLabel.disabled, true);
+  const existingField = within(dialog).getByRole("group", { name: "Campo Material" });
+  assert.match(existingField.textContent ?? "", /Texto.*Obligatorio/);
+  assert.equal(within(existingField).queryByRole("textbox"), null);
   assert.ok(within(dialog).getByText(/Legacy code — Retirado.*no editable ni reactivable/));
   assert.equal(within(dialog).queryByRole("button", { name: /Reactivar.*Legacy code/ }), null);
   await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
@@ -294,10 +295,25 @@ test("adds category fields and retires existing fields only after confirmation",
   await userEvent.click(within(dialog).getByRole("button", { name: "Retirar Material" }));
   await userEvent.click(within(await screen.findByRole("dialog", { name: "Retirar Material" })).getByRole("button", { name: "Confirmar retiro" }));
   await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
-  const fieldNames = within(dialog).getAllByRole("textbox", { name: "Nombre del campo" });
+  const draft = within(dialog).getByRole("group", { name: "Campo nuevo 1" });
+  const fieldNames = within(draft).getAllByRole("textbox", { name: "Nombre del campo" });
+  assert.equal(fieldNames.length, 1);
   await userEvent.type(fieldNames[0], "Length");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar campos de categoría" }));
+  assert.equal(within(dialog).getAllByRole("button", { name: /Guardar/ }).length, 1);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   await waitFor(() => assert.deepEqual(schemaRequest, { category_id: 4, expected_revision: 2, fields: [{ definition_id: null, label: "Length", field_type: "text", required: false, options: [] }] }));
+});
+
+test("keeps one compact scroll region and one category save action", async () => {
+  mockIPC((command) => command === "catalog_metadata_detail_command" ? { ...categoryDetail, attribute_definitions: [{ definition_id: 11, label: "Material", field_type: "text" as const, required: false, options: [], active: true }] } : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  assert.equal(within(dialog).getAllByRole("button", { name: /Guardar/ }).length, 1);
+  assert.equal(dialog.querySelectorAll("[data-ui-catalog-edit-content]").length, 1);
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  assert.match(css, /\[data-ui-catalog-edit-dialog\][^{]*\{[^}]*overflow: hidden/);
+  assert.match(css, /\[data-ui-catalog-edit-dialog\] \[data-ui-catalog-edit-content\][^{]*\{[^}]*overflow-y: auto/);
 });
 
 test("reloads authoritative category fields after a stale schema result without repeating the mutation", async () => {
@@ -311,12 +327,14 @@ test("reloads authoritative category fields after a stale schema result without 
   render(createElement(CatalogMaintenanceScreen));
   await userEvent.click(await openCategoryEditor());
   const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar campos de categoría" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre del campo" }), "Nuevo");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
   assert.equal(schemaCalls, 1);
   assert.ok(within(dialog).getByRole("alert").textContent?.includes("Recargá antes de guardar"));
   await userEvent.click(retry);
-  await waitFor(() => assert.equal((within(dialog).getByRole("textbox", { name: "Nombre del campo" }) as HTMLInputElement).value, "Current"));
+  await waitFor(() => assert.ok(within(dialog).getByRole("group", { name: "Campo Current" })));
   assert.equal(schemaCalls, 1);
   assert.equal(details, 2);
 });
@@ -513,7 +531,7 @@ test("recovers an edited detail after list refresh failure without repeating the
   const name = within(dialog).getByRole("textbox", { name: "Nombre de la categoría" });
   await userEvent.clear(name);
   await userEvent.type(name, "Filtros nuevos");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
   assert.equal(editCalls, 1);
   assert.equal((name as HTMLInputElement).disabled, true);
@@ -586,15 +604,15 @@ test("rehydrates authoritative detail before unlocking stale edit recovery", asy
   const name = within(dialog).getByRole("textbox", { name: "Nombre de la categoría" });
   await userEvent.clear(name);
   await userEvent.type(name, "Cambio en conflicto");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   const retry = await within(dialog).findByRole("button", { name: "Reintentar actualización" });
   assert.equal(editCalls, 1);
-  assert.equal((within(dialog).getByRole("button", { name: "Guardar metadatos" }) as HTMLButtonElement).disabled, true);
+  assert.equal((within(dialog).getByRole("button", { name: "Guardar cambios" }) as HTMLButtonElement).disabled, true);
   await userEvent.click(retry);
   await waitFor(() => assert.equal(detailCalls, 2));
   await waitFor(() => assert.equal((within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }) as HTMLInputElement).value, "Filtros autoritativos"));
   assert.equal(editCalls, 1);
-  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
   await waitFor(() => assert.equal(editCalls, 2));
   assert.equal(editRequests[1].expected_revision, 4);
 });

@@ -310,7 +310,21 @@ export function CatalogMaintenanceScreen() {
     if (!request) { dispatch({ type: "edit_validation_failed", field_errors: { category_fields: "Completá el nombre y al menos una opción para cada campo de opciones." } }); return; }
     mutationLocked.current = true;
     dispatch({ type: "edit_started" });
-    const response = await catalogMaintenanceCommands.editCategorySchema(request);
+    const currentFields = detail.attribute_definitions.filter((field) => field.active !== false).map((field) => ({ definition_id: field.definition_id, label: field.label, field_type: field.field_type, required: field.required, options: field.field_type === "option" ? field.options : [] }));
+    const schemaChanged = JSON.stringify(request.fields) !== JSON.stringify(currentFields);
+    const schemaResponse = schemaChanged ? await catalogMaintenanceCommands.editCategorySchema(request) : null;
+    if (!mounted.current) return;
+    if (schemaResponse?.kind === "error") {
+      mutationLocked.current = false;
+      refreshDetailAfterRecovery.current = schemaResponse.code === "stale_category_schema" || schemaResponse.code === "stale_catalog_record";
+      dispatch({ type: "edit_failed", code: schemaResponse.code });
+      return;
+    }
+    const response = !schemaChanged
+      ? await catalogMaintenanceCommands.edit({ target: "category", entity_id: detail.entity_id, expected_revision: detail.revision, name: form.name })
+      : form.name === detail.name
+        ? schemaResponse!
+        : await catalogMaintenanceCommands.edit({ target: "category", entity_id: detail.entity_id, expected_revision: schemaResponse!.revision, name: form.name });
     if (!mounted.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {

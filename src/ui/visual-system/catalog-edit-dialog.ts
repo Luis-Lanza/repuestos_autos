@@ -42,7 +42,7 @@ interface CatalogMetadataEditorProps {
   onSubmit: () => void;
 }
 
-export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onSaveCategorySchema }: CatalogMetadataEditorProps & Pick<CatalogEditDialogProps, "onAddCategoryField" | "onChangeCategoryField" | "onRetireCategoryField" | "onSaveCategorySchema">) {
+export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField }: CatalogMetadataEditorProps & Pick<CatalogEditDialogProps, "onAddCategoryField" | "onChangeCategoryField" | "onRetireCategoryField">) {
   const attribute = (definition: CatalogMetadataDetail["attribute_definitions"][number]) => {
     const field = `attribute-${definition.definition_id}`;
     const label = `${definition.label}${definition.required ? " (obligatorio)" : " (opcional)"}`;
@@ -70,16 +70,20 @@ export function CatalogMetadataEditor({ detail, form, nameRef, pending, feedback
       createElement("legend", null, "Campos de la categoría"),
       createElement("p", null, "Los campos retirados quedan como historial y no se pueden editar ni reactivar."),
       (form.category_fields ?? []).map((field, index) => field.active
-        ? createElement("fieldset", { key: field.definition_id ?? `new-${index}`, "data-ui-category-schema-field": true },
-          createElement("legend", null, field.definition_id === null ? `Campo nuevo ${index + 1}` : `Campo ${field.label}`),
-          createElement(Field, { kind: "text", label: "Nombre del campo", control: createElement("input", { disabled: pending || field.definition_id !== null, value: field.label, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "label", event.currentTarget.value) }) } as never),
-          createElement(Field, { kind: "select", label: "Tipo de campo", control: createElement("select", { disabled: pending || field.definition_id !== null, value: field.field_type, onChange: (event: ChangeEvent<HTMLSelectElement>) => onChangeCategoryField?.(index, "field_type", event.currentTarget.value) }, createElement("option", { value: "text" }, "Texto"), createElement("option", { value: "number" }, "Número"), createElement("option", { value: "option" }, "Opciones")) } as never),
-          createElement(Field, { kind: "checkbox", label: "Campo obligatorio", control: createElement("input", { type: "checkbox", disabled: pending || field.definition_id !== null, checked: field.required, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "required", event.currentTarget.checked) }) } as never),
-          field.field_type === "option" ? createElement(Field, { kind: "text", label: "Opciones (separadas por coma)", control: createElement("input", { disabled: pending || field.definition_id !== null, value: field.options, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "options", event.currentTarget.value) }) } as never) : null,
-          field.definition_id !== null ? createElement(Action, { variant: "destructive", disabled: pending, onClick: () => onRetireCategoryField?.(index), "aria-label": `Retirar ${field.label}` }, "Retirar campo") : null)
+        ? field.definition_id !== null
+          ? createElement("div", { key: field.definition_id, role: "group", "aria-label": `Campo ${field.label}`, "data-ui-category-schema-field": true, "data-ui-category-schema-existing": true },
+            createElement("strong", null, field.label),
+            createElement("span", null, `Tipo: ${field.field_type === "text" ? "Texto" : field.field_type === "number" ? "Número" : "Opciones"}`),
+            createElement("span", null, field.required ? "Obligatorio" : "Opcional"),
+            createElement(Action, { variant: "destructive", disabled: pending, onClick: () => onRetireCategoryField?.(index), "aria-label": `Retirar ${field.label}` }, "Retirar"))
+          : createElement("fieldset", { key: `new-${index}`, "data-ui-category-schema-field": true, "data-ui-category-schema-draft": true },
+            createElement("legend", null, `Campo nuevo ${(form.category_fields ?? []).slice(0, index).filter((item) => item.definition_id === null).length + 1}`),
+            createElement(Field, { kind: "text", label: "Nombre del campo", control: createElement("input", { disabled: pending, value: field.label, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "label", event.currentTarget.value) }) } as never),
+            createElement(Field, { kind: "select", label: "Tipo", control: createElement("select", { disabled: pending, value: field.field_type, onChange: (event: ChangeEvent<HTMLSelectElement>) => onChangeCategoryField?.(index, "field_type", event.currentTarget.value) }, createElement("option", { value: "text" }, "Texto"), createElement("option", { value: "number" }, "Número"), createElement("option", { value: "option" }, "Opciones")) } as never),
+            createElement(Field, { kind: "checkbox", label: "Obligatorio", control: createElement("input", { type: "checkbox", disabled: pending, checked: field.required, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "required", event.currentTarget.checked) }) } as never),
+            field.field_type === "option" ? createElement(Field, { kind: "text", label: "Opciones (separadas por coma)", control: createElement("input", { disabled: pending, value: field.options, onChange: (event: ChangeEvent<HTMLInputElement>) => onChangeCategoryField?.(index, "options", event.currentTarget.value) }) } as never) : null)
         : createElement("p", { key: field.definition_id ?? `new-${index}`, "data-ui-retired-category-field": true }, `${field.label} — Retirado (histórico; no editable ni reactivable)`)),
-      createElement(Action, { variant: "secondary", disabled: pending, onClick: onAddCategoryField }, "Agregar campo"),
-      createElement(Action, { variant: "primary", disabled: pending, onClick: onSaveCategorySchema }, "Guardar campos de categoría")) : null,
+      createElement(Action, { variant: "secondary", disabled: pending, onClick: onAddCategoryField }, "Agregar campo")) : null,
     detail.target === "product" ? createElement("fieldset", null,
       createElement("legend", null, "Datos generales"),
       createElement(Field, { kind: "sku", label: "SKU", error: fieldErrors.sku, control: createElement("input", { id: "catalog-edit-sku", disabled: pending, value: form.sku ?? "", onChange: (event: ChangeEvent<HTMLInputElement>) => onChange("sku", event.target.value) }) } as never),
@@ -108,16 +112,16 @@ export function CatalogEditDialog({ record, detail, form, loading, pending, feed
     purpose: "routine",
     title,
     description: detail ? "Editá los metadatos del registro seleccionado y guardá los cambios." : loading ? "Cargando el detalle autorizado del registro seleccionado…" : "No se pudo cargar el detalle del registro seleccionado.",
-    confirmLabel: "Guardar metadatos",
+    confirmLabel: detail?.target === "category" ? "Guardar cambios" : "Guardar metadatos",
     pending: dialogPending || imagePending,
     pendingLabel: imagePending ? "Procesando imagen…" : loading ? "Cargando detalle…" : "Guardando metadatos…",
     confirmDisabled: !detail || !form || recoveryRequired || imagePending,
     dialogId: "catalog-edit-dialog",
     dialogDataAttribute: "catalog-edit-dialog",
     onCancel,
-    onConfirm: onSubmit,
+    onConfirm: detail?.target === "category" ? onSaveCategorySchema ?? onSubmit : onSubmit,
     children: detail && form ? createElement("div", { "data-ui-catalog-edit-content": true },
-      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField, onSaveCategorySchema }),
+      createElement(CatalogMetadataEditor, { detail, form, nameRef, pending: dialogPending || imagePending || recoveryRequired, feedback, fieldErrors, onChange, onSubmit, onAddCategoryField, onChangeCategoryField, onRetireCategoryField }),
       detail.target === "product" ? createElement("section", { "aria-label": "Imagen del producto", "data-ui-catalog-product-image": true, "aria-busy": imagePending || undefined },
         createElement("h3", null, "Imagen del producto"),
         imageThumbnail ? createElement("img", { src: imageThumbnail, alt: `Imagen de ${detail.name}`, "data-ui-catalog-product-image-preview": true }) : createElement("p", null, "Sin imagen"),
