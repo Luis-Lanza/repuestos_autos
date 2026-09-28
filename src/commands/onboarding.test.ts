@@ -29,6 +29,7 @@ test("rejects malformed onboarding data atomically and checks numeric transport"
 test("maps recognized and malformed onboarding errors to fixed safe messages", async () => {
   const native = { kind: "error", code: "duplicate_category", message: "SQL /panic native text" };
   assert.deepEqual(await createCreateCategoryCommand(async () => native)({ name: "x", fields: [] }), { kind: "error", code: "duplicate_category", message: "Category name already exists." });
+  assert.deepEqual(await createCreateProductCommand(async () => ({ kind: "error", code: "duplicate_sku", message: "native database detail" }))({ sku: "x", name: "x", category_id: 1, purchase_price_centavos: 1, sale_price_centavos: 1, minimum_sale_price_centavos: 1, opening_quantity: 1, attribute_values: [] }), { kind: "error", code: "duplicate_sku", message: "SKU already exists." });
   assert.deepEqual(await createCreateProductCommand(async () => ({ kind: "error", code: "unknown", message: "native" }))({ sku: "x", name: "x", category_id: 1, purchase_price_centavos: 1, sale_price_centavos: 1, minimum_sale_price_centavos: 1, opening_quantity: 1, attribute_values: [] }), { kind: "error", code: "persistence_failure", message: "The product could not be persisted." });
   assert.deepEqual(await createListCategoriesCommand(async () => { throw new Error("SQL path"); })(), { kind: "error", code: "persistence_failure", message: "Categories could not be loaded." });
 });

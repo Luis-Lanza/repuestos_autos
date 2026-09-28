@@ -83,20 +83,25 @@ export function OnboardingScreen({ onBack }: Props) {
       if (response.kind === "success") {
         let locationMessage = "";
         if (primaryLocationId) {
-          const detail = await catalogMaintenanceCommands.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: response.product_id });
-          const assignment = detail.kind === "success" && detail.detail.target === CATALOG_TARGET.PRODUCT && detail.detail.entity_id === response.product_id
-            ? await productLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: detail.detail.revision, location_id: Number(primaryLocationId) })
-            : null;
-          const location = productLocations.find((item) => item.location_id === Number(primaryLocationId));
-          locationMessage = assignment?.kind === "assignment_success" && assignment.product_id === response.product_id && assignment.location_id === Number(primaryLocationId) && location
-            ? ` Ubicación principal: ${location.code}.`
-            : " No se pudo asignar la ubicación principal; podés corregirla desde el Catálogo.";
+          locationMessage = " No se pudo asignar la ubicación principal; podés corregirla desde el Catálogo.";
+          try {
+            const detail = await catalogMaintenanceCommands.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: response.product_id });
+            const assignment = detail.kind === "success" && detail.detail.target === CATALOG_TARGET.PRODUCT && detail.detail.entity_id === response.product_id
+              ? await productLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: detail.detail.revision, location_id: Number(primaryLocationId) })
+              : null;
+            const location = productLocations.find((item) => item.location_id === Number(primaryLocationId));
+            if (assignment?.kind === "assignment_success" && assignment.product_id === response.product_id && assignment.location_id === Number(primaryLocationId) && location) {
+              locationMessage = ` Ubicación principal: ${location.code}.`;
+            }
+          } catch {
+            // Product creation succeeded; assignment is an independent follow-up operation.
+          }
         }
         if (!mounted.current || id !== mutation.current) return;
         dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.${locationMessage}` });
         setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setAttributes({}); setPrimaryLocationId("");
       }
-      else dispatch({ type: "product_failed", requestId: id });
+      else dispatch({ type: "product_failed", requestId: id, message: response.message });
     } catch { if (mounted.current && id === mutation.current) dispatch({ type: "product_failed", requestId: id }); }
     finally { productLock.current = false; }
   };

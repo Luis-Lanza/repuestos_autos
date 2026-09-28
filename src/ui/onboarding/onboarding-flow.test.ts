@@ -21,9 +21,10 @@ test("ignores obsolete mutation completions", () => {
   assert.equal(state.productStatus, "pending");
   state = createOnboardingFlow(state, { type: "product_succeeded", requestId: 2, message: "Producto creado." }); assert.equal(state.feedback, "Producto creado.");
 });
-test("maps category and product failures to localized recovery feedback", () => {
+test("maps category failures to localized recovery feedback and preserves a specific product reason", () => {
   let state = createOnboardingFlow(initialOnboardingState, { type: "category_started", requestId: 1 });
   state = createOnboardingFlow(state, { type: "category_failed", requestId: 1 }); assert.equal(state.feedback, "No se pudo crear la categoría.");
-  state = createOnboardingFlow(state, { type: "product_started", requestId: 2 }); state = createOnboardingFlow(state, { type: "product_failed", requestId: 2 });
-  assert.equal(state.feedback, "No se pudo crear el producto.");
+  state = createOnboardingFlow(state, { type: "product_started", requestId: 2 }); state = createOnboardingFlow(state, { type: "product_failed", requestId: 2, message: "El SKU ya existe." });
+  assert.equal(state.productStatus, "error");
+  assert.equal(state.feedback, "El SKU ya existe.");
 });

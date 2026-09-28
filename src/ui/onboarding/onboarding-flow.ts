@@ -15,7 +15,7 @@ type Action =
   | { type: "categories_failed"; requestId: number } | { type: "category_started"; requestId: number }
   | { type: "category_succeeded"; requestId: number; category: Category } | { type: "category_failed"; requestId: number }
   | { type: "product_started"; requestId: number } | { type: "product_succeeded"; requestId: number; message: string }
-  | { type: "product_failed"; requestId: number };
+  | { type: "product_failed"; requestId: number; message?: string };
 export function createOnboardingFlow(state: OnboardingState, action: Action): OnboardingState {
   switch (action.type) {
     case "categories_started": return { ...state, categoriesStatus: "loading", categoryRequestId: action.requestId, feedback: null };
@@ -26,7 +26,7 @@ export function createOnboardingFlow(state: OnboardingState, action: Action): On
     case "category_failed": return action.requestId === state.categoryMutationId ? { ...state, categoryStatus: "error", feedback: "No se pudo crear la categoría." } : state;
     case "product_started": return { ...state, productStatus: "pending", productMutationId: action.requestId, feedback: null };
     case "product_succeeded": return action.requestId === state.productMutationId ? { ...state, productStatus: "success", feedback: action.message } : state;
-    case "product_failed": return action.requestId === state.productMutationId ? { ...state, productStatus: "error", feedback: "No se pudo crear el producto." } : state;
+    case "product_failed": return action.requestId === state.productMutationId ? { ...state, productStatus: "error", feedback: action.message ?? "No se pudo crear el producto." } : state;
   }
 }
 export const canSubmitCategory = (state: OnboardingState) => state.categoryStatus !== "pending";

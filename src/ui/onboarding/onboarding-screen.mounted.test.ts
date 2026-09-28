@@ -8,6 +8,15 @@ import { OnboardingScreen } from "./onboarding-screen.ts";
 
 const category = { category_id: 1, name: "Filtros", fields: [{ definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] }] };
 const success = () => ({ kind: "success", categories: [category] });
+async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1");
+  await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro");
+  await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00");
+  await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50");
+  await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00");
+  await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
+  await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
+}
 
 test("shows loading then exact empty-category guidance", async () => {
   let resolve!: (value: unknown) => void;
@@ -59,6 +68,38 @@ test("optionally assigns a generated active location after product creation", as
     payload: { request: { product_id: 2, expected_revision: 0, location_id: 8 } },
   });
   assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
+});
+
+test("keeps product creation successful when the follow-up location assignment fails", async () => {
+  mockIPC((command) => {
+    if (command === "list_categories_command") return success();
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "create_product_command") return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true };
+    if (command === "catalog_metadata_detail_command") return { kind: "error", code: "persistence_failure", message: "detail unavailable" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  await screen.findByRole("option", { name: "A-1" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sector" }), "A-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Gaveta" }), "Shelf 2");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  const feedback = await screen.findByText(/Producto creado: FIL-1.*No se pudo asignar la ubicación principal/);
+  assert.equal(feedback.getAttribute("role"), "status");
+  assert.equal(screen.queryByRole("alert"), null);
+});
+
+test("shows the safe specific create-product failure reason", async () => {
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? { kind: "error", code: "duplicate_sku", message: "raw native detail" } : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.equal((await screen.findByRole("alert")).textContent, "SKU already exists.");
 });
 
 test("offers guided native controls for active locations with live status and an optional clear choice", async () => {
