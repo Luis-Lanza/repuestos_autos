@@ -43,7 +43,7 @@ pub struct OnboardingFieldError {
 pub fn list_categories(
     connection: &rusqlite::Connection,
 ) -> Result<ListCategoriesResponse, String> {
-    Ok(match catalog::list_categories(connection) {
+    Ok(match catalog::list_onboarding_categories(connection) {
         Ok(categories) => ListCategoriesResponse::Success { categories },
         Err(_) => ListCategoriesResponse::Error(OnboardingError {
             code: "persistence_failure",

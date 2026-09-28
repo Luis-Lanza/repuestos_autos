@@ -37,6 +37,27 @@ test("renders shared Spanish panels and submits required purchase and sale price
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
 });
+test("reloads changed category fields and blocks submission with obsolete definition IDs", async () => {
+  let categoryLoads = 0, productCalls = 0;
+  mockIPC((command) => {
+    if (command === "list_categories_command") {
+      categoryLoads++;
+      return { kind: "success", categories: [categoryLoads === 1 ? category : { category_id: 1, name: "Filtros", fields: [{ definition_id: 12, label: "Modelo", field_type: "text", required: true, options: [] }] }] };
+    }
+    if (command === "create_product_command") productCalls++;
+    return undefined;
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.ok(await screen.findByLabelText("Modelo"));
+  assert.ok(await screen.findByRole("alert").then((alert) => alert.textContent?.includes("Los campos de esta categoría cambiaron")));
+  assert.equal(productCalls, 0);
+  assert.equal(screen.queryByLabelText("Marca"), null);
+});
+
 test("submits finite decimal values for number category attributes", async () => {
   let request: unknown;
   mockIPC((command, payload) => command === "list_categories_command" ? { kind: "success", categories: [decimalCategory] } : command === "create_product_command" ? (request = payload, { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true }) : undefined);

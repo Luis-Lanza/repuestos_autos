@@ -1038,6 +1038,15 @@ where
 }
 
 pub fn list_categories(connection: &Connection) -> Result<Vec<Category>> {
+    list_categories_with_field_activity(connection, false)
+}
+
+/// Lists categories for new-product onboarding, which must not expose retired fields.
+pub fn list_onboarding_categories(connection: &Connection) -> Result<Vec<Category>> {
+    list_categories_with_field_activity(connection, true)
+}
+
+fn list_categories_with_field_activity(connection: &Connection, active_fields_only: bool) -> Result<Vec<Category>> {
     let mut statement = connection.prepare("SELECT id, name FROM categories ORDER BY name")?;
     let categories = statement
         .query_map([], |row| {
@@ -1050,7 +1059,11 @@ pub fn list_categories(connection: &Connection) -> Result<Vec<Category>> {
             Ok(Category {
                 category_id,
                 name,
-                fields: load_category_fields(connection, category_id)?,
+                fields: if active_fields_only {
+                    load_active_category_fields(connection, category_id)?
+                } else {
+                    load_category_fields(connection, category_id)?
+                },
             })
         })
         .collect()
@@ -1256,7 +1269,20 @@ pub fn read_catalog_metadata_detail(
 }
 
 fn load_category_fields(connection: &Connection, category_id: i64) -> Result<Vec<CategoryField>> {
-    let mut statement = connection.prepare("SELECT id, label, field_type, required, active FROM attribute_definitions WHERE category_id = ?1 ORDER BY id")?;
+    load_category_fields_matching(connection, category_id, false)
+}
+
+fn load_active_category_fields(connection: &Connection, category_id: i64) -> Result<Vec<CategoryField>> {
+    load_category_fields_matching(connection, category_id, true)
+}
+
+fn load_category_fields_matching(connection: &Connection, category_id: i64, active_only: bool) -> Result<Vec<CategoryField>> {
+    let sql = if active_only {
+        "SELECT id, label, field_type, required, active FROM attribute_definitions WHERE category_id = ?1 AND active = 1 ORDER BY id"
+    } else {
+        "SELECT id, label, field_type, required, active FROM attribute_definitions WHERE category_id = ?1 ORDER BY id"
+    };
+    let mut statement = connection.prepare(sql)?;
     let fields = statement
         .query_map([category_id], |row| {
             Ok((

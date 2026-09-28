@@ -63,6 +63,24 @@ fn definition_ids(connection: &rusqlite::Connection, category_id: i64) -> Vec<i6
 }
 
 #[test]
+fn onboarding_hides_retired_fields_while_catalog_listing_preserves_history() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category_id = create_configured_category(&mut connection);
+    let ids = definition_ids(&connection, category_id);
+    connection
+        .execute("UPDATE attribute_definitions SET active = 0 WHERE id = ?1", [ids[1]])
+        .unwrap();
+
+    let catalog = repuestos_autos::application::catalog::list_categories(&connection).unwrap();
+    let onboarding = repuestos_autos::commands::onboarding::list_categories(&connection).unwrap();
+    let onboarding = serde_json::to_value(onboarding).unwrap();
+
+    assert_eq!(catalog[0].fields.len(), 2, "Catalog keeps historical fields");
+    assert_eq!(onboarding["categories"][0]["fields"].as_array().unwrap().len(), 1);
+    assert_eq!(onboarding["categories"][0]["fields"][0]["definition_id"], ids[0]);
+}
+
+#[test]
 fn creates_product_attributes_balance_and_opening_movement_atomically() {
     let mut connection = open_seeded_catalog().unwrap();
     let category_id = create_configured_category(&mut connection);

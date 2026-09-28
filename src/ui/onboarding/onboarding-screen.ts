@@ -85,7 +85,21 @@ export function OnboardingScreen({ onBack }: Props) {
     }
     const id = ++mutation.current; productLock.current = true; setFieldError(""); setFieldErrorMessage(""); dispatch({ type: "product_started", requestId: id });
     try {
-      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: parseBsToCentavos(purchasePrice)!, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(selected!, attributes) });
+      const refreshed = await listCategories();
+      if (!mounted.current || id !== mutation.current) return;
+      if (refreshed.kind !== "success") {
+        dispatch({ type: "product_failed", requestId: id, message: "No se pudo actualizar la categoría. Reintentá antes de crear el producto." });
+        return;
+      }
+      const latest = refreshed.categories.find((category) => category.category_id === selected!.category_id);
+      const fieldsChanged = !latest || JSON.stringify(latest.fields) !== JSON.stringify(selected!.fields);
+      if (fieldsChanged) {
+        dispatch({ type: "category_schema_changed", requestId: id, categories: refreshed.categories });
+        setAttributes({});
+        if (latest) setSelectedId(String(latest.category_id));
+        return;
+      }
+      const response = await createProduct({ sku: sku.trim(), name: productName.trim(), category_id: selected!.category_id, purchase_price_centavos: parseBsToCentavos(purchasePrice)!, sale_price_centavos: parseBsToCentavos(listPrice)!, minimum_sale_price_centavos: parseBsToCentavos(minimumSalePrice)!, opening_quantity: parsePositiveWhole(stock)!, attribute_values: attributeValuesFor(latest!, attributes) });
       if (!mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         let locationMessage = "";
