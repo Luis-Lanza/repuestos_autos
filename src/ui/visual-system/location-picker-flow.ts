@@ -1,13 +1,5 @@
 import type { ProductLocationRecord, ProductLocationSegment } from "../../commands/catalog.ts";
 
-export function searchActiveLocations(locations: ProductLocationRecord[], query: string): ProductLocationRecord[] {
-  const normalized = query.trim().toLocaleLowerCase();
-  const active = locations.filter((location) => location.active);
-  if (!normalized) return active;
-  return active.filter((location) => location.code.toLocaleLowerCase().includes(normalized)
-    || location.values.some((value) => value.toLocaleLowerCase().includes(normalized)));
-}
-
 export function guidedLocationOptions(locations: ProductLocationRecord[], segments: ProductLocationSegment[], selectedValues: string[], segmentIndex: number): string[] {
   const active = locations.filter((location) => location.active && location.values.length === segments.length);
   return [...new Set(active.filter((location) => segments.slice(0, segmentIndex).every((_, index) => location.values[index] === selectedValues[index]))

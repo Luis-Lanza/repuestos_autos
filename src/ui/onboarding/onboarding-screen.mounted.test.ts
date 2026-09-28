@@ -32,6 +32,7 @@ test("optionally assigns a generated active location after product creation", as
   mockIPC((command, payload) => {
     calls.push({ command, payload });
     if (command === "list_categories_command") return success();
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
     if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
     if (command === "create_product_command") return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true };
     if (command === "catalog_metadata_detail_command") return { target: "product", entity_id: 2, category_id: 1, category_revision: 1, sku: "FIL-1", name: "Filtro", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_id: null, activity: "active", revision: 0, attribute_definitions: [], attribute_values: [] };
@@ -48,8 +49,9 @@ test("optionally assigns a generated active location after product creation", as
   await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00");
   await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
   await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
-  await screen.findByRole("option", { name: "A1-SHELF2" });
-  await user.selectOptions(screen.getByRole("combobox", { name: "Ubicación principal (opcional)" }), "8");
+  await screen.findByRole("option", { name: "A-1" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sector" }), "A-1");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Gaveta" }), "Shelf 2");
   await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.ok(await screen.findByText(/Producto creado: FIL-1.*Ubicación principal: A1-SHELF2/));
   assert.deepEqual(calls.filter((call) => call.command === "assign_product_primary_location_command")[0], {
@@ -59,7 +61,7 @@ test("optionally assigns a generated active location after product creation", as
   assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
 });
 
-test("offers searchable and guided native controls for active locations with an optional clear choice", async () => {
+test("offers guided native controls for active locations with live status and an optional clear choice", async () => {
   mockIPC((command) => {
     if (command === "list_categories_command") return success();
     if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Piso", position: 0 }, { id: 2, label: "Estante", position: 1 }] } };
@@ -71,21 +73,22 @@ test("offers searchable and guided native controls for active locations with an 
     return undefined;
   });
   render(createElement(OnboardingScreen, { onBack: () => undefined }));
-  const search = await screen.findByRole("searchbox", { name: "Buscar ubicaciones" });
   const floor = await screen.findByRole("combobox", { name: "Piso" });
   const shelf = screen.getByRole("combobox", { name: "Estante" });
-  const location = screen.getByRole("combobox", { name: "Ubicación principal (opcional)" });
+  assert.ok(screen.getByRole("group", { name: "Ubicación principal (opcional)" }));
+  assert.equal(screen.queryByRole("combobox", { name: "Ubicación principal (opcional)" }), null);
   assert.equal(screen.getByText("2 ubicaciones activas disponibles.").getAttribute("aria-live"), "polite");
+  assert.equal(screen.queryByRole("searchbox", { name: "Buscar ubicaciones" }), null);
+  assert.ok(screen.getByRole("option", { name: "PB" }));
   const user = userEvent.setup({ document });
   await user.selectOptions(floor, "PB");
   await user.selectOptions(shelf, "12");
-  assert.equal((location as HTMLSelectElement).value, "8");
-  await user.clear(search);
-  await user.type(search, "pA-2");
-  assert.ok(screen.getByRole("option", { name: "PA-2" }));
-  assert.equal(screen.queryByRole("option", { name: "PB-9" }), null);
-  await user.selectOptions(location, "");
-  assert.equal((location as HTMLSelectElement).value, "");
+  assert.equal((floor as HTMLSelectElement).value, "PB");
+  assert.equal((shelf as HTMLSelectElement).value, "12");
+  assert.ok(screen.getByRole("option", { name: "12" }));
+  assert.ok(screen.queryByRole("option", { name: "9" }) === null);
+  await user.selectOptions(floor, "");
+  assert.equal((floor as HTMLSelectElement).value, "");
 });
 
 

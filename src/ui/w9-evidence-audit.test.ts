@@ -537,6 +537,9 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/visual-system/catalog-edit-dialog.ts",
     "src/ui/visual-system/confirmation-dialog.ts",
     "src/ui/visual-system/catalog-edit-dialog.mounted.test.ts",
+    "src/ui/visual-system/location-picker-flow.test.ts",
+    "src/ui/visual-system/location-picker-flow.ts",
+    "src/ui/visual-system/location-picker.ts",
     "src/ui/w9-evidence-audit.test.ts",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
