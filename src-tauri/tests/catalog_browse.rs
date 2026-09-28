@@ -1,4 +1,5 @@
 use repuestos_autos::application::catalog::{browse_active_products, create_product, AttributeValueInput, BrowseProductsInput, CreateProductInput, ProductActivityFilter, ProductStockFilter};
+use repuestos_autos::application::catalog::locations::{assign_product_location, create_product_location, save_location_schema, CreateProductLocationInput, SaveLocationSchemaInput};
 use repuestos_autos::catalog::open_seeded_catalog;
 use repuestos_autos::infrastructure::sqlite::SqliteCatalogRepository;
 
@@ -77,6 +78,27 @@ fn page_attributes_include_every_definition_in_id_order_and_default_missing_valu
     let second = browse(&connection, ProductStockFilter::All, 2, 1);
     assert_eq!(second.products[0].name, "Zulu filter");
     assert_eq!(second.products[0].attribute_values.iter().map(|attribute| (attribute.definition_id, attribute.value.as_str())).collect::<Vec<_>>(), vec![(5, ""), (12, "99")]);
+}
+
+#[test]
+fn browse_includes_optional_generated_primary_location_without_changing_global_stock() {
+    let mut connection = open_seeded_catalog().expect("a disposable catalog database");
+    let unassigned = browse(&connection, ProductStockFilter::All, 1, 20);
+    assert_eq!(unassigned.products[0].primary_location_code, None);
+
+    save_location_schema(&mut connection, SaveLocationSchemaInput {
+        expected_revision: 0,
+        segments: vec!["Zone".into(), "Shelf".into()],
+    }).unwrap();
+    let location = create_product_location(&mut connection, CreateProductLocationInput {
+        values: vec!["A-1".into(), "Shelf 2".into()],
+    }).unwrap();
+    assert_eq!(location.code, "A1-SHELF2");
+    assert_eq!(assign_product_location(&mut connection, 1, 0, Some(location.location_id)), Ok(1));
+
+    let assigned = browse(&connection, ProductStockFilter::All, 1, 20);
+    assert_eq!(assigned.products[0].primary_location_code.as_deref(), Some("A1-SHELF2"));
+    assert_eq!(assigned.products[0].available_quantity, unassigned.products[0].available_quantity);
 }
 
 #[test]

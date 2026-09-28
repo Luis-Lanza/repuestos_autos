@@ -407,6 +407,64 @@ function assertCatalogImageRegistrationAllowlist(libDiff: string) {
   );
 }
 
+const productLocationRegistrationLineAllowlist = new Set([
+  "",
+  "location_schema_command,",
+  "save_location_schema_command,",
+  "list_product_locations_command,",
+  "create_product_location_command,",
+  "activate_product_location_command,",
+  "deactivate_product_location_command,",
+  "delete_product_location_command,",
+  "assign_product_primary_location_command,",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn location_schema_command(state: tauri::State<AppState>) -> commands::catalog::ProductLocationResponse {",
+  "state.with_read(|connection| Ok(commands::catalog::location_schema(connection)))",
+  ".unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: \"persistence_failure\", message: \"The location change could not be completed.\" }))",
+  "}",
+  "fn save_location_schema_command(state: tauri::State<AppState>, request: commands::catalog::SaveLocationSchemaRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_write(|connection| Ok(commands::catalog::save_location_schema(connection, request)))",
+  "fn list_product_locations_command(state: tauri::State<AppState>, request: commands::catalog::ListProductLocationsRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_read(|connection| Ok(commands::catalog::list_product_locations(connection, request)))",
+  "fn create_product_location_command(state: tauri::State<AppState>, request: commands::catalog::CreateProductLocationRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_write(|connection| Ok(commands::catalog::create_product_location(connection, request)))",
+  "fn activate_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_write(|connection| Ok(commands::catalog::set_product_location_activity(connection, request, true)))",
+  "fn deactivate_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_write(|connection| Ok(commands::catalog::set_product_location_activity(connection, request, false)))",
+  "fn delete_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_write(|connection| Ok(commands::catalog::delete_product_location(connection, request)))",
+  "fn assign_product_primary_location_command(state: tauri::State<AppState>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {",
+  "state.with_write(|connection| Ok(commands::catalog::assign_product_primary_location(connection, request)))",
+  "#[test]",
+  "fn registers_product_location_contract_commands_at_the_tauri_command_seam() {",
+  "let (_app, window) = test_window();",
+  "assert!(get_ipc_response(&window, request(\"location_schema_command\")).is_ok());",
+  "assert!(get_ipc_response(&window, request_with(\"save_location_schema_command\", serde_json::json!({ \"expected_revision\": 0, \"segments\": [\"Zone\"] }))).is_ok());",
+  "assert!(get_ipc_response(&window, request_with(\"list_product_locations_command\", serde_json::json!({ \"include_inactive\": false }))).is_ok());",
+  "assert!(get_ipc_response(&window, request_with(\"create_product_location_command\", serde_json::json!({ \"values\": [\"A1\"] }))).is_ok());",
+  "for (command, payload) in [",
+  "(\"activate_product_location_command\", serde_json::json!({ \"location_id\": 1, \"expected_revision\": 0 })),",
+  "(\"deactivate_product_location_command\", serde_json::json!({ \"location_id\": 1, \"expected_revision\": 0 })),",
+  "(\"delete_product_location_command\", serde_json::json!({ \"location_id\": 1, \"expected_revision\": 0 })),",
+  "(\"assign_product_primary_location_command\", serde_json::json!({ \"product_id\": 1, \"expected_revision\": 0, \"location_id\": 1 })),",
+  "] {",
+  "assert!(get_ipc_response(&window, request_with(command, payload)).is_ok(), \"{command}\");",
+  "}",
+]);
+
+function assertProductLocationRegistrationAllowlist(libDiff: string) {
+  const changedLines = libDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /registers_product_location_contract_commands_at_the_tauri_command_seam/);
+  assert.ok(
+    changedLines.every((line) => productLocationRegistrationLineAllowlist.has(line.slice(1).trim())),
+    "unexpected product location command registration drift",
+  );
+}
+
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -460,19 +518,28 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/tests/catalog_maintenance_commands.rs",
     "src-tauri/tests/catalog_maintenance_domain.rs",
     "src-tauri/tests/catalog_maintenance_sqlite.rs",
+    "src-tauri/tests/catalog_browse.rs",
     "src-tauri/tests/post_sale_lifecycle.rs",
     "src-tauri/tests/sqlite_migrations.rs",
     "src/ui/app-shell.mounted.test.ts",
+    "src/ui/inventory/inventory-screen.ts",
+    "src/ui/onboarding/onboarding-screen.mounted.test.ts",
+    "src/ui/onboarding/onboarding-screen.ts",
+    "src/ui/sales/sale-screen.mounted.test.ts",
     "src/ui/catalog/catalog-maintenance-flow.test.ts",
     "src/ui/catalog/catalog-maintenance-flow.ts",
     "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
     "src/ui/catalog/catalog-maintenance-screen.ts",
+    "src/ui/inventory/inventory-screen.mounted.test.ts",
     "src/ui/catalog/product-browser.test.ts",
     "src/ui/catalog/product-browser.ts",
     "src/ui/styles.css",
     "src/ui/visual-system/catalog-edit-dialog.ts",
     "src/ui/visual-system/confirmation-dialog.ts",
     "src/ui/visual-system/catalog-edit-dialog.mounted.test.ts",
+    "src/ui/visual-system/location-picker-flow.test.ts",
+    "src/ui/visual-system/location-picker-flow.ts",
+    "src/ui/visual-system/location-picker.ts",
     "src/ui/w9-evidence-audit.test.ts",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
@@ -491,6 +558,7 @@ function assertW9ProtectedDiffPolicy(
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
     if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);

@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+#[path = "location.rs"]
+pub mod location;
+
 pub const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

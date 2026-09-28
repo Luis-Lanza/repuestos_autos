@@ -160,6 +160,24 @@ fn legacy_facts(path: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 #[test]
+fn migration_v20_adds_global_location_contract_without_changing_stock_balances() {
+    let directory = temporary_directory("migration-v20-product-locations");
+    let path = create_legacy_database(&directory);
+    let before = legacy_facts(&path);
+    let connection = open_database(&production_database_config(&directory)).unwrap();
+
+    assert_eq!(user_version(&path), 20);
+    assert_eq!(legacy_facts(&path), before);
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM location_schema", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(connection.query_row("SELECT primary_location_id FROM products WHERE id = 1", [], |row| row.get::<_, Option<i64>>(0)).unwrap(), None);
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM location_segments", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    drop(connection);
+    drop(open_database(&production_database_config(&directory)).unwrap());
+    assert_eq!(legacy_facts(&path), before);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently() {
     let directory = temporary_directory("migration-success");
     let path = create_legacy_database(&directory);

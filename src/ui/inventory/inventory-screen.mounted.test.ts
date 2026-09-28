@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 
 import { InventoryScreen } from "./inventory-screen.ts";
 
-const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, attribute_values: [], revision: 0 };
+const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
 const browse = (products: typeof product[] = [product]) => ({ kind: "success", products, categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const success = (request_id: string) => ({ kind: "success", request_id, product_id: 1, previous_quantity: 10, quantity_delta: 3, resulting_quantity: 11, occurred_at: "2025-01-01T00:00:00Z", note: null });
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? ids.at(-1) }); }
@@ -494,6 +494,23 @@ test("shows a specific neutral message for reused inventory requests", async () 
   assert.equal(screen.queryByText(/Operación guardada/), null);
   assert.doesNotMatch(feedback.textContent ?? "", /storage|digest|sqlite|database/i);
   assert.ok(screen.getByRole("button", { name: "Reintentar" }));
+});
+
+test("shows the assigned generated location in the selected product without changing its global stock balance", async () => {
+  const located = { ...product, primary_location_code: "A1-SHELF2" };
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse([located]);
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  const selection = screen.getByText("Ubicación principal: A1-SHELF2");
+  assert.equal(selection.getAttribute("data-ui-inventory-primary-location"), "true");
+  assert.ok(screen.getByText("Stock actual: 8"));
+  assert.equal(screen.getByRole("button", { name: "Nueva operación" }).textContent, "Nueva operación");
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  assert.equal(screen.queryByText("Ubicación principal: A1-SHELF2"), null);
 });
 
 test("clears the public stock cue while alerts load or are unavailable", async () => {

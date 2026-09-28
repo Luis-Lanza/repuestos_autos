@@ -4,6 +4,149 @@ use crate::application::catalog;
 use crate::application::catalog::{BrowseProductsInput, ProductActivityFilter, ProductStockFilter};
 use crate::domain::catalog::{CatalogActivity, CatalogIntent, CatalogTarget, CategorySchemaField, FieldType};
 use crate::infrastructure::sqlite::SqliteCatalogRepository;
+use crate::application::catalog::locations as product_locations;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveLocationSchemaRequest {
+    pub expected_revision: i64,
+    pub segments: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListProductLocationsRequest {
+    pub include_inactive: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateProductLocationRequest {
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductLocationLifecycleRequest {
+    pub location_id: i64,
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, Default)]
+pub enum ExplicitNullableLocationId {
+    #[default]
+    Missing,
+    Null,
+    Value(i64),
+}
+
+impl<'de> Deserialize<'de> for ExplicitNullableLocationId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Option::<i64>::deserialize(deserializer).map(|value| match value {
+            Some(location_id) => Self::Value(location_id),
+            None => Self::Null,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssignProductLocationRequest {
+    pub product_id: i64,
+    pub expected_revision: i64,
+    #[serde(default)]
+    pub location_id: ExplicitNullableLocationId,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProductLocationResponse {
+    SchemaSuccess { schema: product_locations::LocationSchemaContract },
+    LocationsSuccess { locations: Vec<product_locations::ProductLocationContract> },
+    LocationSuccess { location: product_locations::ProductLocationContract },
+    AssignmentSuccess { product_id: i64, location_id: Option<i64>, revision: i64 },
+    Deleted,
+    Error(CatalogLocationError),
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct CatalogLocationError {
+    pub code: &'static str,
+    pub message: &'static str,
+}
+
+pub fn location_schema(connection: &rusqlite::Connection) -> ProductLocationResponse {
+    match product_locations::read_location_schema(connection) {
+        Ok(schema) => ProductLocationResponse::SchemaSuccess { schema },
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+pub fn save_location_schema(connection: &mut rusqlite::Connection, request: SaveLocationSchemaRequest) -> ProductLocationResponse {
+    if request.expected_revision < 0 { return ProductLocationResponse::Error(map_location_error(crate::domain::catalog::location::LocationValidationError::InvalidSchema)); }
+    match product_locations::save_location_schema(connection, product_locations::SaveLocationSchemaInput { expected_revision: request.expected_revision, segments: request.segments }) {
+        Ok(schema) => ProductLocationResponse::SchemaSuccess { schema },
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+pub fn list_product_locations(connection: &rusqlite::Connection, request: ListProductLocationsRequest) -> ProductLocationResponse {
+    match product_locations::list_product_locations(connection, request.include_inactive) {
+        Ok(locations) => ProductLocationResponse::LocationsSuccess { locations },
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+pub fn create_product_location(connection: &mut rusqlite::Connection, request: CreateProductLocationRequest) -> ProductLocationResponse {
+    match product_locations::create_product_location(connection, product_locations::CreateProductLocationInput { values: request.values }) {
+        Ok(location) => ProductLocationResponse::LocationSuccess { location },
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+pub fn set_product_location_activity(connection: &mut rusqlite::Connection, request: ProductLocationLifecycleRequest, active: bool) -> ProductLocationResponse {
+    match product_locations::set_location_activity(connection, request.location_id, request.expected_revision, active) {
+        Ok(location) => ProductLocationResponse::LocationSuccess { location },
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+pub fn delete_product_location(connection: &mut rusqlite::Connection, request: ProductLocationLifecycleRequest) -> ProductLocationResponse {
+    if request.location_id <= 0 { return ProductLocationResponse::Error(map_location_error(crate::domain::catalog::location::LocationValidationError::MissingLocation)); }
+    match product_locations::delete_product_location(connection, request.location_id, request.expected_revision) {
+        Ok(()) => ProductLocationResponse::Deleted,
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+pub fn assign_product_primary_location(connection: &mut rusqlite::Connection, request: AssignProductLocationRequest) -> ProductLocationResponse {
+    let location_id = match request.location_id {
+        ExplicitNullableLocationId::Missing => return ProductLocationResponse::Error(map_location_error(crate::domain::catalog::location::LocationValidationError::InvalidLocationValues)),
+        ExplicitNullableLocationId::Null => None,
+        ExplicitNullableLocationId::Value(location_id) => Some(location_id),
+    };
+    match product_locations::assign_product_location(connection, request.product_id, request.expected_revision, location_id) {
+        Ok(revision) => ProductLocationResponse::AssignmentSuccess { product_id: request.product_id, location_id, revision },
+        Err(error) => ProductLocationResponse::Error(map_location_error(error)),
+    }
+}
+
+fn map_location_error(error: crate::domain::catalog::location::LocationValidationError) -> CatalogLocationError {
+    use crate::domain::catalog::location::LocationValidationError as E;
+    match error {
+        E::InvalidSchema | E::InvalidLocationValues => CatalogLocationError { code: "validation_error", message: "Review the location values and try again." },
+        E::UnsafeSchemaChange => CatalogLocationError { code: "location_schema_in_use", message: "Existing locations require the current segment order." },
+        E::DuplicateCode => CatalogLocationError { code: "duplicate_location_code", message: "A location with these values already exists." },
+        E::MissingLocation => CatalogLocationError { code: "location_unavailable", message: "This location is unavailable." },
+        E::InactiveLocation => CatalogLocationError { code: "location_inactive", message: "Choose an active location." },
+        E::LocationInUse => CatalogLocationError { code: "location_in_use", message: "A location assigned to a product cannot be removed or deactivated." },
+        E::StaleLocation => CatalogLocationError { code: "stale_location", message: "Location data changed. Reload and try again." },
+        E::PersistenceFailure => CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." },
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

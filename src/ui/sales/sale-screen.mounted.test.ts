@@ -164,6 +164,22 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
 });
 
+test("Sales product details show the generated primary location while the cart remains location-agnostic", async () => {
+  const located = { ...products[0], primary_location_code: "A1-SHELF2" };
+  mockNativeIPC((command) => command === "browse_products_command" ? browse([located]) : command === "catalog_product_image_thumbnail_command" ? { kind: "error", code: "image_unavailable", message: "Unavailable" } : Promise.reject(new Error(`Unexpected command: ${command}`)));
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  await user().type(within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }), "filtro{Enter}");
+  await user().click(await within(catalog).findByRole("button", { name: "Ver detalles", exact: true }));
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  assert.equal(within(detail).getByText("A1-SHELF2").previousElementSibling?.textContent, "Ubicación principal");
+  await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
+  const summary = screen.getByRole("region", { name: "Resumen de venta" });
+  assert.ok(within(summary).getByText("1 línea"));
+  assert.equal(within(summary).queryByText("A1-SHELF2"), null);
+});
+
 test("quick product detail uses the browse snapshot without changing browse or Add behavior", async () => {
   const product = { ...products[0], attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }, { definition_id: 2, label: "Largo", value: "  " }] };
   const calls: string[] = [];

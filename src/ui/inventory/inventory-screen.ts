@@ -123,7 +123,8 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
           createElement("div", { "data-ui-inventory-selection": true },
             createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, state.product.name), createElement("span", { "data-ui-kind": "sku" }, `SKU: ${(state.product as Product).sku}`)),
-            createElement("span", { "data-ui-inventory-stock": true }, `Stock actual: ${state.product.available_quantity}`)),
+            createElement("span", { "data-ui-inventory-stock": true }, `Stock actual: ${state.product.available_quantity}`),
+            createElement("span", { "data-ui-inventory-primary-location": true }, `Ubicación principal: ${state.product.primary_location_code ?? "Sin ubicación asignada"}`)),
           createElement(InventoryOperationChoices, { operation: state.operation, disabled: pending, onChange: (operation) => dispatch({ type: "operation_changed", operation }) }),
           createElement("div", { "data-ui-inventory-fields": true }, state.operation === "stock_entry"
             ? createElement(Field, { kind: "quantity", label: "Cantidad (unidades enteras)", hint: "Solo unidades enteras positivas.", error: value && !whole ? "Ingresá una cantidad entera mayor que cero." : undefined, control: createElement("input", { min: 1, value, disabled: pending, onChange: (event) => dispatch({ type: "entry_quantity_changed", value: event.target.value }) }) } as never)

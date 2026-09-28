@@ -47,15 +47,16 @@ test("surfaces loading, unavailable, validation, conflict, failure, recovery, an
 });
 
 test("loads editable metadata, validates typed values, and reloads stable conflicts", () => {
-  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
+  const detail = { target: "product" as const, entity_id: 1, category_id: 2, category_revision: 7, sku: "FLT", name: "Filter", purchase_price_centavos: 2000, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, primary_location_id: 9, activity: "archived" as const, revision: 2, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option" as const, required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] };
   const loading = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "detail_started" });
   const ready = createCatalogMaintenanceFlow(loading, { type: "detail_loaded", detail });
   const pending = createCatalogMaintenanceFlow(ready, { type: "edit_started" });
   const conflict = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_catalog_record" });
   const staleSchema = createCatalogMaintenanceFlow(pending, { type: "edit_failed", code: "stale_category_schema" });
+  const assignmentFailed = createCatalogMaintenanceFlow(pending, { type: "location_assignment_failed" });
   const unavailable = createCatalogMaintenanceFlow(ready, { type: "detail_failed", code: "catalog_unavailable" });
   const reactivated = createCatalogMaintenanceFlow({ ...ready, records: [archived], selected: archived }, { type: "mutation_succeeded", record: { ...archived, activity: "active", revision: 3 } });
-  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "30,00", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } });
+  assert.deepEqual(formForCatalogDetail(detail), { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "30,00", minimum_sale_price_centavos: "25,00", primary_location_id: 9, attribute_values: { 4: "Paper" } });
   assert.equal(createCatalogEditRequest(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "20,00", sale_price_centavos: "inválido", minimum_sale_price_centavos: "25,00", attribute_values: { 4: "Paper" } }), null);
   assert.deepEqual(Object.keys(fieldErrorsForCatalogEdit(detail, { sku: "FLT", name: "Filter", purchase_price_centavos: "", sale_price_centavos: "30,00", minimum_sale_price_centavos: "31,00", attribute_values: { 4: "Paper" } })).sort(), ["minimum_sale_price_centavos", "purchase_price_centavos"]);
   const legacyDetail = { ...detail, sale_price_centavos: undefined, list_price_centavos: 3000, purchase_price_centavos: null } as unknown as typeof detail;
@@ -65,6 +66,8 @@ test("loads editable metadata, validates typed values, and reloads stable confli
   assert.equal(pending.status, "pending");
   assert.equal(conflict.recovery_required, true);
   assert.equal(staleSchema.recovery_required, true);
+  assert.equal(assignmentFailed.recovery_required, true);
+  assert.match(assignmentFailed.feedback ?? "", /Recargá para revisar el producto/);
   assert.equal(staleSchema.feedback, "Los campos de la categoría cambiaron. Recargá antes de guardar este producto.");
   assert.equal(unavailable.status, "unavailable");
   assert.deepEqual([reactivated.records[0].activity, reactivated.selected?.activity, reactivated.detail?.activity], ["active", "active", "active"]);
