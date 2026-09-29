@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProductSearchResult } from "../../commands/catalog.ts";
+import type { ProductBrowseResult } from "../../commands/catalog.ts";
 import {
   createSaleFlow,
   draftLineSubtotalCentavos,
@@ -33,8 +33,11 @@ test("rejects malformed and unsafe Bs input with the public correction", () => {
   }
 });
 
-const brakePad: ProductSearchResult = {
+const brakePad: ProductBrowseResult = {
   product_id: 1,
+  category_id: 2,
+  primary_location_code: "A1-02",
+  attribute_values: [{ definition_id: 1, label: "Material", value: "Cerámica" }],
   sku: "BP-100",
   name: "Brake Pad",
   category_name: "Brakes",
@@ -74,6 +77,8 @@ test("derives checked draft prices and totals while preserving captured facts", 
   assert.equal(draftTotalUnits([quantityTwo.lines[0], { ...quantityTwo.lines[0], product_id: 2, quantity: 3 }]), 5);
   assert.equal(quantityTwo.lines[0].captured_unit_price_centavos, 2_500);
   assert.equal(quantityTwo.lines[0].captured_revision, 0);
+  assert.equal(quantityTwo.lines[0].product_snapshot.available_quantity, 4);
+  assert.deepEqual(quantityTwo.lines[0].product_snapshot, brakePad);
 });
 
 test("rejects unsafe draft multiplication and accumulation", () => {
@@ -109,6 +114,7 @@ test("adds active search results as quantity-only sale intent", () => {
       sku: "BP-100",
       product_name: "Brake Pad",
       quantity: 1,
+      product_snapshot: brakePad,
       captured_unit_price_centavos: 2_500,
       captured_revision: 0,
       sale_price_centavos: 2_500,
