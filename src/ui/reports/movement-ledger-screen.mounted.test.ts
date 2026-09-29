@@ -45,7 +45,11 @@ test("submitted search supports Enter, bounded selectable archived products, and
  await user.keyboard("{Enter}");
  const select = await screen.findByRole("button", { name: "Seleccionar Filtro actual (SKU: FLT-7)" });
  assert.deepEqual(searches[0], { request: { query: "filtro", page: 1, page_size: 20 } });
- assert.equal(screen.getByRole("list", { name: "Resultados de productos" }).querySelectorAll("li").length, 1);
+ const results = screen.getByRole("list", { name: "Resultados de productos" });
+ assert.equal(results.querySelectorAll("li").length, 1);
+ const filters = screen.getByRole("region", { name: "Filtros" }).querySelector("[data-ui-ledger-filters]")!;
+ assert.equal(results.parentElement, filters.querySelector("[data-ui-ledger-product-feedback-row]"));
+ assert.equal(filters.querySelector("[data-ui-ledger-filter-row]")?.contains(results), false);
  await user.click(select);
  assert.ok(screen.getByText("Filtro actual · FLT-7 · Archivado"));
  await user.click(screen.getByRole("button", { name: "Quitar producto" }));
@@ -134,7 +138,7 @@ test("preserves custom applied date, product, and movement filters across pagina
  await waitFor(() => assert.equal((screen.getByRole("button", { name: "Siguiente" }) as HTMLButtonElement).disabled, true));
  assert.deepEqual((requests[4] as { request: Record<string, unknown> }).request, { ...expectedFilters, page: 3, page_size: 50 });
 });
-test("uses deliberate date-first then product/type/apply rows and available-width responsive layout", async () => {
+test("keeps date, control, and product-feedback rows structurally separate and responsive", async () => {
  mount(); render(createElement(MovementLedgerScreen));
  assert.ok(await screen.findByText("Filtro actual"));
  assert.equal(screen.getAllByRole("main").length, 1);
@@ -143,10 +147,19 @@ test("uses deliberate date-first then product/type/apply rows and available-widt
  const filters = screen.getByRole("region", { name: "Filtros" }).querySelector("[data-ui-ledger-filters]")!;
  assert.equal(filters.children[0].getAttribute("data-ui-ledger-date-row"), "true");
  assert.deepEqual([...filters.children[0].querySelectorAll("label")].map(label => label.textContent), ["Desde", "Hasta"]);
- assert.equal(filters.children[1].getAttribute("data-ui-ledger-filter-row"), "true");
- assert.deepEqual([...filters.children[1].children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Producto", "Tipo de movimiento", "Aplicar filtros"]);
+ const controls = filters.querySelector("[data-ui-ledger-filter-row]")!;
+ assert.deepEqual([...controls.children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Producto", "Tipo de movimiento", "Aplicar filtros"]);
+ const productFeedback = filters.querySelector("[data-ui-ledger-product-feedback-row]")!;
+ assert.equal(productFeedback.parentElement, filters);
+ assert.equal(productFeedback.getAttribute("data-ui-ledger-product-feedback-row"), "true");
+ assert.ok(productFeedback.querySelector("[data-ui-feedback]"), "initial search guidance belongs to the dedicated third row");
+ assert.equal(productFeedback.querySelector("[data-ui-ledger-product-search]"), null);
+ assert.equal(productFeedback.querySelector("[data-ui-ledger-product-results]"), null);
+ assert.equal(controls.querySelector("[data-ui-ledger-product-feedback-row]"), null);
  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
  assert.match(css, /data-ui-movement-ledger[^\n]*display:\s*grid/);
  assert.match(css, /\[data-ui-ledger-filters\] \{ container: movement-ledger-filters \/ inline-size; display: grid;[^}]*\}/);
+ assert.match(css, /\[data-ui-ledger-filter-row\][^}]*align-items: start/);
+ assert.match(css, /\[data-ui-ledger-product-feedback-row\][^}]*grid-column: 1 \/ -1/);
  assert.match(css, /@container movement-ledger-filters \(min-width: 48rem\)/);
 });
