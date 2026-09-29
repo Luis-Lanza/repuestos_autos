@@ -264,6 +264,27 @@ test("ignores stale and mismatched thumbnails while retaining the missing-image 
   assert.equal(within(list).getByRole("img", { name: "Sin imagen" }).textContent, "Sin imagen");
 });
 
+test("rejects a thumbnail for the correct product when its revision does not match", async () => {
+  const thumbnailRequests: unknown[] = [];
+  mockNativeIPC((command, payload) => {
+    if (command === "browse_products_command") return browse([products[0]]);
+    if (command === "catalog_product_image_thumbnail_command") {
+      thumbnailRequests.push(payload);
+      return { kind: "success", product_id: 1, revision: 3, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+    }
+    throw new Error(`unexpected command: ${command}`);
+  });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  await within(catalog).findByText("Filtro aceite");
+  const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
+  await within(list).findByRole("img", { name: "Sin imagen" });
+
+  assert.deepEqual(thumbnailRequests, [{ request: { product_id: 1, expected_revision: 2 } }]);
+  assert.equal(within(list).queryByRole("img", { name: "Filtro aceite" }), null);
+  assert.equal(within(list).getByRole("img", { name: "Sin imagen" }).textContent, "Sin imagen");
+});
+
 test("automatically loads the active first page once on mount", async () => {
   const calls: unknown[] = [];
   mockIPC((command, payload) => {
@@ -432,6 +453,11 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.equal(row.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
     assert.ok(within(row).getByText(product.name));
     assert.ok(within(row).getByText(product.sku));
+    const snapshot = within(row).getByText(`Stock: ${product.available_quantity}`);
+    assert.equal(snapshot.getAttribute("data-ui-sales-stock-snapshot"), "true");
+    assert.match(within(row).getByText("Dato de la búsqueda; la disponibilidad se valida al confirmar.").textContent ?? "", /disponibilidad se valida al confirmar/);
+    const actions = within(row).getAllByRole("button").filter((button) => ["Ver detalles", `Quitar ${product.name}`].includes(button.textContent === "Quitar" ? button.getAttribute("aria-label") ?? "" : button.textContent ?? ""));
+    assert.deepEqual(actions.map((button) => button.textContent), ["Ver detalles", "Quitar"]);
     const salePrice = `Bs ${product.sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
     const minimumPrice = `Bs ${product.minimum_sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
     const purchasePrice = product.purchase_price_centavos === null ? "No registrado" : "Bs 32,00";
@@ -470,6 +496,95 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
   ]);
   assert.equal(settlement.firstElementChild?.getAttribute("data-ui-checkout-total"), "true");
   assert.deepEqual(Array.from(dialog.querySelectorAll("[data-ui-dialog-actions] button")).map((button) => button.textContent), ["Volver", "Confirmar venta"]);
+});
+
+test("opens the full browse snapshot detail above checkout and hands focus and dismissal back safely", async () => {
+  const product = { ...products[0], primary_location_code: "A1-SHELF2", attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }] };
+  const calls: string[] = [];
+  mockNativeIPC((command) => {
+    calls.push(command);
+    if (command === "browse_products_command") return browse([product]);
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "success", product_id: 1, revision: 2, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+    throw new Error(`unexpected command: ${command}`);
+  });
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  const checkout = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  const trigger = within(checkout).getByRole("button", { name: "Ver detalles" });
+  const requestsBeforeDetails = calls.length;
+  fireEvent.click(trigger);
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  assert.ok(checkout.isConnected);
+  assert.ok(checkout.contains(detail), "the detail overlay must be nested within checkout for focus ownership");
+  assert.ok(within(detail).getByRole("img", { name: "Filtro aceite" }));
+  for (const fact of ["SKU", "FIL-1", "Categoría", "Filtros", "Ubicación principal", "A1-SHELF2", "Stock", "Disponible: 8", "Precio de compra", "Bs 32,00", "Precio de venta", "Precio mínimo de venta", "Material", "Acero"]) within(detail).getByText(fact);
+  assert.equal(within(detail).getAllByText("Bs 85,50").length, 2);
+  assert.equal(document.activeElement, within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  assert.equal(calls.length, requestsBeforeDetails, "opening browse-backed detail must not issue another native request");
+  assert.equal(calls.filter((command) => command === "browse_products_command").length, 2);
+  assert.equal(calls.includes("catalog_metadata_detail_command"), false);
+
+  fireEvent.click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  assert.equal(document.activeElement, trigger);
+  assert.equal(screen.getByRole("dialog", { name: "Revisar y cobrar" }), checkout);
+  fireEvent.click(trigger);
+  fireEvent.keyDown(document, { key: "Escape" });
+  assert.equal(screen.queryByRole("dialog", { name: "Filtro aceite" }), null);
+  assert.equal(screen.getByRole("dialog", { name: "Revisar y cobrar" }), checkout);
+  assert.equal(document.activeElement, trigger);
+  fireEvent.click(trigger);
+  fireEvent.mouseDown(screen.getByRole("dialog", { name: "Filtro aceite" }).parentElement!);
+  assert.equal(screen.queryByRole("dialog", { name: "Filtro aceite" }), null);
+  assert.equal(screen.getByRole("dialog", { name: "Revisar y cobrar" }), checkout);
+  assert.equal(document.activeElement, trigger);
+  fireEvent.keyDown(document, { key: "Escape" });
+  assert.equal(screen.queryByRole("dialog", { name: "Revisar y cobrar" }), null);
+});
+
+test("retains checkout thumbnails across browse pages without changing the confirmation payload", async () => {
+  const calls: Array<{ command: string; payload: unknown }> = [];
+  let confirmationEnvelope: unknown;
+  installUuid(UUID);
+  mockNativeIPC((command, payload) => {
+    calls.push({ command, payload });
+    if (command === "browse_products_command") {
+      const page = (payload as { request: { page: number } }).request.page;
+      return { ...browse(page === 1 ? [products[0]] : [products[1]]), page, total: 2, total_pages: 2 };
+    }
+    if (command === "catalog_product_image_thumbnail_command") {
+      const request = (payload as { request: { product_id: number; expected_revision: number } }).request;
+      return { kind: "success", product_id: request.product_id, revision: request.expected_revision, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+    }
+    confirmationEnvelope = payload;
+    return success;
+  });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  await within(catalog).findByRole("img", { name: "Filtro aceite" });
+  await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
+  await user().click(within(catalog).getByRole("button", { name: "Siguiente" }));
+  await within(catalog).findByText("Filtro premium");
+  await within(catalog).findByRole("img", { name: "Filtro premium" });
+
+  await user().click(screen.getByRole("button", { name: "Revisar y cobrar" }));
+  const checkout = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  const detailTrigger = within(checkout).getByRole("button", { name: "Ver detalles" });
+  const nativeCallsBeforeDetails = calls.length;
+  const imageRequestsBeforeDetails = calls.filter((call) => call.command === "catalog_product_image_thumbnail_command").length;
+  await user().click(detailTrigger);
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  const detailImage = within(detail).getByRole("img", { name: "Filtro aceite" }) as HTMLImageElement;
+  assert.equal(detailImage.getAttribute("src"), "data:image/jpeg;base64,/9j/2Q==");
+  await user().click(within(detail).getByRole("button", { name: "Ampliar imagen del producto Filtro aceite" }));
+  const viewer = screen.getByRole("dialog", { name: "Imagen de Filtro aceite" });
+  assert.equal((within(viewer).getByRole("img", { name: "Filtro aceite" }) as HTMLImageElement).getAttribute("src"), detailImage.getAttribute("src"));
+  assert.equal(calls.length, nativeCallsBeforeDetails, "opening checkout details must not issue another native request");
+  assert.equal(calls.filter((call) => call.command === "catalog_product_image_thumbnail_command").length, imageRequestsBeforeDetails, "checkout details must reuse the cached image");
+  await user().keyboard("{Escape}");
+  await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  await user().click(within(checkout).getByRole("button", { name: "Confirmar venta" }));
+  await screen.findByRole("heading", { name: "Venta confirmada" });
+  assert.deepEqual(confirmationEnvelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
 });
 
 test("preserves Sales checkout dismissal, focus return, and backdrop no-op", async () => {
@@ -585,9 +700,9 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   render(createElement(SaleScreen)); const u = await searchFor(); await u.click((await screen.findAllByRole("button", { name: "Agregar" }))[0]); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); await u.type(screen.getByRole("textbox", { name: "Pago QR" }), "85,50");
   fireEvent.click(screen.getByRole("button", { name: "Confirmar venta" })); fireEvent.click(screen.getByRole("button", { name: "Confirmando…" }));
   const summaryRemove = within(screen.getByRole("region", { name: "Resumen de venta" })).getByRole("button", { name: "Quitar Filtro aceite del resumen de venta" });
-  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), screen.getByRole("button", { name: "Quitar Filtro aceite" }), summaryRemove, screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
+  const controls = [screen.getByRole("searchbox"), screen.getByRole("button", { name: "Buscar" }), screen.getAllByRole("button", { name: "Agregar" })[1], screen.getByRole("spinbutton"), within(screen.getByRole("dialog", { name: "Revisar y cobrar" })).getByRole("button", { name: "Ver detalles" }), screen.getByRole("button", { name: "Quitar Filtro aceite" }), summaryRemove, screen.getByRole("textbox", { name: "Efectivo recibido" }), screen.getByRole("textbox", { name: "Pago QR" }), screen.getByRole("button", { name: "Descartar borrador" }), screen.getByRole("button", { name: "Confirmando…" })];
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
-  fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.click(controls[5]); fireEvent.change(controls[6], { target: { value: "1" } }); fireEvent.change(controls[7], { target: { value: "2" } }); fireEvent.click(controls[8]);
+  fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.click(controls[5]); fireEvent.click(controls[6]); fireEvent.change(controls[7], { target: { value: "1" } }); fireEvent.change(controls[8], { target: { value: "2" } }); fireEvent.click(controls[9]);
   assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
   assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
@@ -620,6 +735,7 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.equal(line.children.length, 2);
   assert.equal(line.firstElementChild?.getAttribute("data-ui-sale-cart-primary"), "true");
   assert.equal(line.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
+  assert.equal(within(line).getByRole("button", { name: "Ver detalles" }).textContent, "Ver detalles");
   assert.equal(within(line).getByRole("button", { name: "Quitar Filtro aceite" }).getAttribute("aria-label"), "Quitar Filtro aceite");
   assert.equal(finalPrice.getAttribute("aria-invalid"), "true");
   const errorId = finalPrice.getAttribute("aria-describedby");
@@ -630,7 +746,7 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\]\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-product\]\s*\{[^}]*grid-column:\s*1/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1/s);
-  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\] \[data-ui-action\]\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 2[^}]*justify-self:\s*end/s);
+  assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-primary\] \[data-ui-sales-cart-actions\]\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 4/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-cart-controls\]\s*\{[^}]*grid-template-columns:\s*minmax\(7rem,\s*1fr\)\s+minmax\(10rem,\s*1fr\)\s+minmax\(9rem,\s*max-content\)[^}]*column-gap:\s*var\(--space-4\)/s);
   assert.match(style.textContent ?? "", /\[data-ui-sales-checkout\] \[data-ui-sale-subtotal\]\s*\{[^}]*min-inline-size:\s*9rem[^}]*justify-self:\s*end[^}]*text-align:\s*end[^}]*white-space:\s*nowrap/s);
   assert.doesNotMatch(style.textContent ?? "", /^\[data-ui-checkout-content\]/m);
@@ -639,7 +755,7 @@ test("keeps cart facts bounded when a final price error is mounted", async () =>
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-checkout-dialog[^}]*:has\(> \[data-ui-sales-checkout\]\)[\s\S]*inline-size:\s*min\(520px,\s*100%\)[\s\S]*overflow:\s*auto[\s\S]*padding:\s*var\(--space-4\)/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*\[data-ui-sale-product\], \[data-ui-sales-checkout\] \[data-ui-sale-price-facts\]\s*\{[^}]*grid-column:\s*1/s);
-  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[^}]*data-ui-action[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 2[^}]*justify-self:\s*end/s);
+  assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-primary[^}]*data-ui-sales-cart-actions[^}]*grid-column:\s*2[^}]*grid-row:\s*1 \/ span 4/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart-controls[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(style.textContent ?? "", /@media \(max-width: 960px\)[\s\S]*data-ui-sales-checkout[^}]*data-ui-sale-cart\][^{]*\{[^}]*max-block-size:\s*none[^}]*overflow-y:\s*visible/s);
 });

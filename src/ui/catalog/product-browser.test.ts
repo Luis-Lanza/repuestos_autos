@@ -234,7 +234,7 @@ test("Sales product identity opens an accessible read-only detail with every ord
     const trigger = triggers[0];
     assert.equal(trigger.textContent, "Ver detalles");
     trigger.focus();
-    await userEvent.click(trigger);
+    fireEvent.click(trigger);
     const detail = screen.getByRole("dialog", { name: "Filter" });
     const closeButton = within(detail).getByRole("button", { name: "Cerrar detalle del producto" });
     assert.equal(detail.getAttribute("data-ui-density"), "compact");
@@ -265,11 +265,11 @@ test("Sales product identity opens an accessible read-only detail with every ord
     assert.equal(screen.getByRole("dialog", { name: "Filter" }), detail);
     assert.equal(document.activeElement, zoomTrigger);
 
-    await userEvent.click(zoomTrigger);
-    await userEvent.click(screen.getByRole("button", { name: "Cerrar imagen ampliada" }));
+    fireEvent.click(zoomTrigger);
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar imagen ampliada" }));
     assert.equal(screen.getByRole("dialog", { name: "Filter" }), detail);
     assert.equal(document.activeElement, zoomTrigger);
-    await userEvent.click(zoomTrigger);
+    fireEvent.click(zoomTrigger);
     const viewerBackdrop = screen.getByRole("dialog", { name: "Imagen de Filter" }).parentElement!;
     fireEvent.mouseDown(viewerBackdrop);
     assert.equal(screen.queryByRole("dialog", { name: "Imagen de Filter" }), null);

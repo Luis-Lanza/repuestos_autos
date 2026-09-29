@@ -1,4 +1,4 @@
-import type { ProductSearchResult } from "../../commands/catalog.ts";
+import type { ProductBrowseResult, ProductSearchResult } from "../../commands/catalog.ts";
 import type { PersistedSaleSummary } from "../../commands/confirm-sale.ts";
 
 const INVALID_BS_CORRECTION = "Ingresá un monto válido en Bs, con hasta dos decimales.";
@@ -18,6 +18,8 @@ export function parseOptionalBs(value: string): number | null {
 
 export type DraftLine = {
   product_id: number; sku: string; product_name: string; quantity: number;
+  /** Immutable presentation snapshot from the browse result; never submitted as sale authority. */
+  product_snapshot: ProductBrowseResult;
   captured_unit_price_centavos: number; captured_revision: number;
   sale_price_centavos: number; minimum_price_centavos: number;
   /** Presentation-only current purchase price; never part of sale intent. */
@@ -67,7 +69,7 @@ export type SaleAction =
   | { type: "catalog_search_started"; query: string; request_id: number }
   | { type: "catalog_search_succeeded"; request_id: number; results: ProductSearchResult[] }
   | { type: "catalog_search_failed"; request_id: number; message: string }
-  | { type: "add_product"; product: ProductSearchResult }
+  | { type: "add_product"; product: ProductBrowseResult }
   | { type: "remove_product"; product_id: number }
   | { type: "line_quantity_changed"; product_id: number; value: string }
   | { type: "line_final_price_changed"; product_id: number; value: string }
@@ -107,7 +109,7 @@ export function createSaleFlow(state: SaleState, action: SaleAction): SaleState 
       if (action.product.available_quantity < 1 || state.lines.some((line) => line.product_id === action.product.product_id)) return state;
       { const salePrice = action.product.sale_price_centavos ?? action.product.list_price_centavos ?? action.product.catalog_unit_price_centavos;
         const minimumPrice = Number.isSafeInteger(action.product.minimum_sale_price_centavos) ? action.product.minimum_sale_price_centavos : salePrice;
-        return { ...resetIntent(state), lines: [...state.lines, { product_id: action.product.product_id, sku: action.product.sku, product_name: action.product.name, quantity: 1, captured_unit_price_centavos: salePrice, captured_revision: action.product.revision, sale_price_centavos: salePrice, minimum_price_centavos: minimumPrice, purchase_price_centavos: action.product.purchase_price_centavos, final_price_input: formatBsInput(salePrice) }], feedback: null }; }
+        return { ...resetIntent(state), lines: [...state.lines, { product_id: action.product.product_id, sku: action.product.sku, product_name: action.product.name, quantity: 1, product_snapshot: { ...action.product, attribute_values: action.product.attribute_values.map((attribute) => ({ ...attribute })) }, captured_unit_price_centavos: salePrice, captured_revision: action.product.revision, sale_price_centavos: salePrice, minimum_price_centavos: minimumPrice, purchase_price_centavos: action.product.purchase_price_centavos, final_price_input: formatBsInput(salePrice) }], feedback: null }; }
     case "remove_product": {
       if (!state.lines.some((line) => line.product_id === action.product_id)) return state;
       const price_errors = { ...state.price_errors }; delete price_errors[action.product_id];

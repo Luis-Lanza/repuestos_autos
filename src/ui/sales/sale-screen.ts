@@ -5,7 +5,7 @@ import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
 import { createSaleFlow, draftLineSubtotalCentavos, draftTotalCentavos, draftTotalUnits, effectiveDraftUnitPriceCentavos, finalPriceCentavos, formatBs, initialSaleState, parseOptionalBs, type DraftLine } from "./sale-flow.ts";
-import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readSalesViewMode, writeSalesViewMode, type CatalogViewMode, type ProductBrowserState } from "../catalog/product-browser.ts";
+import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser, readSalesViewMode, SalesProductDetail, writeSalesViewMode, type CatalogViewMode, type ProductBrowserState } from "../catalog/product-browser.ts";
 import { PersistedSaleSummaryView, projectPersistedSaleSummary, type PersistedSummaryDetails } from "./persisted-summary.ts";
 
 const INVALID_BS = "Ingresá un monto válido en Bs, con hasta dos decimales.";
@@ -15,6 +15,7 @@ const failureByCode: Record<string, string> = {
   invalid_request: "Revisá los datos de la venta e intentá nuevamente.", invalid_quantity: "Revisá que las cantidades sean números enteros mayores que cero.", invalid_payment: "Revisá los montos de pago e intentá nuevamente.", inactive_product: "Uno de los productos ya no está activo.", missing_product: "Uno de los productos ya no está disponible.", insufficient_stock: "No hay stock suficiente para completar la venta.", request_conflict: "El ID de solicitud ya fue usado con datos de venta diferentes. Revisá la venta antes de intentar nuevamente.", minimum_price_violation: "El precio de venta está por debajo del mínimo actual.", invalid_final_price: POSITIVE_FINAL_PRICE, persistence_failure: "No se pudo confirmar la venta. Intentá nuevamente.",
 };
 const requestId = () => crypto.randomUUID();
+const thumbnailCacheKey = (productId: number, revision: number) => `${productId}:${revision}`;
 function finalPriceError(line: DraftLine): string | undefined {
   let price: number | null;
   try { price = parseOptionalBs(line.final_price_input); } catch { return INVALID_FINAL_PRICE; }
@@ -27,26 +28,39 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   const [state, dispatch] = useReducer(createSaleFlow, initialSaleState);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, initialProductBrowserState);
   const [salesViewMode, setSalesViewMode] = useState<CatalogViewMode>(readSalesViewMode);
-  const [browseThumbnails, setBrowseThumbnails] = useState<Record<number, string>>({});
+  const [, setThumbnailCacheVersion] = useState(0);
+  const thumbnailCache = useRef(new Map<string, string>());
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
   const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutDetail, setCheckoutDetail] = useState<ProductBrowseResult | null>(null);
+  const checkoutDetailTriggerRef = useRef<HTMLElement | null>(null);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null), headingRef = useRef<HTMLHeadingElement>(null);
   const searchSequence = useRef(0), confirmationSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), confirming = useRef(false), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
   browserRef.current = browser;
   useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; browseThumbnailAttempt.current += 1; }, []);
+  const browseThumbnails: Record<number, string> = {};
+  for (const product of browser.result?.products ?? []) {
+    const thumbnail = thumbnailCache.current.get(thumbnailCacheKey(product.product_id, product.revision));
+    if (thumbnail) browseThumbnails[product.product_id] = thumbnail;
+  }
+  const checkoutDetailThumbnails = checkoutDetail
+    ? { [checkoutDetail.product_id]: thumbnailCache.current.get(thumbnailCacheKey(checkoutDetail.product_id, checkoutDetail.revision)) ?? "" }
+    : {};
   useEffect(() => {
     const result = browser.result;
-    if (!result || browser.status !== "results") { browseThumbnailAttempt.current += 1; setBrowseThumbnails({}); return; }
+    if (!result || browser.status !== "results") { browseThumbnailAttempt.current += 1; return; }
     const current = ++browseThumbnailAttempt.current;
     const requestId = browser.request_id;
-    setBrowseThumbnails({});
     void Promise.all(result.products.map(async (product) => {
+      const key = thumbnailCacheKey(product.product_id, product.revision);
+      if (thumbnailCache.current.has(key)) return null;
       const response = await catalogProductImageCommands.thumbnail({ product_id: product.product_id, expected_revision: product.revision });
-      return response.kind === "success" && response.product_id === product.product_id && response.revision === product.revision ? [product.product_id, response.src] as const : null;
+      return response.kind === "success" && response.product_id === product.product_id && response.revision === product.revision ? [key, product.product_id, response.src] as const : null;
     })).then((thumbnails) => {
       if (!mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
-      setBrowseThumbnails(Object.fromEntries(thumbnails.filter((item): item is readonly [number, string] => item !== null)));
+      for (const item of thumbnails) if (item) thumbnailCache.current.set(item[0], item[2]);
+      if (thumbnails.some(Boolean)) setThumbnailCacheVersion((version) => version + 1);
     });
   }, [browser.result, browser.status]);
   useEffect(() => {
@@ -156,7 +170,11 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
         createElement("span", { "data-ui-sales-minimum-price": true },
           createElement("span", { "aria-hidden": true }, `Mín.: ${formatBs(line.minimum_price_centavos)}`),
           createElement("span", { className: "sale-price-fact-accessible" }, `Precio mínimo de venta: ${formatBs(line.minimum_price_centavos)}`))),
-      createElement(Action, { variant: "tertiary", "aria-label": `Quitar ${line.product_name}`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar")),
+      createElement("span", { "data-ui-sales-stock-snapshot": true }, `Stock: ${line.product_snapshot.available_quantity}`),
+      createElement("span", { "data-ui-sales-stock-snapshot-note": true }, "Dato de la búsqueda; la disponibilidad se valida al confirmar."),
+      createElement("div", { "data-ui-sales-cart-actions": true },
+        createElement(Action, { variant: "tertiary", disabled: pending, onClick: (event: { currentTarget: HTMLElement }) => { checkoutDetailTriggerRef.current = event.currentTarget; setCheckoutDetail(line.product_snapshot); } }, "Ver detalles"),
+        createElement(Action, { variant: "tertiary", "aria-label": `Quitar ${line.product_name}`, disabled: pending, onClick: () => draftDispatch({ type: "remove_product", product_id: line.product_id }) }, "Quitar"))),
     createElement("div", { "data-ui-sale-cart-controls": true },
       createElement(Field, { kind: "quantity", label: `Cantidad de ${line.product_name}`, error: state.feedback === "Ingresá una cantidad entera mayor que cero." ? state.feedback : undefined, control: createElement("input", { min: 1, value: line.quantity, disabled: pending, onChange: (event) => draftDispatch({ type: "line_quantity_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
       createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.price_errors[line.product_id], control: createElement("input", { id: `sale-final-price-${line.product_id}`, ref: index === 0 ? checkoutInitialFocusRef : undefined, value: line.final_price_input, disabled: pending, onChange: (event) => draftDispatch({ type: "line_final_price_changed", product_id: line.product_id, value: event.target.value }) }) } as never),
@@ -179,7 +197,8 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
         createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
       state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
-        createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador"))));
+        createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador")),
+    checkoutDetail ? createElement(SalesProductDetail, { product: checkoutDetail, thumbnails: checkoutDetailThumbnails, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));
   const summaryLines = state.lines.map((line) => createElement("li", { key: line.product_id, "data-ui-sale-summary-line": true },
     createElement("strong", null, line.product_name),
     createElement("span", { "data-ui-sku": true }, line.sku),
@@ -210,5 +229,5 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
             createElement("p", { "data-ui-money": true }, `Subtotal: ${total}`),
             createElement("p", { "data-ui-type": "total" }, `Total: ${total}`)),
           createElement("button", { ref: checkoutTriggerRef, type: "button", "data-ui-action": "primary", "aria-controls": "checkout-dialog", "aria-expanded": checkoutOpen, disabled: pending || state.lines.length === 0, onClick: () => setCheckoutOpen(true) } , "Revisar y cobrar")))),
-    createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!pending && !confirming.current) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
+    createElement(CheckoutDialog, { open: checkoutOpen, title: "Revisar y cobrar", description: "Revisá los productos, los precios y los medios de pago antes de confirmar la venta.", pending, confirmDisabled: state.lines.length === 0, initialFocusRef: checkoutInitialFocusRef, confirmLabel: "Confirmar venta", pendingLabel: "Confirmando…", onCancel: () => { if (!checkoutDetail && !pending && !confirming.current) setCheckoutOpen(false); }, onConfirm: confirm, children: checkoutContent }));
 }

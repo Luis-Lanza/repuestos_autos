@@ -724,6 +724,10 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/onboarding/onboarding-screen.mounted.test.ts",
     "src/ui/onboarding/onboarding-screen.ts",
     "src/ui/sales/sale-screen.mounted.test.ts",
+    "src/ui/sales/sale-screen.ts",
+    "src/ui/sales/sale-flow.ts",
+    "src/ui/sales/sale-flow.test.ts",
+    "odd/tasks/checkout-stock-and-details.md",
     "src/ui/catalog/catalog-maintenance-flow.test.ts",
     "src/ui/catalog/catalog-maintenance-flow.ts",
     "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
@@ -1369,6 +1373,56 @@ test("W9 allows only the exact Dashboard command registration diff", () => {
     () => assertDashboardRegistrationAllowlist(`${allowedDashboardDiff}\n+ fn dashboard_runtime_change() { native_runtime_drift(); }`),
     /unexpected Dashboard command registration drift/,
   );
+});
+
+test("W9 allows only the exact Sales screen path for checkout thumbnail caching", () => {
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(
+    ["src/ui/sales/sale-screen.ts"],
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ));
+  for (const nearPath of [
+    "src/ui/sales/sale-screen-extra.ts",
+    "src/ui/sales/sale-screen.test.ts",
+    "src/ui/sales/sale-screen.mounted.extra.test.ts",
+  ]) {
+    assert.throws(
+      () => assertW9ProtectedDiffPolicy([nearPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      /unexpected protected-path drift/,
+      nearPath,
+    );
+  }
+});
+
+test("W9 allows only the exact checkout feature paths and rejects nearby paths", () => {
+  const checkoutPaths = [
+    "odd/tasks/checkout-stock-and-details.md",
+    "src/ui/sales/sale-flow.ts",
+    "src/ui/sales/sale-flow.test.ts",
+  ];
+  for (const path of checkoutPaths) {
+    assert.doesNotThrow(
+      () => assertW9ProtectedDiffPolicy([path], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      path,
+    );
+  }
+
+  for (const nearPath of [
+    "odd/tasks/checkout-stock-and-details-related.md",
+    "odd/tasks/unrelated-checkout-stock-and-details.md",
+    "src/ui/sales/sale-flow-extra.ts",
+    "src/ui/sales/sale-flow.test-extra.ts",
+    "src/ui/sales/sale-flow.unrelated.test.ts",
+  ]) {
+    assert.throws(
+      () => assertW9ProtectedDiffPolicy([nearPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      /unexpected protected-path drift/,
+      nearPath,
+    );
+  }
 });
 
 test("W9 rejects appended text adjacent to an allowed ticket 11 marker", () => {
