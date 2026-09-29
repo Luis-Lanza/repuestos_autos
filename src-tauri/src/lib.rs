@@ -772,19 +772,16 @@ fn list_movement_ledger_product_options_command(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 async fn export_movement_ledger_command<R: Runtime>(
-    state: tauri::State<'_, AppState>,
-    window: tauri::WebviewWindow<R>,
+    app_handle: tauri::AppHandle<R>,
     request: commands::movement_ledger::MovementLedgerExportRequest,
-) -> commands::movement_ledger::MovementLedgerExportResponse {
+) -> Result<commands::movement_ledger::MovementLedgerExportResponse, String> {
     #[cfg(test)]
     {
-        let _ = (state, window, request);
-        commands::movement_ledger::MovementLedgerExportResponse::Cancelled
+        let _ = (app_handle, request);
+        Ok(commands::movement_ledger::MovementLedgerExportResponse::Cancelled)
     }
     #[cfg(not(test))]
     {
-        let app_handle = window.app_handle().clone();
-        drop(window);
         let selection = commands::backup::select_callback_path(|complete| {
             app_handle.dialog().file()
                 .add_filter("PDF document", &["pdf"])
@@ -794,12 +791,13 @@ async fn export_movement_ledger_command<R: Runtime>(
                 });
         }).await;
         let commands::backup::PathSelection::Selected { path } = selection else {
-            return commands::movement_ledger::MovementLedgerExportResponse::Cancelled;
+            return Ok(commands::movement_ledger::MovementLedgerExportResponse::Cancelled);
         };
         let generated_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "Unavailable".to_string());
-        state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(
+        let state = app_handle.state::<AppState>();
+        let response = state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(
             connection, request, &generated_at, |bytes| {
                 std::fs::write(&path, bytes).map_or(
                     commands::movement_ledger::ExportSaveResult::Failed,
@@ -811,7 +809,8 @@ async fn export_movement_ledger_command<R: Runtime>(
                 code: "persistence_failure",
                 message: "The movement ledger could not be loaded.",
             },
-        ))
+        ));
+        Ok(response)
     }
 }
 

@@ -183,6 +183,31 @@ fn export_distinguishes_cancellation_and_hides_write_failure_details() {
 }
 
 #[test]
+fn export_response_serialization_preserves_the_frontend_contract() {
+    assert_eq!(
+        serde_json::to_value(MovementLedgerExportResponse::Success).unwrap(),
+        serde_json::json!({ "kind": "success" }),
+    );
+    assert_eq!(
+        serde_json::to_value(MovementLedgerExportResponse::Cancelled).unwrap(),
+        serde_json::json!({ "kind": "cancelled" }),
+    );
+    assert_eq!(
+        serde_json::to_value(MovementLedgerExportResponse::Error(
+            repuestos_autos::commands::movement_ledger::MovementLedgerCommandError {
+                code: "persistence_failure",
+                message: "The movement ledger could not be loaded.",
+            },
+        )).unwrap(),
+        serde_json::json!({
+            "kind": "error",
+            "code": "persistence_failure",
+            "message": "The movement ledger could not be loaded."
+        }),
+    );
+}
+
+#[test]
 fn export_requires_strict_filter_fields() {
     let unknown = serde_json::json!({
         "from_utc": "2025-01-01T00:00:00Z",

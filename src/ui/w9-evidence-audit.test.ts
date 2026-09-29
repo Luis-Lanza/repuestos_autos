@@ -506,18 +506,15 @@ const reportsRegistrationLineAllowlist = new Set([
   ".unwrap_or_else(|_| commands::movement_ledger::MovementLedgerProductOptionsResponse::Error(",
   "message: \"The movement ledger products could not be loaded.\",",
   "async fn export_movement_ledger_command<R: Runtime>(",
-  "state: tauri::State<'_, AppState>,",
-  "window: tauri::WebviewWindow<R>,",
+  "app_handle: tauri::AppHandle<R>,",
   "request: commands::movement_ledger::MovementLedgerExportRequest,",
-  ") -> commands::movement_ledger::MovementLedgerExportResponse {",
+  ") -> Result<commands::movement_ledger::MovementLedgerExportResponse, String> {",
   "#[cfg(test)]",
   "{",
-  "let _ = (state, window, request);",
-  "commands::movement_ledger::MovementLedgerExportResponse::Cancelled",
+  "let _ = (app_handle, request);",
+  "Ok(commands::movement_ledger::MovementLedgerExportResponse::Cancelled)",
   "}",
   "#[cfg(not(test))]",
-  "let app_handle = window.app_handle().clone();",
-  "drop(window);",
   "let selection = commands::backup::select_callback_path(|complete| {",
   "app_handle.dialog().file()",
   ".add_filter(\"PDF document\", &[\"pdf\"])",
@@ -532,7 +529,8 @@ const reportsRegistrationLineAllowlist = new Set([
   "let generated_at = time::OffsetDateTime::now_utc()",
   ".format(&time::format_description::well_known::Rfc3339)",
   ".unwrap_or_else(|_| \"Unavailable\".to_string());",
-  "state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(",
+  "let state = app_handle.state::<AppState>();",
+  "let response = state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(",
   ".unwrap_or_else(|_| commands::movement_ledger::MovementLedgerExportResponse::Error(",
   "connection, request, &generated_at, |bytes| {",
   "std::fs::write(&path, bytes).map_or(",
@@ -544,17 +542,35 @@ const reportsRegistrationLineAllowlist = new Set([
   "))).unwrap_or_else(|_| commands::movement_ledger::MovementLedgerExportResponse::Error(",
   "}),",
   "));",
+  "Ok(response)",
+  "return Ok(commands::movement_ledger::MovementLedgerExportResponse::Cancelled);",
   "}",
+]);
+
+const removedReportsRegistrationLineAllowlist = new Set([
+  "state: tauri::State<'_, AppState>,",
+  "window: tauri::WebviewWindow<R>,",
+  ") -> commands::movement_ledger::MovementLedgerExportResponse {",
+  "let _ = (state, window, request);",
+  "commands::movement_ledger::MovementLedgerExportResponse::Cancelled",
+  "return commands::movement_ledger::MovementLedgerExportResponse::Cancelled;",
+  "let app_handle = window.app_handle().clone();",
+  "drop(window);",
+  "state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(",
+  "))",
 ]);
 
 function assertReportsRegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
     .filter((line) => /^[+-](?![+-])/.test(line));
-  for (const marker of ["list_movement_ledger_command", "list_movement_ledger_product_options_command", "export_movement_ledger_command"]) {
-    assert.match(libDiff, new RegExp(marker), `missing Reports registration marker: ${marker}`);
-  }
-  const unexpectedLines = changedLines.filter((line) => !line.startsWith("+") || !reportsRegistrationLineAllowlist.has(line.slice(1).trim()));
+  assert.match(libDiff, /export_movement_ledger_command/, "missing Reports export command marker");
+  const unexpectedLines = changedLines.filter((line) => {
+    const content = line.slice(1).trim();
+    return line.startsWith("+")
+      ? !reportsRegistrationLineAllowlist.has(content)
+      : !removedReportsRegistrationLineAllowlist.has(content);
+  });
   assert.deepEqual(unexpectedLines, [], "unexpected Reports command registration drift");
 }
 
@@ -580,16 +596,22 @@ function assertTicket11RegistrationAllowlist(libDiff: string) {
 function assertReportsCapabilityAllowlist(currentContent: string, baselineContent: string, capabilityDiff: string) {
   const current = parseJson(currentContent);
   const baseline = parseJson(baselineContent);
+  const changedLines = capabilityDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line))
+    .map((line) => line.trim());
+
+  if (baseline.permissions.includes("dialog:allow-save")) {
+    assert.deepEqual(current, baseline, "unexpected uncommitted Reports capability drift");
+    assert.deepEqual(changedLines, [], "committed Reports permission must not appear as uncommitted drift");
+    return;
+  }
+
   assert.deepEqual(baseline.permissions, ["core:default", "dialog:allow-open"]);
   assert.deepEqual(current, {
     ...baseline,
     permissions: [...baseline.permissions, "dialog:allow-save"],
   }, "Reports may only append dialog:allow-save to the existing capability");
-
-  const changedLines = capabilityDiff
-    .split("\n")
-    .filter((line) => /^[+-](?![+-])/.test(line))
-    .map((line) => line.trim());
   assert.deepEqual(changedLines, [
     '-  "permissions": ["core:default", "dialog:allow-open"]',
     '+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]',
@@ -737,7 +759,7 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("list_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
+    if (libDiff.includes("export_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
     else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
     else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
@@ -1078,9 +1100,7 @@ test("W9 allows only the exact Reports Movement Ledger paths", () => {
     assert.doesNotThrow(
       () => assertW9ProtectedDiffPolicy(
         [changedPath], currentPackage, baselinePackage, currentLock, baselineLock, "", "",
-        changedPath === "src-tauri/capabilities/default.json"
-          ? '-  "permissions": ["core:default", "dialog:allow-open"]\n+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]'
-          : "",
+        "",
       ),
       changedPath,
     );
@@ -1109,9 +1129,13 @@ test("W9 allows only the exact Reports Movement Ledger paths", () => {
   }
 });
 
-test("W9 allows only Reports adding dialog:allow-save to the existing default capability", () => {
-  const baseline = readFromHead("src-tauri/capabilities/default.json");
-  const current = read("src-tauri/capabilities/default.json");
+test("W9 validates the Reports capability addition against its explicit pre-Reports baseline", () => {
+  const committedBaseline = parseJson(readFromHead("src-tauri/capabilities/default.json"));
+  const baseline = JSON.stringify({
+    ...committedBaseline,
+    permissions: committedBaseline.permissions.filter((permission: string) => permission !== "dialog:allow-save"),
+  }, null, 2);
+  const current = readFromHead("src-tauri/capabilities/default.json");
   const allowedDiff = [
     '-  "permissions": ["core:default", "dialog:allow-open"]',
     '+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]',
@@ -1132,23 +1156,61 @@ test("W9 allows only Reports adding dialog:allow-save to the existing default ca
       /Reports may only append|unexpected Reports capability diff/,
     );
   }
+
+  assert.doesNotThrow(() => assertReportsCapabilityAllowlist(
+    read("src-tauri/capabilities/default.json"),
+    current,
+    "",
+  ));
+  assert.throws(
+    () => assertReportsCapabilityAllowlist(
+      current.replace("dialog:allow-save", "dialog:allow-save-extra"),
+      current,
+      '+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save-extra"]',
+    ),
+    /unexpected uncommitted Reports capability drift/,
+  );
 });
 
-test("W9 allows only the exact Reports command registration lines", () => {
+test("W9 allows only the repaired async Reports export command shape", () => {
   const allowedDiff = [
     "+ list_movement_ledger_command,",
     "+ list_movement_ledger_product_options_command,",
     "+ export_movement_ledger_command,",
+    "+ app_handle: tauri::AppHandle<R>,",
+    "+ ) -> Result<commands::movement_ledger::MovementLedgerExportResponse, String> {",
+    "+ let _ = (app_handle, request);",
+    "+ Ok(commands::movement_ledger::MovementLedgerExportResponse::Cancelled)",
+    "+ let state = app_handle.state::<AppState>();",
+    "+ let response = state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(",
+    "+ return Ok(commands::movement_ledger::MovementLedgerExportResponse::Cancelled);",
+    "+ Ok(response)",
+    "- state: tauri::State<'_, AppState>,",
+    "- window: tauri::WebviewWindow<R>,",
+    "- ) -> commands::movement_ledger::MovementLedgerExportResponse {",
+    "- let _ = (state, window, request);",
+    "- commands::movement_ledger::MovementLedgerExportResponse::Cancelled",
+    "- return commands::movement_ledger::MovementLedgerExportResponse::Cancelled;",
+    "- let app_handle = window.app_handle().clone();",
+    "- drop(window);",
+    "- state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(",
+    "- ))",
   ].join("\n");
   assert.doesNotThrow(() => assertReportsRegistrationAllowlist(allowedDiff));
-  assert.throws(
-    () => assertReportsRegistrationAllowlist(`${allowedDiff}\n+ unrelated_reports_command,`),
-    /unexpected Reports command registration drift/,
-  );
-  assert.throws(
-    () => assertReportsRegistrationAllowlist(`${allowedDiff}\n+ state.with_write(|connection| mutate_reports(connection))`),
-    /unexpected Reports command registration drift/,
-  );
+  for (const invalidLine of [
+    "+ state: tauri::State<'_, AppState>,",
+    "+ window: tauri::WebviewWindow<R>,",
+    "+ ) -> commands::movement_ledger::MovementLedgerExportResponse {",
+    "+ unrelated_reports_command,",
+    "+ state.with_write(|connection| mutate_reports(connection))",
+    "+ fn unrelated_runtime_change() { native_runtime_drift(); }",
+  ]) {
+    assert.throws(
+      () => assertReportsRegistrationAllowlist(`${allowedDiff}\n${invalidLine}`),
+      /unexpected Reports command registration drift/,
+      invalidLine,
+    );
+  }
 });
 
 test("W9 allows only the exact Dashboard and gross-profit paths", () => {
