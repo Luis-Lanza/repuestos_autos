@@ -759,8 +759,9 @@ fn list_movement_ledger_command(
 #[tauri::command]
 fn list_movement_ledger_product_options_command(
     state: tauri::State<AppState>,
+    request: commands::movement_ledger::MovementLedgerProductOptionsRequest,
 ) -> commands::movement_ledger::MovementLedgerProductOptionsResponse {
-    state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection)))
+    state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection, request)))
         .unwrap_or_else(|_| commands::movement_ledger::MovementLedgerProductOptionsResponse::Error(
             commands::movement_ledger::MovementLedgerCommandError {
                 code: "persistence_failure",

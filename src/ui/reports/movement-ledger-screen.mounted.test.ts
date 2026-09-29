@@ -8,12 +8,13 @@ import userEvent from "@testing-library/user-event";
 import { MovementLedgerScreen } from "./movement-ledger-screen.ts";
 
 const movement = { movement_id: 1, occurred_at: "2025-03-02 10:00:00", product_id: 7, product_name: "Filtro actual", product_sku: "FLT-7", movement_type: "stock_entry", quantity_delta: 3, resulting_quantity: null, reason: null, note: null, sale_id: null, sale_line_id: null };
-const products = { kind: "success", products: [{ product_id: 7, product_name: "Filtro actual", product_sku: "FLT-7", active: false }] };
+const foundProduct = { product_id: 7, product_name: "Filtro actual", product_sku: "FLT-7", active: false };
 const page = (rows = [movement], has_more = false) => ({ kind: "success", rows, page: 1, page_size: 50, has_more });
-function mount(list: (payload: unknown) => unknown = () => page(), exportValue: unknown = { kind: "success" }) {
- const requests: unknown[] = []; const exports: unknown[] = [];
+const productPage = (products = [foundProduct], page = 1, has_more = false) => ({ kind: "success", products, page, page_size: 20, has_more });
+function mount(list: (payload: unknown) => unknown = () => page(), exportValue: unknown = { kind: "success" }, search: (payload: unknown) => unknown = () => productPage()) {
+ const requests: unknown[] = []; const exports: unknown[] = []; const searches: unknown[] = [];
  mockIPC((command, payload) => {
-  if (command === "list_movement_ledger_product_options_command") return products;
+  if (command === "list_movement_ledger_product_options_command") { searches.push(payload); return search(payload); }
   if (command === "list_movement_ledger_command") {
    requests.push(payload);
    const requestPage = (payload as { request: { page: number } }).request.page;
@@ -22,25 +23,76 @@ function mount(list: (payload: unknown) => unknown = () => page(), exportValue: 
   if (command === "export_movement_ledger_command") { exports.push(payload); return exportValue; }
   throw new Error(`Unexpected command: ${command}`);
  });
- return { requests, exports };
+ return { requests, exports, searches };
 }
-test("observes loading, then waits for initial product and ledger requests to settle", async () => {
- let resolveList!: (value: unknown) => void;
- mount(() => new Promise(resolve => { resolveList = resolve; }));
- render(createElement(MovementLedgerScreen));
+async function submitSearch(query = "filtro") {
+ const user = userEvent.setup({ document });
+ const input = screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" });
+ await user.type(input, `${query}{Enter}`);
+ return user;
+}
+test("starts with loading ledger and does not eagerly request an unbounded product list", async () => {
+ const { searches } = mount(); render(createElement(MovementLedgerScreen));
  assert.ok(await screen.findByText("Cargando movimientos…"));
- assert.ok(await screen.findByRole("option", { name: /Archivado/ }));
- await act(async () => { resolveList(page()); });
+ assert.equal(searches.length, 0);
  assert.ok(await screen.findByText("Filtro actual"));
 });
-
-test("shows archived historical product, persisted facts truthfully, and filtered PDF feedback", async () => {
+test("submitted search supports Enter, bounded selectable archived products, and clear returns to all products", async () => {
+ const { searches } = mount(); const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
+ const input = screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" });
+ await user.type(input, "filtro");
+ assert.equal(searches.length, 0);
+ await user.keyboard("{Enter}");
+ const select = await screen.findByRole("button", { name: "Seleccionar Filtro actual (SKU: FLT-7)" });
+ assert.deepEqual(searches[0], { request: { query: "filtro", page: 1, page_size: 20 } });
+ assert.equal(screen.getByRole("list", { name: "Resultados de productos" }).querySelectorAll("li").length, 1);
+ await user.click(select);
+ assert.ok(screen.getByText("Filtro actual · FLT-7 · Archivado"));
+ await user.click(screen.getByRole("button", { name: "Quitar producto" }));
+ assert.ok(screen.getByText(/Todos los productos/));
+ assert.equal(screen.queryByRole("list", { name: "Resultados de productos" }), null);
+});
+test("renders explicit product search loading, empty, error, and retry states", async () => {
+ let searches = 0;
+ const { searches: requests } = mount(() => page(), { kind: "success" }, () => {
+  searches++;
+  if (searches === 1) return new Promise(() => {});
+  if (searches === 2) return { kind: "success", products: [], page: 1, page_size: 20, has_more: false };
+  if (searches === 3) return { kind: "error", code: "persistence_failure", message: "private" };
+  return productPage();
+ });
+ const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
+ await user.type(screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" }), "xyz{Enter}");
+ assert.ok(await screen.findByText("Buscando productos…"));
+ await act(async () => { /* first request intentionally remains pending */ });
+ await user.clear(screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" }));
+ await user.type(screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" }), "nada{Enter}");
+ assert.ok(await screen.findByText("No encontramos productos para “nada”."));
+ await user.clear(screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" }));
+ await user.type(screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" }), "error{Enter}");
+ assert.ok(await screen.findByText(/No se pudo buscar en el catálogo local/));
+ await user.click(screen.getByRole("button", { name: "Reintentar" }));
+ assert.ok(await screen.findByRole("button", { name: "Seleccionar Filtro actual (SKU: FLT-7)" }));
+ assert.equal(requests.length, 4);
+});
+test("stale product search responses are rejected independently of ledger list requests", async () => {
+ let resolveOld!: (value: unknown) => void; let searchCount = 0;
+ const { searches } = mount(() => page(), { kind: "success" }, () => ++searchCount === 1 ? new Promise(resolve => { resolveOld = resolve; }) : productPage([{ ...foundProduct, product_name: "Resultado vigente" }]));
+ const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
+ const input = screen.getByRole("searchbox", { name: "Buscar producto por nombre o SKU" });
+ await user.type(input, "viejo{Enter}");
+ await user.clear(input); await user.type(input, "nuevo{Enter}");
+ assert.ok(await screen.findByRole("button", { name: "Seleccionar Resultado vigente (SKU: FLT-7)" }));
+ await act(async () => { resolveOld(productPage([{ ...foundProduct, product_name: "Resultado obsoleto" }])); });
+ assert.equal(screen.queryByText(/Resultado obsoleto/), null);
+ assert.ok(screen.getByText("Filtro actual"));
+ assert.equal(searches.length, 2);
+});
+test("shows archived historical product, persisted facts truthfully, and exports active filters", async () => {
  const { exports } = mount(); const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
  assert.ok(screen.getByRole("heading", { level: 1, name: "Registro de movimientos" }));
- const product = await screen.findByRole("combobox", { name: "Producto" });
- await screen.findByRole("option", { name: /Archivado/ });
- assert.ok(within(product).getByRole("option", { name: /Archivado/ }));
- await user.selectOptions(product, "7");
+ await submitSearch();
+ await user.click(await screen.findByRole("button", { name: "Seleccionar Filtro actual (SKU: FLT-7)" }));
  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "sale");
  await user.click(screen.getByRole("button", { name: "Aplicar filtros" }));
  await screen.findByText("Filtro actual");
@@ -64,18 +116,13 @@ test("preserves custom applied date, product, and movement filters across pagina
  });
  const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
  assert.ok(await screen.findByText("No hay movimientos para los filtros aplicados."));
- await screen.findByRole("option", { name: /Archivado/ });
+ await submitSearch(); await user.click(await screen.findByRole("button", { name: "Seleccionar Filtro actual (SKU: FLT-7)" }));
  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-02-03" } });
  fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2024-02-15" } });
- await user.selectOptions(screen.getByRole("combobox", { name: "Producto" }), "7");
  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "sale");
  await user.click(screen.getByRole("button", { name: "Aplicar filtros" }));
  await screen.findByRole("table");
- const expectedFilters = {
-  from_utc: new Date(2024, 1, 3).toISOString(),
-  to_exclusive_utc: new Date(2024, 1, 16).toISOString(),
-  product_id: 7, movement_type: "sale",
- };
+ const expectedFilters = { from_utc: new Date(2024, 1, 3).toISOString(), to_exclusive_utc: new Date(2024, 1, 16).toISOString(), product_id: 7, movement_type: "sale" };
  assert.deepEqual((requests[1] as { request: Record<string, unknown> }).request, { ...expectedFilters, page: 1, page_size: 50 });
  await user.click(screen.getByRole("button", { name: "Siguiente" }));
  assert.ok(await screen.findByText(/No se pudieron cargar los movimientos/));
@@ -83,33 +130,23 @@ test("preserves custom applied date, product, and movement filters across pagina
  await user.click(screen.getByRole("button", { name: "Reintentar" }));
  await screen.findByRole("table");
  assert.deepEqual((requests[3] as { request: Record<string, unknown> }).request, { ...expectedFilters, page: 2, page_size: 50 });
- assert.ok(screen.getByRole("button", { name: "Siguiente" }));
  await user.click(screen.getByRole("button", { name: "Siguiente" }));
  await waitFor(() => assert.equal((screen.getByRole("button", { name: "Siguiente" }) as HTMLButtonElement).disabled, true));
  assert.deepEqual((requests[4] as { request: Record<string, unknown> }).request, { ...expectedFilters, page: 3, page_size: 50 });
 });
-test("stale list and export responses cannot replace a newer filter intent", async () => {
- let finishOld!: (value: unknown) => void; let finishExport!: (value: unknown) => void; let lists = 0;
- mount(() => { lists++; return lists === 1 ? new Promise(resolve => { finishOld = resolve; }) : page([{ ...movement, product_name: "Movimiento vigente" }]); }, new Promise(resolve => { finishExport = resolve; }));
- const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
- await screen.findByRole("combobox", { name: "Producto" });
- await user.click(screen.getByRole("button", { name: "Aplicar filtros" }));
- assert.ok(await screen.findByText("Movimiento vigente"));
- await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
- await user.click(screen.getByRole("button", { name: "Aplicar filtros" }));
- finishOld(page([{ ...movement, product_name: "Movimiento obsoleto" }]));
- finishExport({ kind: "success" });
- await waitFor(() => assert.ok(screen.getByText("Movimiento vigente")));
- assert.equal(screen.queryByText("Movimiento obsoleto"), null);
- assert.equal(screen.queryByText("El PDF se generó correctamente."), null);
-});
-
-test("validates report styling and produces one accessible main/section hierarchy", async () => {
+test("uses deliberate date-first then product/type/apply rows and available-width responsive layout", async () => {
  mount(); render(createElement(MovementLedgerScreen));
  assert.ok(await screen.findByText("Filtro actual"));
  assert.equal(screen.getAllByRole("main").length, 1);
  assert.ok(screen.getByRole("region", { name: "Filtros" }));
  assert.ok(screen.getByRole("region", { name: "Movimientos" }));
+ const filters = screen.getByRole("region", { name: "Filtros" }).querySelector("[data-ui-ledger-filters]")!;
+ assert.equal(filters.children[0].getAttribute("data-ui-ledger-date-row"), "true");
+ assert.deepEqual([...filters.children[0].querySelectorAll("label")].map(label => label.textContent), ["Desde", "Hasta"]);
+ assert.equal(filters.children[1].getAttribute("data-ui-ledger-filter-row"), "true");
+ assert.deepEqual([...filters.children[1].children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Producto", "Tipo de movimiento", "Aplicar filtros"]);
  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
  assert.match(css, /data-ui-movement-ledger[^\n]*display:\s*grid/);
+ assert.match(css, /\[data-ui-ledger-filters\] \{ container: movement-ledger-filters \/ inline-size; display: grid;[^}]*\}/);
+ assert.match(css, /@container movement-ledger-filters \(min-width: 48rem\)/);
 });

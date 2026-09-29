@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::application::inventory::movement_ledger::{
     MovementLedgerError, MovementLedgerPage, MovementLedgerQuery, MovementLedgerReader,
-    MovementLedgerProductOption, MovementLedgerRow,
+    MovementLedgerProductOption, MovementLedgerProductOptionPage, MovementLedgerProductOptionsQuery, MovementLedgerRow,
 };
 
 pub struct SqliteMovementLedgerReader<'connection>(&'connection Connection);
@@ -14,18 +14,25 @@ impl<'connection> SqliteMovementLedgerReader<'connection> {
 }
 
 impl MovementLedgerReader for SqliteMovementLedgerReader<'_> {
-    fn product_options(&self) -> Result<Vec<MovementLedgerProductOption>, MovementLedgerError> {
+    fn product_options(&self, query: &MovementLedgerProductOptionsQuery) -> Result<MovementLedgerProductOptionPage, MovementLedgerError> {
+        let (pattern, offset, limit, page, page_size) = query.sql_parameters();
         let mut statement = self.0.prepare(
-            "SELECT id, name, sku, active FROM products ORDER BY lower(name), id",
+            "SELECT id, name, sku, active FROM products
+             WHERE lower(name) LIKE lower(?1) ESCAPE '\\'
+                OR lower(sku) LIKE lower(?1) ESCAPE '\\'
+             ORDER BY lower(name), id LIMIT ?2 OFFSET ?3",
         ).map_err(|_| MovementLedgerError::Persistence)?;
-        let rows = statement.query_map([], |row| Ok(MovementLedgerProductOption {
+        let rows = statement.query_map(params![pattern, limit, offset], |row| Ok(MovementLedgerProductOption {
             product_id: row.get(0)?,
             product_name: row.get(1)?,
             product_sku: row.get(2)?,
             active: row.get(3)?,
         })).map_err(|_| MovementLedgerError::Persistence)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MovementLedgerError::PersistedDataInvalid)
+        let mut products = rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MovementLedgerError::PersistedDataInvalid)?;
+        let has_more = products.len() > page_size as usize;
+        if has_more { products.pop(); }
+        Ok(MovementLedgerProductOptionPage { products, page, page_size, has_more })
     }
 
     fn list(&self, query: &MovementLedgerQuery) -> Result<MovementLedgerPage, MovementLedgerError> {

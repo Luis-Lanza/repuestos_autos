@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     application::inventory::movement_ledger::{
         MovementLedgerError, MovementLedgerPage, MovementLedgerQuery, MovementLedgerReader,
-        MovementLedgerProductOption, MovementLedgerRow, MovementType, DEFAULT_PAGE_SIZE, MAX_EXPORT_ROWS, MAX_PAGE_SIZE,
+        MovementLedgerProductOption, MovementLedgerProductOptionPage, MovementLedgerProductOptionsQuery, MovementLedgerRow, MovementType, DEFAULT_PAGE_SIZE, MAX_EXPORT_ROWS, MAX_PAGE_SIZE, MAX_PRODUCT_OPTIONS_PAGE_SIZE,
     },
     infrastructure::sqlite::movement_ledger_repository::SqliteMovementLedgerReader,
 };
@@ -44,10 +44,21 @@ pub enum MovementLedgerResponse {
     Error(MovementLedgerCommandError),
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MovementLedgerProductOptionsRequest {
+    pub query: String,
+    pub page: u32,
+    #[serde(default = "default_product_options_page_size")]
+    pub page_size: u32,
+}
+
+fn default_product_options_page_size() -> u32 { MAX_PRODUCT_OPTIONS_PAGE_SIZE }
+
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MovementLedgerProductOptionsResponse {
-    Success { products: Vec<MovementLedgerProductOption> },
+    Success { products: Vec<MovementLedgerProductOption>, page: u32, page_size: u32, has_more: bool },
     Error(MovementLedgerCommandError),
 }
 
@@ -339,13 +350,32 @@ fn export_map_error(reason: MovementLedgerError) -> MovementLedgerExportResponse
 
 pub fn list_movement_ledger_product_options(
     connection: &rusqlite::Connection,
+    request: MovementLedgerProductOptionsRequest,
 ) -> MovementLedgerProductOptionsResponse {
-    match SqliteMovementLedgerReader::new(connection).product_options() {
-        Ok(products) => MovementLedgerProductOptionsResponse::Success { products },
-        Err(_) => MovementLedgerProductOptionsResponse::Error(MovementLedgerCommandError {
-            code: "persistence_failure",
-            message: "The movement ledger products could not be loaded.",
-        }),
+    let query = match MovementLedgerProductOptionsQuery::new(&request.query, request.page, request.page_size) {
+        Ok(query) => query,
+        Err(MovementLedgerError::InvalidFilter) => return product_options_error("invalid_filter", "The product search query is invalid."),
+        Err(reason) => return product_options_map_error(reason),
+    };
+    match SqliteMovementLedgerReader::new(connection).product_options(&query) {
+        Ok(MovementLedgerProductOptionPage { products, page, page_size, has_more }) => {
+            MovementLedgerProductOptionsResponse::Success { products, page, page_size, has_more }
+        }
+        Err(reason) => product_options_map_error(reason),
+    }
+}
+
+fn product_options_error(code: &'static str, message: &'static str) -> MovementLedgerProductOptionsResponse {
+    MovementLedgerProductOptionsResponse::Error(MovementLedgerCommandError { code, message })
+}
+
+fn product_options_map_error(reason: MovementLedgerError) -> MovementLedgerProductOptionsResponse {
+    match reason {
+        MovementLedgerError::InvalidFilter => product_options_error("invalid_filter", "The product search query is invalid."),
+        MovementLedgerError::InvalidPage => product_options_error("invalid_page", "The product search page is invalid."),
+        MovementLedgerError::InvalidRange | MovementLedgerError::PersistedDataInvalid | MovementLedgerError::Persistence => {
+            product_options_error("persistence_failure", "The movement ledger products could not be loaded.")
+        }
     }
 }
 

@@ -4,6 +4,8 @@ const MAX_PAGE: u32 = 10_000;
 pub const DEFAULT_PAGE_SIZE: u32 = 50;
 pub const MAX_PAGE_SIZE: u32 = 100;
 pub const MAX_EXPORT_ROWS: usize = 2_000;
+pub const MAX_PRODUCT_OPTIONS_PAGE_SIZE: u32 = 20;
+const MAX_PRODUCT_SEARCH_QUERY_LENGTH: usize = 100;
 const SQLITE_TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
     time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
@@ -163,9 +165,47 @@ pub struct MovementLedgerProductOption {
     pub active: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovementLedgerProductOptionsQuery {
+    query: String,
+    page: u32,
+    page_size: u32,
+}
+
+impl MovementLedgerProductOptionsQuery {
+    pub fn new(query: &str, page: u32, page_size: u32) -> Result<Self, MovementLedgerError> {
+        let query = query.trim();
+        if query.chars().count() > MAX_PRODUCT_SEARCH_QUERY_LENGTH {
+            return Err(MovementLedgerError::InvalidFilter);
+        }
+        if page == 0 || page > MAX_PAGE || page_size == 0 || page_size > MAX_PRODUCT_OPTIONS_PAGE_SIZE {
+            return Err(MovementLedgerError::InvalidPage);
+        }
+        (page - 1)
+            .checked_mul(page_size)
+            .filter(|offset| *offset <= MAX_PAGE * MAX_PRODUCT_OPTIONS_PAGE_SIZE)
+            .ok_or(MovementLedgerError::InvalidPage)?;
+        Ok(Self { query: query.to_owned(), page, page_size })
+    }
+
+    pub(crate) fn sql_parameters(&self) -> (String, i64, i64, u32, u32) {
+        let escaped = self.query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        (pattern, i64::from((self.page - 1) * self.page_size), i64::from(self.page_size) + 1, self.page, self.page_size)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovementLedgerProductOptionPage {
+    pub products: Vec<MovementLedgerProductOption>,
+    pub page: u32,
+    pub page_size: u32,
+    pub has_more: bool,
+}
+
 pub trait MovementLedgerReader {
     fn list(&self, query: &MovementLedgerQuery) -> Result<MovementLedgerPage, MovementLedgerError>;
-    fn product_options(&self) -> Result<Vec<MovementLedgerProductOption>, MovementLedgerError>;
+    fn product_options(&self, query: &MovementLedgerProductOptionsQuery) -> Result<MovementLedgerProductOptionPage, MovementLedgerError>;
 }
 
 #[cfg(test)]

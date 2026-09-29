@@ -1,5 +1,5 @@
 use repuestos_autos::{
-    commands::movement_ledger::{list_movement_ledger, MovementLedgerRequest, MovementLedgerResponse},
+    commands::movement_ledger::{list_movement_ledger, list_movement_ledger_product_options, MovementLedgerProductOptionsRequest, MovementLedgerRequest, MovementLedgerResponse},
     infrastructure::sqlite::open_seeded_catalog,
 };
 use serde_json::json;
@@ -54,12 +54,26 @@ fn command_returns_stable_errors_for_malformed_or_invalid_requests() {
 fn product_option_contract_includes_archived_catalog_rows() {
     let connection = open_seeded_catalog().unwrap();
     connection.execute("UPDATE products SET active = 0 WHERE id = 1", []).unwrap();
-    let response = repuestos_autos::commands::movement_ledger::list_movement_ledger_product_options(&connection);
+    connection.execute("UPDATE categories SET active = 0 WHERE id = 1", []).unwrap();
+    let request = MovementLedgerProductOptionsRequest { query: "FLT-001".into(), page: 1, page_size: 20 };
+    let response = list_movement_ledger_product_options(&connection, request);
     let value = serde_json::to_value(response).unwrap();
     assert_eq!(value["kind"], "success");
+    assert_eq!(value["page"], 1);
+    assert_eq!(value["page_size"], 20);
+    assert_eq!(value["has_more"], false);
     let product = value["products"].as_array().unwrap().iter().find(|item| item["product_id"] == 1).unwrap();
     assert_eq!(product["active"], false);
     assert_eq!(product["product_sku"], "FLT-001");
+
+    let malformed = json!({ "query": "filtro", "page": 1, "page_size": 20, "activity": "active" });
+    assert!(serde_json::from_value::<MovementLedgerProductOptionsRequest>(malformed).is_err());
+    let bad_page = MovementLedgerProductOptionsRequest { query: "filtro".into(), page: 0, page_size: 20 };
+    let invalid = serde_json::to_value(list_movement_ledger_product_options(&connection, bad_page)).unwrap();
+    assert_eq!(invalid["code"], "invalid_page");
+    let long_query = MovementLedgerProductOptionsRequest { query: "x".repeat(101), page: 1, page_size: 20 };
+    let invalid = serde_json::to_value(list_movement_ledger_product_options(&connection, long_query)).unwrap();
+    assert_eq!(invalid["code"], "invalid_filter");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use repuestos_autos::{
     application::inventory::movement_ledger::{
-        MovementLedgerQuery, MovementLedgerReader, MovementType,
+        MovementLedgerProductOptionsQuery, MovementLedgerQuery, MovementLedgerReader, MovementType, MAX_PRODUCT_OPTIONS_PAGE_SIZE,
     },
     infrastructure::sqlite::{
         movement_ledger_repository::SqliteMovementLedgerReader, open_seeded_catalog,
@@ -159,6 +159,32 @@ fn ledger_shows_entry_notes_and_suppresses_generated_linkage_references() {
 }
 
 #[test]
+fn product_options_search_name_or_sku_with_bounded_pages_and_literal_wildcards() {
+    let connection = open_seeded_catalog().unwrap();
+    let reader = SqliteMovementLedgerReader::new(&connection);
+    let by_name = MovementLedgerProductOptionsQuery::new(" filtro ", 1, 1).unwrap();
+    let first = reader.product_options(&by_name).unwrap();
+    assert_eq!(first.products.len(), 1);
+    assert_eq!(first.products[0].product_name, "Filtro de aceite");
+    assert!(!first.has_more);
+    let bounded_first = reader.product_options(&MovementLedgerProductOptionsQuery::new("", 1, 1).unwrap()).unwrap();
+    assert_eq!(bounded_first.products.len(), 1);
+    assert!(bounded_first.has_more);
+    let bounded_second = reader.product_options(&MovementLedgerProductOptionsQuery::new("", 2, 1).unwrap()).unwrap();
+    assert_eq!(bounded_second.products.len(), 1);
+    assert_eq!(bounded_second.page, 2);
+    let second = reader.product_options(&MovementLedgerProductOptionsQuery::new("FLT-001", 1, 20).unwrap()).unwrap();
+    assert_eq!(second.products.len(), 1);
+    assert_eq!(second.products[0].product_sku, "FLT-001");
+    assert!(!second.has_more);
+    let wildcard = reader.product_options(&MovementLedgerProductOptionsQuery::new("%", 1, 20).unwrap()).unwrap();
+    assert!(wildcard.products.is_empty());
+    assert!(MovementLedgerProductOptionsQuery::new(&"x".repeat(101), 1, 20).is_err());
+    assert!(MovementLedgerProductOptionsQuery::new("", 0, 20).is_err());
+    assert!(MovementLedgerProductOptionsQuery::new("", 1, 21).is_err());
+}
+
+#[test]
 fn ledger_filters_orders_paginates_and_keeps_nullable_persisted_facts_for_archived_products() {
     let connection = open_seeded_catalog().unwrap();
     insert_movement(&connection, 1, "opening_stock", "2025-01-01 10:00:00", 8, None, None, None);
@@ -167,10 +193,13 @@ fn ledger_filters_orders_paginates_and_keeps_nullable_persisted_facts_for_archiv
     connection.execute("UPDATE products SET active = 0 WHERE id = 1", []).unwrap();
 
     let reader = SqliteMovementLedgerReader::new(&connection);
-    let products = reader.product_options().unwrap();
-    let archived = products.iter().find(|product| product.product_id == 1).unwrap();
+    connection.execute("UPDATE categories SET active = 0 WHERE id = 1", []).unwrap();
+    let options_query = MovementLedgerProductOptionsQuery::new("filtro", 1, MAX_PRODUCT_OPTIONS_PAGE_SIZE).unwrap();
+    let products = reader.product_options(&options_query).unwrap();
+    let archived = products.products.iter().find(|product| product.product_id == 1).unwrap();
     assert_eq!(archived.product_name, "Filtro de aceite");
     assert!(!archived.active);
+    assert!(!products.has_more);
     let first_page = reader.list(&query(None, None, 1, 2)).unwrap();
     assert_eq!(first_page.rows.iter().map(|row| row.movement_id).collect::<Vec<_>>(), [3, 2]);
     assert!(first_page.has_more);

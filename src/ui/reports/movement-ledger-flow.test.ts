@@ -3,7 +3,9 @@ import test from "node:test";
 import { createMovementLedgerFlow, initialLedgerState, currentMonthFilters } from "./movement-ledger-flow.ts";
 import type { MovementLedgerRow } from "../../commands/movement-ledger.ts";
 const row: MovementLedgerRow = { movement_id: 1, occurred_at: "2025-01-02 10:00:00", product_id: 2, product_name: "Filtro", product_sku: "FLT", movement_type: "stock_entry", quantity_delta: 2, resulting_quantity: null, reason: null, note: null, sale_id: null, sale_line_id: null };
+const product = { product_id: 3, product_name: "Archivado", product_sku: "ARC", active: false };
 const success = (rows = [row], has_more = false) => ({ kind: "success" as const, rows, page: 1, page_size: 50, has_more });
+const products = (items = [product], page = 1, has_more = false) => ({ kind: "success" as const, products: items, page, page_size: 20, has_more });
 test("default is local calendar month and flow ignores stale list/export responses", () => {
  const initial = initialLedgerState(new Date(2025, 2, 20));
  assert.deepEqual(currentMonthFilters(new Date(2025, 2, 20)), { from: "2025-03-01", to: "2025-03-31", product_id: null, movement_type: null });
@@ -18,6 +20,27 @@ test("default is local calendar month and flow ignores stale list/export respons
  state = createMovementLedgerFlow(state, { type: "export_finished", request_id: 3, response: { kind: "success" } });
  assert.equal(state.export_status, "pending");
 });
+test("search, selection, clear, and failed/retried result state are explicit", () => {
+ let state = initialLedgerState();
+ state = createMovementLedgerFlow(state, { type: "product_query_changed", query: "old", request_id: 1 });
+ state = createMovementLedgerFlow(state, { type: "product_search_started", query: "old", page: 1, request_id: 2 });
+ state = createMovementLedgerFlow(state, { type: "product_query_changed", query: "new", request_id: 3 });
+ state = createMovementLedgerFlow(state, { type: "product_search_succeeded", request_id: 2, response: products() });
+ assert.equal(state.products_status, "initial");
+ assert.deepEqual(state.products, []);
+ state = createMovementLedgerFlow(state, { type: "product_search_started", query: "new", page: 1, request_id: 4 });
+ state = createMovementLedgerFlow(state, { type: "product_search_failed", request_id: 4 });
+ assert.equal(state.products_status, "error");
+ state = createMovementLedgerFlow(state, { type: "product_search_started", query: "new", page: 1, request_id: 5 });
+ state = createMovementLedgerFlow(state, { type: "product_search_succeeded", request_id: 5, response: products() });
+ assert.equal(state.products_status, "ready");
+ state = createMovementLedgerFlow(state, { type: "product_selected", product, request_id: 6 });
+ assert.equal(state.draft.product_id, product.product_id);
+ assert.equal(state.selected_product?.active, false);
+ state = createMovementLedgerFlow(state, { type: "product_cleared", request_id: 7 });
+ assert.equal(state.draft.product_id, null);
+ assert.equal(state.selected_product, null);
+});
 test("filters, paging, and retry retain applied intent and ignore stale failures", () => {
  let state = initialLedgerState(new Date(2025, 0, 1));
  state = createMovementLedgerFlow(state, { type: "draft_changed", filters: { ...state.draft, product_id: 9, movement_type: "sale" } });
@@ -30,10 +53,4 @@ test("filters, paging, and retry retain applied intent and ignore stale failures
  assert.equal(state.status, "loading");
  assert.equal(state.applied.product_id, 9);
  assert.equal(state.page, 2);
-});
-test("product options include archived products as read-only selector values", () => {
- let state = initialLedgerState();
- state = createMovementLedgerFlow(state, { type: "products_started", request_id: 1 });
- state = createMovementLedgerFlow(state, { type: "products_finished", request_id: 1, response: { kind: "success", products: [{ product_id: 3, product_name: "Archivado", product_sku: "ARC", active: false }] } });
- assert.equal(state.products[0].active, false);
 });

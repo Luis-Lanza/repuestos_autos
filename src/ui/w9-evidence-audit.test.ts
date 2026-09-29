@@ -501,8 +501,9 @@ const reportsRegistrationLineAllowlist = new Set([
   "))",
   "})",
   "fn list_movement_ledger_product_options_command(",
+  "request: commands::movement_ledger::MovementLedgerProductOptionsRequest,",
   ") -> commands::movement_ledger::MovementLedgerProductOptionsResponse {",
-  "state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection)))",
+  "state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection, request)))",
   ".unwrap_or_else(|_| commands::movement_ledger::MovementLedgerProductOptionsResponse::Error(",
   "message: \"The movement ledger products could not be loaded.\",",
   "async fn export_movement_ledger_command<R: Runtime>(",
@@ -548,6 +549,7 @@ const reportsRegistrationLineAllowlist = new Set([
 ]);
 
 const removedReportsRegistrationLineAllowlist = new Set([
+  "state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection)))",
   "state: tauri::State<'_, AppState>,",
   "window: tauri::WebviewWindow<R>,",
   ") -> commands::movement_ledger::MovementLedgerExportResponse {",
@@ -560,11 +562,15 @@ const removedReportsRegistrationLineAllowlist = new Set([
   "))",
 ]);
 
-function assertReportsRegistrationAllowlist(libDiff: string) {
+function assertReportsRegistrationAllowlist(libDiff: string, contract: "export" | "product-options" = "export") {
   const changedLines = libDiff
     .split("\n")
     .filter((line) => /^[+-](?![+-])/.test(line));
-  assert.match(libDiff, /export_movement_ledger_command/, "missing Reports export command marker");
+  if (contract === "product-options") {
+    assert.match(libDiff, /MovementLedgerProductOptionsRequest/, "missing Reports bounded product-options request marker");
+  } else {
+    assert.match(libDiff, /export_movement_ledger_command/, "missing Reports export command marker");
+  }
   const unexpectedLines = changedLines.filter((line) => {
     const content = line.slice(1).trim();
     return line.startsWith("+")
@@ -759,7 +765,8 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("export_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
+    if (libDiff.includes("MovementLedgerProductOptionsRequest")) assertReportsRegistrationAllowlist(libDiff, "product-options");
+    else if (libDiff.includes("export_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
     else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
     else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
@@ -1211,6 +1218,31 @@ test("W9 allows only the repaired async Reports export command shape", () => {
       invalidLine,
     );
   }
+});
+
+test("W9 routes the bounded Reports product-options wrapper to its narrow validator", () => {
+  const boundedProductOptionsDiff = [
+    "+ request: commands::movement_ledger::MovementLedgerProductOptionsRequest,",
+    "+ state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection, request)))",
+    "- state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection)))",
+  ].join("\n");
+  assert.match(boundedProductOptionsDiff, /MovementLedgerProductOptionsRequest/);
+  assert.doesNotThrow(() => assertReportsRegistrationAllowlist(boundedProductOptionsDiff, "product-options"));
+  for (const invalidLine of [
+    "+ request: commands::catalog::BrowseProductsRequest,",
+    "+ page_size: u32,",
+    "+ state.with_write(|connection| mutate_reports(connection))",
+  ]) {
+    assert.throws(
+      () => assertReportsRegistrationAllowlist(`${boundedProductOptionsDiff}\n${invalidLine}`, "product-options"),
+      /unexpected Reports command registration drift/,
+      invalidLine,
+    );
+  }
+  assert.throws(
+    () => assertReportsRegistrationAllowlist(boundedProductOptionsDiff, "export"),
+    /missing Reports export command marker/,
+  );
 });
 
 test("W9 allows only the exact Dashboard and gross-profit paths", () => {

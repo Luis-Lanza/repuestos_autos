@@ -14,9 +14,14 @@ test("adapter decodes ledger results and sends explicit inclusive date range and
  assert.equal(request.from_utc, new Date(2025, 2, 1).toISOString());
  assert.equal(request.to_exclusive_utc, new Date(2025, 3, 1).toISOString());
 });
-test("product option adapter accepts archived entries and rejects malformed native responses", async () => {
- const commands = createMovementLedgerCommands(async () => ({ kind: "success", products: [{ product_id: 2, product_name: "Archivado", product_sku: "ARC", active: false }] }));
- const response = await commands.productOptions(); assert.equal(response.kind, "success"); if (response.kind === "success") assert.equal(response.products[0].active, false);
+test("product option adapter sends bounded query/page inputs, accepts archived entries, and rejects oversized responses", async () => {
+ const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+ const commands = createMovementLedgerCommands(async (name, payload) => { calls.push([name, payload]); return { kind: "success", products: [{ product_id: 2, product_name: "Archivado", product_sku: "ARC", active: false }], page: 2, page_size: 20, has_more: true }; });
+ const response = await commands.productOptions(" filtro ", 2);
+ assert.equal(response.kind, "success"); if (response.kind === "success") { assert.equal(response.products[0].active, false); assert.equal(response.has_more, true); }
+ assert.deepEqual(calls, [["list_movement_ledger_product_options_command", { request: { query: " filtro ", page: 2, page_size: 20 } }]]);
+ const oversized = createMovementLedgerCommands(async () => ({ kind: "success", products: Array.from({ length: 21 }, (_, index) => ({ product_id: index + 1, product_name: "P", product_sku: "S", active: true })), page: 1, page_size: 20, has_more: false }));
+ assert.equal((await oversized.productOptions("x")).kind, "error");
  const malformed = createMovementLedgerCommands(async () => ({ kind: "success", rows: [{ ...row, quantity_delta: "-2" }], page: 1, page_size: 50, has_more: false }));
  assert.equal((await malformed.list(filters, 1)).kind, "error");
 });
