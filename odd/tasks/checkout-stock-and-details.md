@@ -25,6 +25,7 @@ Make each product line in Sales **Revisar y cobrar** show its captured stock ava
 - [x] T2 Reuse the complete Sales detail experience safely from the checkout dialog, including nested focus/overlay behavior. Route: delegated writer. Evidence: focused product-browser and Sales mounted tests passed.
 - [ ] T3 Independently verify snapshot truthfulness, checkout behavior, accessibility, and regression scope. Route: delegated verifier. Evidence: automated verification passed; Windows smoke remains pending.
 - [x] T4 Preserve checkout detail thumbnails across browse-page changes. Route: delegated correction. Scope: keep a SaleScreen-lifetime product/revision thumbnail cache, retain no stale or mismatched revision, add no checkout-detail fetch or confirmation payload field, and extend only the exact W9 screen-path policy. Evidence: focused checkout regression, revision-mismatch coverage, and full frontend audit passed.
+- [ ] T5 Simplify checkout availability copy. Route: delegated correction. Scope: replace the snapshot wording with user-requested `Stock: N`; preserve all behavior and confirm-at-sale authoritative validation.
 
 ## Acceptance Criteria
 - Every checkout line displays `Stock al agregar: N` using the captured browse snapshot.
@@ -39,6 +40,7 @@ Make each product line in Sales **Revisar y cobrar** show its captured stock ava
 - 2026-09-29: User chose truthful copy `Stock al agregar: N` because cart stock is a browse/add snapshot and confirmation revalidates authoritative stock.
 - 2026-09-29: Verification found checkout details could lose the thumbnail after browsing away. User chose a product/revision SaleScreen-lifetime cache and authorized exact W9 admission for `src/ui/sales/sale-screen.ts`.
 - 2026-09-29: User authorized exact W9 admission for this task record and the already changed `src/ui/sales/sale-flow.ts` and `sale-flow.test.ts` paths.
+- 2026-09-29: Windows smoke user requested simplified checkout availability copy `Stock: N`; confirmation-time stock validation remains unchanged.
 
 ## Evidence
 - Automated: focused Sales flow/screen/ProductBrowser suite passed (71 tests); thumbnail screen suite passed (35 tests); `npm test` passed (367 tests); `npm run typecheck:tests` and `git diff --check` passed. Independent verification confirmed snapshot truthfulness, unchanged confirmation payload/no checkout-detail fetch, full shared detail content, nested focus/dismissal behavior, bounded exact W9 paths, cross-page thumbnail retention, and same-product wrong-revision rejection.

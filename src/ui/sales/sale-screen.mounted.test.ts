@@ -453,7 +453,7 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.equal(row.lastElementChild?.getAttribute("data-ui-sale-cart-controls"), "true");
     assert.ok(within(row).getByText(product.name));
     assert.ok(within(row).getByText(product.sku));
-    const snapshot = within(row).getByText(`Stock al agregar: ${product.available_quantity}`);
+    const snapshot = within(row).getByText(`Stock: ${product.available_quantity}`);
     assert.equal(snapshot.getAttribute("data-ui-sales-stock-snapshot"), "true");
     assert.match(within(row).getByText("Dato de la búsqueda; la disponibilidad se valida al confirmar.").textContent ?? "", /disponibilidad se valida al confirmar/);
     const actions = within(row).getAllByRole("button").filter((button) => ["Ver detalles", `Quitar ${product.name}`].includes(button.textContent === "Quitar" ? button.getAttribute("aria-label") ?? "" : button.textContent ?? ""));
