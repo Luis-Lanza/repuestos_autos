@@ -148,7 +148,13 @@ test("keeps date, control, and product-feedback rows structurally separate and r
  assert.equal(filters.children[0].getAttribute("data-ui-ledger-date-row"), "true");
  assert.deepEqual([...filters.children[0].querySelectorAll("label")].map(label => label.textContent), ["Desde", "Hasta"]);
  const controls = filters.querySelector("[data-ui-ledger-filter-row]")!;
- assert.deepEqual([...controls.children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Producto", "Tipo de movimiento", "Aplicar filtros"]);
+ assert.deepEqual([...controls.children].map(child => child.getAttribute("data-ui-ledger-product-filter") ? "Producto" : child.getAttribute("data-ui-ledger-apply-form") ? "Aplicar filtros" : child.querySelector("label")?.textContent ?? child.textContent?.trim()), ["Producto", "Tipo de movimiento", "Aplicar filtros"]);
+ const applyForm = controls.querySelector("[data-ui-ledger-apply-form]") as HTMLFormElement;
+ assert.ok(applyForm, "the apply action remains a semantic form submission");
+ assert.equal(applyForm.querySelector("[data-ui-action]")?.getAttribute("type"), "submit");
+ assert.equal(applyForm.querySelector("[data-ui-ledger-apply-label-space]")?.textContent, "Tipo de movimiento");
+ assert.equal(applyForm.querySelector("[data-ui-ledger-apply-label-space]")?.getAttribute("aria-hidden"), "true");
+ assert.ok(screen.getByRole("button", { name: "Aplicar filtros" }));
  const productFeedback = filters.querySelector("[data-ui-ledger-product-feedback-row]")!;
  assert.equal(productFeedback.parentElement, filters);
  assert.equal(productFeedback.getAttribute("data-ui-ledger-product-feedback-row"), "true");
@@ -160,6 +166,8 @@ test("keeps date, control, and product-feedback rows structurally separate and r
  assert.match(css, /data-ui-movement-ledger[^\n]*display:\s*grid/);
  assert.match(css, /\[data-ui-ledger-filters\] \{ container: movement-ledger-filters \/ inline-size; display: grid;[^}]*\}/);
  assert.match(css, /\[data-ui-ledger-filter-row\][^}]*align-items: start/);
+ assert.match(css, /\[data-ui-ledger-apply-form\][^}]*display: grid[^}]*gap: var\(--space-2\)/);
+ assert.match(css, /\[data-ui-ledger-apply-label-space\][^}]*visibility: hidden/);
  assert.match(css, /\[data-ui-ledger-product-feedback-row\][^}]*grid-column: 1 \/ -1/);
  assert.match(css, /@container movement-ledger-filters \(min-width: 48rem\)/);
 });
