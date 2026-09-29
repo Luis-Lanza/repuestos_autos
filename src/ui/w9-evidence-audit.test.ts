@@ -476,6 +476,88 @@ function assertProductLocationRegistrationAllowlist(libDiff: string) {
   );
 }
 
+const reportsRegistrationLineAllowlist = new Set([
+  "",
+  "list_movement_ledger_command,",
+  "list_movement_ledger_product_options_command,",
+  "export_movement_ledger_command,",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn list_movement_ledger_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::movement_ledger::MovementLedgerRequest,",
+  ") -> commands::movement_ledger::MovementLedgerResponse {",
+  "state",
+  ".with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger(connection, request)))",
+  ".unwrap_or_else(|_| {",
+  "commands::movement_ledger::MovementLedgerResponse::Error(",
+  "commands::movement_ledger::MovementLedgerCommandError {",
+  "code: \"persistence_failure\",",
+  "message: \"The movement ledger could not be loaded.\",",
+  "}",
+  ")",
+  "},",
+  "),",
+  "))",
+  "})",
+  "fn list_movement_ledger_product_options_command(",
+  ") -> commands::movement_ledger::MovementLedgerProductOptionsResponse {",
+  "state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection)))",
+  ".unwrap_or_else(|_| commands::movement_ledger::MovementLedgerProductOptionsResponse::Error(",
+  "message: \"The movement ledger products could not be loaded.\",",
+  "async fn export_movement_ledger_command<R: Runtime>(",
+  "state: tauri::State<'_, AppState>,",
+  "window: tauri::WebviewWindow<R>,",
+  "request: commands::movement_ledger::MovementLedgerExportRequest,",
+  ") -> commands::movement_ledger::MovementLedgerExportResponse {",
+  "#[cfg(test)]",
+  "{",
+  "let _ = (state, window, request);",
+  "commands::movement_ledger::MovementLedgerExportResponse::Cancelled",
+  "}",
+  "#[cfg(not(test))]",
+  "let app_handle = window.app_handle().clone();",
+  "drop(window);",
+  "let selection = commands::backup::select_callback_path(|complete| {",
+  "app_handle.dialog().file()",
+  ".add_filter(\"PDF document\", &[\"pdf\"])",
+  ".set_file_name(\"movement-ledger.pdf\")",
+  ".save_file(move |path| {",
+  "complete(path.and_then(|path| path.into_path().ok()));",
+  "});",
+  "}).await;",
+  "let commands::backup::PathSelection::Selected { path } = selection else {",
+  "return commands::movement_ledger::MovementLedgerExportResponse::Cancelled;",
+  "};",
+  "let generated_at = time::OffsetDateTime::now_utc()",
+  ".format(&time::format_description::well_known::Rfc3339)",
+  ".unwrap_or_else(|_| \"Unavailable\".to_string());",
+  "state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(",
+  ".unwrap_or_else(|_| commands::movement_ledger::MovementLedgerExportResponse::Error(",
+  "connection, request, &generated_at, |bytes| {",
+  "std::fs::write(&path, bytes).map_or(",
+  "commands::movement_ledger::ExportSaveResult::Failed,",
+  "|_| commands::movement_ledger::ExportSaveResult::Saved,",
+  "},",
+  "),",
+  "}))).unwrap_or_else(|_| commands::movement_ledger::MovementLedgerExportResponse::Error(",
+  "))).unwrap_or_else(|_| commands::movement_ledger::MovementLedgerExportResponse::Error(",
+  "}),",
+  "));",
+  "}",
+]);
+
+function assertReportsRegistrationAllowlist(libDiff: string) {
+  const changedLines = libDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  for (const marker of ["list_movement_ledger_command", "list_movement_ledger_product_options_command", "export_movement_ledger_command"]) {
+    assert.match(libDiff, new RegExp(marker), `missing Reports registration marker: ${marker}`);
+  }
+  const unexpectedLines = changedLines.filter((line) => !line.startsWith("+") || !reportsRegistrationLineAllowlist.has(line.slice(1).trim()));
+  assert.deepEqual(unexpectedLines, [], "unexpected Reports command registration drift");
+}
+
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -493,6 +575,25 @@ function assertTicket11RegistrationAllowlist(libDiff: string) {
     changedLines.every((line) => ticket11RegistrationLineAllowlist.has(line.slice(1).trim())),
     "unexpected src-tauri/src/lib.rs drift outside the ticket-11 registration seam",
   );
+}
+
+function assertReportsCapabilityAllowlist(currentContent: string, baselineContent: string, capabilityDiff: string) {
+  const current = parseJson(currentContent);
+  const baseline = parseJson(baselineContent);
+  assert.deepEqual(baseline.permissions, ["core:default", "dialog:allow-open"]);
+  assert.deepEqual(current, {
+    ...baseline,
+    permissions: [...baseline.permissions, "dialog:allow-save"],
+  }, "Reports may only append dialog:allow-save to the existing capability");
+
+  const changedLines = capabilityDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line))
+    .map((line) => line.trim());
+  assert.deepEqual(changedLines, [
+    '-  "permissions": ["core:default", "dialog:allow-open"]',
+    '+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]',
+  ], "unexpected Reports capability diff");
 }
 
 function changedPathsFromGitOutput(trackedChanges: string, untrackedFiles: string): string[] {
@@ -520,6 +621,7 @@ function assertW9ProtectedDiffPolicy(
   baselineLockValue: Record<string, any>,
   libDiff: string,
   commandSeamDiff = "",
+  capabilityDiff = "",
 ) {
   const allowedPaths = new Set([
     "package.json",
@@ -560,6 +662,23 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/tests/catalog_maintenance_domain.rs",
     "src-tauri/tests/catalog_maintenance_sqlite.rs",
     "src-tauri/tests/catalog_browse.rs",
+    "odd/tasks/reports-movement-ledger.md",
+    "src-tauri/capabilities/default.json",
+    "src-tauri/src/application/inventory/mod.rs",
+    "src-tauri/src/application/inventory/movement_ledger.rs",
+    "src-tauri/src/commands/movement_ledger.rs",
+    "src-tauri/src/infrastructure/sqlite/movement_ledger_repository.rs",
+    "src-tauri/tests/movement_ledger.rs",
+    "src-tauri/tests/movement_ledger_commands.rs",
+    "src-tauri/tests/movement_ledger_export.rs",
+    "src/commands/movement-ledger.ts",
+    "src/commands/movement-ledger.test.ts",
+    "src/ui/app-shell.ts",
+    "src/ui/app.ts",
+    "src/ui/reports/movement-ledger-flow.ts",
+    "src/ui/reports/movement-ledger-flow.test.ts",
+    "src/ui/reports/movement-ledger-screen.ts",
+    "src/ui/reports/movement-ledger-screen.mounted.test.ts",
     "src-tauri/tests/post_sale_lifecycle.rs",
     "src-tauri/tests/sqlite_migrations.rs",
     "src/ui/app-shell.mounted.test.ts",
@@ -601,6 +720,13 @@ function assertW9ProtectedDiffPolicy(
   if (changedPaths.includes("src-tauri/tests/command_seam.rs")) {
     assertCommandSeamPricingAllowlist(commandSeamDiff);
   }
+  if (changedPaths.includes("src-tauri/capabilities/default.json")) {
+    assertReportsCapabilityAllowlist(
+      read("src-tauri/capabilities/default.json"),
+      readFromHead("src-tauri/capabilities/default.json"),
+      capabilityDiff,
+    );
+  }
 
   if (changedPaths.includes("package.json") || changedPaths.includes("package-lock.json")) {
     assertTicket14PackageAllowlist(
@@ -611,7 +737,8 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
+    if (libDiff.includes("list_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
     else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
@@ -699,6 +826,7 @@ test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam"
   );
   const libDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
   const commandSeamDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/tests/command_seam.rs"], { cwd: root, encoding: "utf8" });
+  const capabilityDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/capabilities/default.json"], { cwd: root, encoding: "utf8" });
   assertW9ProtectedDiffPolicy(
     changedPaths,
     currentPackage,
@@ -707,6 +835,7 @@ test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam"
     baselineLock,
     libDiff,
     commandSeamDiff,
+    capabilityDiff,
   );
   const uiSources = mountedSuites.map((suite) => read(suite)).join("\n");
   assert.doesNotMatch(uiSources, /https?:\/\/|cdn\.|innerHTML/);
@@ -923,6 +1052,103 @@ test("W9 allows only the exact configurable low-stock threshold paths", () => {
       changedPath,
     );
   }
+});
+
+test("W9 allows only the exact Reports Movement Ledger paths", () => {
+  const reportsPaths = [
+    "odd/tasks/reports-movement-ledger.md",
+    "src-tauri/capabilities/default.json",
+    "src-tauri/src/application/inventory/mod.rs",
+    "src-tauri/src/application/inventory/movement_ledger.rs",
+    "src-tauri/src/commands/movement_ledger.rs",
+    "src-tauri/src/infrastructure/sqlite/movement_ledger_repository.rs",
+    "src-tauri/tests/movement_ledger.rs",
+    "src-tauri/tests/movement_ledger_commands.rs",
+    "src-tauri/tests/movement_ledger_export.rs",
+    "src/commands/movement-ledger.ts",
+    "src/commands/movement-ledger.test.ts",
+    "src/ui/app-shell.ts",
+    "src/ui/app.ts",
+    "src/ui/reports/movement-ledger-flow.ts",
+    "src/ui/reports/movement-ledger-flow.test.ts",
+    "src/ui/reports/movement-ledger-screen.ts",
+    "src/ui/reports/movement-ledger-screen.mounted.test.ts",
+  ];
+  for (const changedPath of reportsPaths) {
+    assert.doesNotThrow(
+      () => assertW9ProtectedDiffPolicy(
+        [changedPath], currentPackage, baselinePackage, currentLock, baselineLock, "", "",
+        changedPath === "src-tauri/capabilities/default.json"
+          ? '-  "permissions": ["core:default", "dialog:allow-open"]\n+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]'
+          : "",
+      ),
+      changedPath,
+    );
+  }
+
+  for (const changedPath of [
+    "src-tauri/capabilities/other.json",
+    "src-tauri/capabilities",
+    "odd/tasks/reports-movement-ledger-related.md",
+    "odd/tasks/unrelated-reports.md",
+    "src-tauri/src/application/inventory/other_ledger.rs",
+    "src-tauri/src/commands/movement_ledger_extra.rs",
+    "src-tauri/tests/movement_ledger_extra.rs",
+    "src/ui/reports/unrelated-report.ts",
+    "src-tauri/src/application/inventory",
+    "src-tauri/src/commands",
+    "src-tauri/tests",
+    "src/ui/reports",
+    "odd/tasks",
+  ]) {
+    assert.throws(
+      () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      /unexpected protected-path drift/,
+      changedPath,
+    );
+  }
+});
+
+test("W9 allows only Reports adding dialog:allow-save to the existing default capability", () => {
+  const baseline = readFromHead("src-tauri/capabilities/default.json");
+  const current = read("src-tauri/capabilities/default.json");
+  const allowedDiff = [
+    '-  "permissions": ["core:default", "dialog:allow-open"]',
+    '+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]',
+  ].join("\n");
+  assert.doesNotThrow(() => assertReportsCapabilityAllowlist(current, baseline, allowedDiff));
+
+  for (const [changedCurrent, changedDiff] of [
+    [baseline, allowedDiff],
+    [current.replace("dialog:allow-open", "dialog:allow-open-extra"), allowedDiff],
+    [current.replace("\"dialog:allow-save\"]", "\"dialog:allow-save\", \"dialog:allow-close\"]"), allowedDiff],
+    [current.replace("\"core:default\", \"dialog:allow-open\"", "\"dialog:allow-open\", \"core:default\""), allowedDiff],
+    [current, `${allowedDiff}\n-  \"description\": \"Main window permissions for native backup and restore dialogs.\"\n+  \"description\": \"Changed unrelated description.\"`],
+    [current, `${allowedDiff}\n-  \"description\": \"Main window permissions for native backup and restore dialogs.\"\n+  \"windows\": [\"main\"]\n-  \"windows\": [\"main\"]\n+  \"description\": \"Main window permissions for native backup and restore dialogs.\"`],
+    [current, `${allowedDiff}\n+  \"extra\": true`],
+  ] as const) {
+    assert.throws(
+      () => assertReportsCapabilityAllowlist(changedCurrent, baseline, changedDiff),
+      /Reports may only append|unexpected Reports capability diff/,
+    );
+  }
+});
+
+test("W9 allows only the exact Reports command registration lines", () => {
+  const allowedDiff = [
+    "+ list_movement_ledger_command,",
+    "+ list_movement_ledger_product_options_command,",
+    "+ export_movement_ledger_command,",
+  ].join("\n");
+  assert.doesNotThrow(() => assertReportsRegistrationAllowlist(allowedDiff));
+  assert.throws(
+    () => assertReportsRegistrationAllowlist(`${allowedDiff}\n+ unrelated_reports_command,`),
+    /unexpected Reports command registration drift/,
+  );
+  assert.throws(
+    () => assertReportsRegistrationAllowlist(`${allowedDiff}\n+ state.with_write(|connection| mutate_reports(connection))`),
+    /unexpected Reports command registration drift/,
+  );
 });
 
 test("W9 allows only the exact Dashboard and gross-profit paths", () => {

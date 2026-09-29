@@ -124,7 +124,7 @@ fn category_schema_plan_adds_fields_retires_omitted_ids_and_preserves_stable_def
         ],
     )
     .unwrap();
-    assert_eq!(planned.retire_definition_ids, vec![]);
+    assert_eq!(planned.retire_definition_ids, Vec::<i64>::new());
     assert_eq!(planned.additions.len(), 1);
     assert_eq!(planned.additions[0].label, "Length");
 

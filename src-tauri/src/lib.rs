@@ -332,6 +332,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         create_product_command,
         list_sales_history_command,
         sale_history_detail_command,
+        list_movement_ledger_command,
+        list_movement_ledger_product_options_command,
+        export_movement_ledger_command,
         choose_backup_destination_command,
         choose_restore_source_command,
         create_backup_command,
@@ -732,6 +735,84 @@ fn sale_history_detail_command(
                 commands::sales_history::persistence_failure(),
             )
         })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_movement_ledger_command(
+    state: tauri::State<AppState>,
+    request: commands::movement_ledger::MovementLedgerRequest,
+) -> commands::movement_ledger::MovementLedgerResponse {
+    state
+        .with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger(connection, request)))
+        .unwrap_or_else(|_| {
+            commands::movement_ledger::MovementLedgerResponse::Error(
+                commands::movement_ledger::MovementLedgerCommandError {
+                    code: "persistence_failure",
+                    message: "The movement ledger could not be loaded.",
+                },
+            )
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn list_movement_ledger_product_options_command(
+    state: tauri::State<AppState>,
+) -> commands::movement_ledger::MovementLedgerProductOptionsResponse {
+    state.with_read(|connection| Ok(commands::movement_ledger::list_movement_ledger_product_options(connection)))
+        .unwrap_or_else(|_| commands::movement_ledger::MovementLedgerProductOptionsResponse::Error(
+            commands::movement_ledger::MovementLedgerCommandError {
+                code: "persistence_failure",
+                message: "The movement ledger products could not be loaded.",
+            },
+        ))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn export_movement_ledger_command<R: Runtime>(
+    state: tauri::State<'_, AppState>,
+    window: tauri::WebviewWindow<R>,
+    request: commands::movement_ledger::MovementLedgerExportRequest,
+) -> commands::movement_ledger::MovementLedgerExportResponse {
+    #[cfg(test)]
+    {
+        let _ = (state, window, request);
+        commands::movement_ledger::MovementLedgerExportResponse::Cancelled
+    }
+    #[cfg(not(test))]
+    {
+        let app_handle = window.app_handle().clone();
+        drop(window);
+        let selection = commands::backup::select_callback_path(|complete| {
+            app_handle.dialog().file()
+                .add_filter("PDF document", &["pdf"])
+                .set_file_name("movement-ledger.pdf")
+                .save_file(move |path| {
+                    complete(path.and_then(|path| path.into_path().ok()));
+                });
+        }).await;
+        let commands::backup::PathSelection::Selected { path } = selection else {
+            return commands::movement_ledger::MovementLedgerExportResponse::Cancelled;
+        };
+        let generated_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "Unavailable".to_string());
+        state.with_read(|connection| Ok(commands::movement_ledger::export_movement_ledger(
+            connection, request, &generated_at, |bytes| {
+                std::fs::write(&path, bytes).map_or(
+                    commands::movement_ledger::ExportSaveResult::Failed,
+                    |_| commands::movement_ledger::ExportSaveResult::Saved,
+                )
+            },
+        ))).unwrap_or_else(|_| commands::movement_ledger::MovementLedgerExportResponse::Error(
+            commands::movement_ledger::MovementLedgerCommandError {
+                code: "persistence_failure",
+                message: "The movement ledger could not be loaded.",
+            },
+        ))
+    }
 }
 
 #[cfg(feature = "desktop")]

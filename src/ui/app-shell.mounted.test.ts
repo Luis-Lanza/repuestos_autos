@@ -16,6 +16,7 @@ const destinations = [
   ["Catálogo", SCREEN.CATALOG, NAVIGATION_ACTION.OPEN_CATALOG],
   ["Alta de productos", SCREEN.ONBOARDING, NAVIGATION_ACTION.START_ONBOARDING],
   ["Historial de ventas", SCREEN.SALES_HISTORY, NAVIGATION_ACTION.OPEN_SALES_HISTORY],
+  ["Reportes", SCREEN.REPORTS, NAVIGATION_ACTION.OPEN_REPORTS],
   ["Copia y restauración", SCREEN.BACKUP, NAVIGATION_ACTION.OPEN_BACKUP],
 ] as const;
 
@@ -27,6 +28,7 @@ const expectedDestination = {
   [NAVIGATION_ACTION.OPEN_BACKUP]: SCREEN.BACKUP,
   [NAVIGATION_ACTION.OPEN_CATALOG]: SCREEN.CATALOG,
   [NAVIGATION_ACTION.OPEN_SALES_HISTORY]: SCREEN.SALES_HISTORY,
+  [NAVIGATION_ACTION.OPEN_REPORTS]: SCREEN.REPORTS,
 } as const;
 
 test("AppShell exposes identity and the dashboard-first Spanish navigation", async () => {
@@ -79,6 +81,24 @@ test("App keeps the global Inventory alert count across screens and opens the al
   await user.click(inventory);
   assert.ok(await screen.findByRole("combobox", { name: "Estado del stock" }));
   assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "alerts");
+});
+
+test("opens Reports directly to the Movement Ledger and keeps sidebar focus and active state", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
+    if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document }); render(createElement(App));
+  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  const reports = within(navigation).getByRole("button", { name: "Reportes" });
+  await user.click(reports);
+  assert.ok(await screen.findByRole("heading", { level: 1, name: "Registro de movimientos" }));
+  assert.equal(reports.getAttribute("aria-current"), "page");
+  assert.equal(document.activeElement, reports);
+  assert.equal(screen.queryByText(/Próximamente|Otros informes/), null);
 });
 
 test("clears the sidebar count while a refresh fails instead of retaining stale alert state", async () => {

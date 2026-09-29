@@ -1,5 +1,6 @@
 mod repository;
 
+pub mod movement_ledger;
 pub use repository::InventoryRepository;
 
 use crate::domain::inventory::{

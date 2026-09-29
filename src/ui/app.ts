@@ -9,17 +9,18 @@ import { BackupScreen } from "./backup/backup-screen.ts";
 import { SaleScreen } from "./sales/sale-screen.ts";
 import { SalesHistoryScreen } from "./sales/history-screen.ts";
 import { CatalogMaintenanceScreen } from "./catalog/catalog-maintenance-screen.ts";
+import { MovementLedgerScreen } from "./reports/movement-ledger-screen.ts";
 
 export const SCREEN = {
-  DASHBOARD: "dashboard", SALES: "sales", ONBOARDING: "onboarding", INVENTORY: "inventory", BACKUP: "backup", CATALOG: "catalog", SALES_HISTORY: "sales_history",
+  DASHBOARD: "dashboard", SALES: "sales", ONBOARDING: "onboarding", INVENTORY: "inventory", BACKUP: "backup", CATALOG: "catalog", SALES_HISTORY: "sales_history", REPORTS: "reports",
 } as const;
 export const NAVIGATION_ACTION = {
-  OPEN_DASHBOARD: "open_dashboard", START_ONBOARDING: "start_onboarding", RETURN_TO_SALES: "return_to_sales", OPEN_INVENTORY: "open_inventory", OPEN_BACKUP: "open_backup", OPEN_CATALOG: "open_catalog", OPEN_SALES_HISTORY: "open_sales_history",
+  OPEN_DASHBOARD: "open_dashboard", START_ONBOARDING: "start_onboarding", RETURN_TO_SALES: "return_to_sales", OPEN_INVENTORY: "open_inventory", OPEN_BACKUP: "open_backup", OPEN_CATALOG: "open_catalog", OPEN_SALES_HISTORY: "open_sales_history", OPEN_REPORTS: "open_reports",
 } as const;
 export type Screen = (typeof SCREEN)[keyof typeof SCREEN];
 export type NavigationAction = (typeof NAVIGATION_ACTION)[keyof typeof NAVIGATION_ACTION];
 export function screenAfter(_current: Screen, action: NavigationAction): Screen {
-  return action === NAVIGATION_ACTION.OPEN_DASHBOARD ? SCREEN.DASHBOARD : action === NAVIGATION_ACTION.OPEN_SALES_HISTORY ? SCREEN.SALES_HISTORY : action === NAVIGATION_ACTION.OPEN_INVENTORY ? SCREEN.INVENTORY : action === NAVIGATION_ACTION.OPEN_BACKUP ? SCREEN.BACKUP : action === NAVIGATION_ACTION.OPEN_CATALOG ? SCREEN.CATALOG : action === NAVIGATION_ACTION.START_ONBOARDING ? SCREEN.ONBOARDING : SCREEN.SALES;
+  return action === NAVIGATION_ACTION.OPEN_DASHBOARD ? SCREEN.DASHBOARD : action === NAVIGATION_ACTION.OPEN_SALES_HISTORY ? SCREEN.SALES_HISTORY : action === NAVIGATION_ACTION.OPEN_REPORTS ? SCREEN.REPORTS : action === NAVIGATION_ACTION.OPEN_INVENTORY ? SCREEN.INVENTORY : action === NAVIGATION_ACTION.OPEN_BACKUP ? SCREEN.BACKUP : action === NAVIGATION_ACTION.OPEN_CATALOG ? SCREEN.CATALOG : action === NAVIGATION_ACTION.START_ONBOARDING ? SCREEN.ONBOARDING : SCREEN.SALES;
 }
 function screenContent(screen: Screen, onNavigate: (action: NavigationAction) => void, refreshInventoryCount: () => void, inventoryFilter: "all" | "alerts", openInventoryAlerts: () => void) {
   if (screen === SCREEN.DASHBOARD) return createElement(DashboardScreen, { onOpenInventoryAlerts: openInventoryAlerts });
@@ -28,6 +29,7 @@ function screenContent(screen: Screen, onNavigate: (action: NavigationAction) =>
   if (screen === SCREEN.BACKUP) return createElement(BackupScreen);
   if (screen === SCREEN.CATALOG) return createElement(CatalogMaintenanceScreen);
   if (screen === SCREEN.SALES_HISTORY) return createElement(SalesHistoryScreen);
+  if (screen === SCREEN.REPORTS) return createElement(MovementLedgerScreen);
   return createElement(SaleScreen, { onInventoryAlertsRefresh: refreshInventoryCount });
 }
 export function App() {

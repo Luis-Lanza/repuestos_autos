@@ -6,6 +6,7 @@ pub mod backup;
 pub mod catalog_repository;
 pub mod dashboard_repository;
 pub mod inventory_repository;
+pub mod movement_ledger_repository;
 pub mod post_sale_repository;
 pub mod post_sale_transaction;
 pub mod sale_history_repository;

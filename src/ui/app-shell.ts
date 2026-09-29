@@ -17,6 +17,7 @@ const items = [
   ["Catálogo", "catalog", "open_catalog"],
   ["Alta de productos", "onboarding", "start_onboarding"],
   ["Historial de ventas", "sales_history", "open_sales_history"],
+  ["Reportes", "reports", "open_reports"],
   ["Copia y restauración", "backup", "open_backup"],
 ] as const satisfies ReadonlyArray<readonly [string, Screen, NavigationAction]>;
 
