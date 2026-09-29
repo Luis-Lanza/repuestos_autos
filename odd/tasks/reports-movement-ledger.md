@@ -40,6 +40,7 @@ Add a primary-sidebar Reports workspace that opens to a read-only inventory move
 
 ## Progress
 - 2026-09-29: User authorized implementation after selecting a dedicated Reports sidebar workspace, a Movement Ledger-only initial release, current-month default, PDF export, and strict reuse of the existing design system.
+- 2026-09-29: Delivered as size-exception work unit `3be60bf feat(reports): add inventory movement ledger`; pushed to `origin/feat/reports-movement-ledger`. Six unrelated untracked ODD task documents remain excluded.
 
 ## Evidence
 - T1: `cargo test --manifest-path src-tauri/Cargo.toml --test movement_ledger --test movement_ledger_commands` passed (5 tests); `git diff --check` passed. Independent re-verification confirmed strict filter validation, archived-product inclusion, stable ordering/paging, nullable recorded balance, exact UTC half-open semantics, and rejection of fractional-second bounds. Desktop-feature compilation remains unavailable in this Linux environment because GTK/GIO development libraries are missing.
