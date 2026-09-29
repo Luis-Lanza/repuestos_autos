@@ -288,7 +288,11 @@ const commandSeamPricingLineAllowlist = new Set([
   `    let product = r#"{"sku":"BRG-1","name":"Wheel bearing","category_id":1,"purchase_price_centavos":3000,"sale_price_centavos":5000,"minimum_sale_price_centavos":4000,"opening_quantity":3,"attribute_values":[],"unexpected":true}"#;`,
   "fn onboarded_product_searches_and_sells_at_its_backend_catalog_price() {",
   "fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {",
+  "            low_stock_threshold: None,",
+  "        \"attribute_values\", \"available_quantity\", \"category_id\", \"category_name\", \"minimum_sale_price_centavos\", \"name\", \"primary_location_code\", \"product_id\", \"purchase_price_centavos\", \"revision\", \"sale_price_centavos\", \"sku\"",
+  "        \"attribute_values\", \"available_quantity\", \"category_id\", \"category_name\", \"minimum_sale_price_centavos\", \"name\", \"product_id\", \"purchase_price_centavos\", \"revision\", \"sale_price_centavos\", \"sku\"",
   "    assert_eq!(results[0].catalog_unit_price_centavos, 5_000);",
+  "            low_stock_threshold: None,",
   "        assert_eq!(results[0].list_price_centavos, 5_000);",
   "        assert_eq!(results[0].minimum_sale_price_centavos, 4_000);",
   "    assert_eq!(results[0].purchase_price_centavos, Some(3_000));",
@@ -312,10 +316,17 @@ function assertCommandSeamPricingAllowlist(commandSeamDiff: string) {
   const changedLines = commandSeamDiff
     .split("\n")
     .filter((line) => /^[+-](?![+-])/.test(line));
-  assert.match(commandSeamDiff, /onboarded_product_searches_and_sells_at_its_backend_sale_price/);
-  assert.match(commandSeamDiff, /captured_unit_price_centavos: 5_000/);
-  assert.match(commandSeamDiff, /qr_applied_centavos: Some\(5_000\)/);
-  assert.match(commandSeamDiff, /summary\.lines\[0\]\.unit_price_centavos, 5_000/);
+  if (commandSeamDiff.includes("low_stock_threshold: None")) {
+    assert.match(commandSeamDiff, /onboarded_product_searches_and_sells_at_its_backend_sale_price/);
+    assert.match(commandSeamDiff, /primary_location_code/);
+    assert.equal(changedLines.filter((line) => line === "+            low_stock_threshold: None,").length, 2);
+    assert.equal(changedLines.filter((line) => line.includes("primary_location_code")).length, 1);
+  } else {
+    assert.match(commandSeamDiff, /onboarded_product_searches_and_sells_at_its_backend_sale_price/);
+    assert.match(commandSeamDiff, /captured_unit_price_centavos: 5_000/);
+    assert.match(commandSeamDiff, /qr_applied_centavos: Some\(5_000\)/);
+    assert.match(commandSeamDiff, /summary\.lines\[0\]\.unit_price_centavos, 5_000/);
+  }
   assert.ok(
     changedLines.every((line) => commandSeamPricingLineAllowlist.has(line.slice(1))),
     "unexpected command-seam contract-test drift",
@@ -534,12 +545,16 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/tests/sale_cost_snapshot.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
     "src-tauri/src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql",
+    "src-tauri/src/infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql",
     "src-tauri/src/infrastructure/sqlite/catalog_repository.rs",
+    "src-tauri/src/infrastructure/sqlite/inventory_repository.rs",
+    "src-tauri/src/domain/inventory.rs",
     "src-tauri/Cargo.lock",
     "src-tauri/Cargo.toml",
     "src-tauri/src/application/catalog/repository.rs",
     "src-tauri/tests/backup_restore.rs",
     "src-tauri/tests/command_seam.rs",
+    "src-tauri/tests/inventory_sale_alerts.rs",
     "src-tauri/tests/catalog_maintenance_application.rs",
     "src-tauri/tests/catalog_maintenance_commands.rs",
     "src-tauri/tests/catalog_maintenance_domain.rs",
@@ -579,6 +594,7 @@ function assertW9ProtectedDiffPolicy(
     "src/ui/w9-evidence-audit.test.ts",
     "odd/tasks/dashboard-realized-gross-profit.md",
     "odd/tasks/dashboard-partial-gross-profit.md",
+    "odd/tasks/configurable-low-stock-threshold.md",
   ]);
   const unexpectedPaths = changedPaths.filter((path) => !allowedPaths.has(path));
   assert.deepEqual(unexpectedPaths, [], "unexpected protected-path drift");
@@ -842,6 +858,71 @@ test("W9 rejects arbitrary protected-path and package-lock drift", () => {
     () => assertTicket11RegistrationAllowlist("+ fn unrelated_runtime_change() { native_runtime_drift(); }"),
     /missing ticket-11 marker|unexpected src-tauri\/src\/lib\.rs drift/,
   );
+});
+
+test("W9 allows only the three authorized low-stock command-seam lines", () => {
+  const allowedDiff = [
+    "+                captured_unit_price_centavos: 5_000,",
+    "+                qr_applied_centavos: Some(5_000),",
+    "+    assert_eq!(summary.lines[0].unit_price_centavos, 5_000);",
+    "+fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {",
+    "+            low_stock_threshold: None,",
+    "+            low_stock_threshold: None,",
+    String.raw`+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "purchase_price_centavos", "revision", "sale_price_centavos", "sku"`,
+  ].join("\n");
+  assert.doesNotThrow(() => assertCommandSeamPricingAllowlist(allowedDiff));
+  assert.throws(
+    () => assertCommandSeamPricingAllowlist(`${allowedDiff}\n+            low_stock_threshold: Some(2),`),
+    /unexpected command-seam contract-test drift/,
+  );
+  assert.throws(
+    () => assertW9ProtectedDiffPolicy(
+      ["src-tauri/tests/command_seam_unrelated.rs"],
+      currentPackage,
+      baselinePackage,
+      currentLock,
+      baselineLock,
+      "",
+    ),
+    /unexpected protected-path drift/,
+  );
+});
+
+test("W9 allows only the exact configurable low-stock threshold paths", () => {
+  const featurePaths = [
+    "odd/tasks/configurable-low-stock-threshold.md",
+    "src-tauri/src/infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql",
+    "src-tauri/src/domain/inventory.rs",
+    "src-tauri/src/infrastructure/sqlite/inventory_repository.rs",
+  ];
+  for (const changedPath of featurePaths) {
+    assert.doesNotThrow(
+      () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      changedPath,
+    );
+  }
+
+  assert.doesNotThrow(
+    () => assertW9ProtectedDiffPolicy(["src-tauri/tests/inventory_sale_alerts.rs"], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+    "src-tauri/tests/inventory_sale_alerts.rs",
+  );
+
+  for (const changedPath of [
+    "src-tauri/tests/inventory_sale_alert.rs",
+    "src-tauri/tests/inventory_sale_alerts_extra.rs",
+    "src-tauri/tests/unrelated_inventory_sale_alerts.rs",
+    "src-tauri/tests/unrelated_feature.rs",
+    "odd/tasks/configurable-low-stock-threshold-related.md",
+    "src-tauri/src/infrastructure/sqlite/migrations/0023_product_low_stock_threshold.sql",
+    "src-tauri/src/domain/inventory_unrelated.rs",
+    "src-tauri/src/infrastructure/sqlite/unrelated_inventory_repository.rs",
+  ]) {
+    assert.throws(
+      () => assertW9ProtectedDiffPolicy([changedPath], currentPackage, baselinePackage, currentLock, baselineLock, ""),
+      /unexpected protected-path drift/,
+      changedPath,
+    );
+  }
 });
 
 test("W9 allows only the exact Dashboard and gross-profit paths", () => {

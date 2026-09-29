@@ -45,7 +45,7 @@ fn browse_command_serializes_the_complete_ordered_attribute_projection_without_d
         { "definition_id": 7, "label": "Material", "value": "Paper" }
     ]));
     assert_eq!(serialized["products"][0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec![
-        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "product_id", "purchase_price_centavos", "revision", "sale_price_centavos", "sku"
+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "purchase_price_centavos", "revision", "sale_price_centavos", "sku"
     ]);
 }
 
@@ -236,6 +236,7 @@ fn onboarding_commands_return_persisted_results_and_stable_errors() {
             purchase_price_centavos: 3_000,
             sale_price_centavos: 5_000,
             minimum_sale_price_centavos: 4_000,
+            low_stock_threshold: None,
             opening_quantity: 3,
             attribute_values: vec![AttributeValueInput {
                 definition_id: category.fields[0].definition_id,
@@ -301,6 +302,7 @@ fn onboarded_product_searches_and_sells_at_its_backend_sale_price() {
             purchase_price_centavos: 3_000,
             sale_price_centavos: 5_000,
             minimum_sale_price_centavos: 4_000,
+            low_stock_threshold: None,
             opening_quantity: 3,
             attribute_values: vec![AttributeValueInput {
                 definition_id: category.fields[0].definition_id,

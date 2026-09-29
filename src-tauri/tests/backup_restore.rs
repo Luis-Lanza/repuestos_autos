@@ -30,7 +30,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 18] = [
+const MIGRATIONS: [&str; 21] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -59,6 +59,9 @@ const MIGRATIONS: [&str; 18] = [
     include_str!("../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0020_product_locations.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {

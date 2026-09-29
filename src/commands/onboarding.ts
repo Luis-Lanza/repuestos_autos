@@ -46,6 +46,7 @@ export interface CreateProductInput {
   purchase_price_centavos: number;
   sale_price_centavos: number;
   minimum_sale_price_centavos: number;
+  low_stock_threshold?: number;
   opening_quantity: number;
   attribute_values: AttributeValueInput[];
 }
@@ -59,6 +60,7 @@ export interface CreatedProduct {
   purchase_price_centavos: number;
   sale_price_centavos: number;
   minimum_sale_price_centavos: number;
+  low_stock_threshold: number;
   available_quantity: number;
   active: boolean;
 }
@@ -101,8 +103,8 @@ const category = (value: unknown): Category | null => record(value) && safeInteg
 const createdProduct = (value: unknown): CreatedProduct | null => {
   if (!record(value)) return null;
   const sale = positiveSafeInteger(value.sale_price_centavos) ? value.sale_price_centavos : value.list_price_centavos;
-  return positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && positiveSafeInteger(value.category_id) && typeof value.category_name === "string" && positiveSafeInteger(value.purchase_price_centavos) && positiveSafeInteger(sale) && positiveSafeInteger(value.minimum_sale_price_centavos) && value.minimum_sale_price_centavos <= sale && safeInteger(value.available_quantity) && value.available_quantity > 0 && typeof value.active === "boolean"
-    ? { product_id: value.product_id, sku: value.sku, name: value.name, category_id: value.category_id, category_name: value.category_name, purchase_price_centavos: value.purchase_price_centavos, sale_price_centavos: sale, minimum_sale_price_centavos: value.minimum_sale_price_centavos, available_quantity: value.available_quantity, active: value.active }
+  return positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && positiveSafeInteger(value.category_id) && typeof value.category_name === "string" && positiveSafeInteger(value.purchase_price_centavos) && positiveSafeInteger(sale) && positiveSafeInteger(value.minimum_sale_price_centavos) && value.minimum_sale_price_centavos <= sale && (value.low_stock_threshold === undefined || positiveSafeInteger(value.low_stock_threshold)) && safeInteger(value.available_quantity) && value.available_quantity > 0 && typeof value.active === "boolean"
+    ? { product_id: value.product_id, sku: value.sku, name: value.name, category_id: value.category_id, category_name: value.category_name, purchase_price_centavos: value.purchase_price_centavos, sale_price_centavos: sale, minimum_sale_price_centavos: value.minimum_sale_price_centavos, low_stock_threshold: value.low_stock_threshold === undefined ? 1 : value.low_stock_threshold, available_quantity: value.available_quantity, active: value.active }
     : null;
 };
 const generic = (message: string): OnboardingError => ({ kind: "error", code: "persistence_failure", message });
@@ -125,7 +127,7 @@ export function createCreateCategoryCommand(command: Invoke) {
 }
 
 export function createCreateProductCommand(command: Invoke) {
-  return async (request: CreateProductInput): Promise<CreateProductResponse> => { try { return productResponse(await command("create_product_command", { request })); } catch { return generic("The product could not be persisted."); } };
+  return async (request: CreateProductInput): Promise<CreateProductResponse> => { try { const { low_stock_threshold, ...product } = request; return productResponse(await command("create_product_command", { request: { ...product, ...(low_stock_threshold === undefined ? {} : { low_stock_threshold }) } })); } catch { return generic("The product could not be persisted."); } };
 }
 
 export const listCategories = createListCategoriesCommand(invoke as Invoke);

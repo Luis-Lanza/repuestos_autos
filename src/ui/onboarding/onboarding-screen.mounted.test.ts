@@ -35,8 +35,37 @@ test("renders shared Spanish panels and submits required purchase and sale price
   assert.ok(screen.getByRole("heading", { name: "Alta de productos", level: 1 })); assert.ok(screen.getByRole("heading", { name: "Crear categoría", level: 2 }));
   await screen.findByLabelText("Marca"); assert.ok(screen.getByRole("heading", { name: "Crear producto activo", level: 2 }));
   await user.type(screen.getByRole("textbox", { name: "SKU" }), "FIL-1"); await user.type(screen.getByRole("textbox", { name: "Nombre del producto" }), "Filtro"); await user.type(screen.getByRole("textbox", { name: "Precio de compra (Bs)" }), "80,00"); await user.type(screen.getByRole("textbox", { name: "Precio de venta (Bs)" }), "125,50"); await user.type(screen.getByRole("textbox", { name: "Precio mínimo de venta (Bs)" }), "100,00"); await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3"); await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco"); await user.click(screen.getByRole("button", { name: "Crear producto" }));
-  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
+  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } }); assert.equal((await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true })).getAttribute("role"), "status");
 });
+test("submits a chosen low-stock threshold and rejects zero or fractional values with accessible field feedback", async () => {
+  let request: unknown;
+  let createCalls = 0;
+  mockIPC((command, payload) => command === "list_categories_command" ? success() : command === "create_product_command" ? (createCalls++, request = payload, { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 4, available_quantity: 3, active: true }) : undefined);
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(user);
+  const threshold = screen.getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" });
+  await user.type(threshold, "4");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true });
+  assert.equal((request as { request: Record<string, unknown> }).request.low_stock_threshold, 4);
+
+  await enterValidProduct(user);
+  await user.type(screen.getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" }), "0");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  const invalid = screen.getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" });
+  assert.equal(invalid.getAttribute("aria-invalid"), "true");
+  assert.equal(screen.getByText("Ingresá un umbral entero mayor o igual a 1.").id, "low-stock-threshold-error");
+  assert.equal(document.activeElement, invalid);
+  assert.equal(createCalls, 1);
+  await user.clear(invalid);
+  await user.type(invalid, "1.5");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.equal(screen.getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" }).getAttribute("aria-invalid"), "true");
+  assert.equal(createCalls, 1);
+});
+
 test("reloads changed category fields and blocks submission with obsolete definition IDs", async () => {
   let categoryLoads = 0, productCalls = 0;
   mockIPC((command) => {
@@ -73,7 +102,7 @@ test("submits finite decimal values for number category attributes", async () =>
   await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
   await user.type(attribute, "1.25");
   await user.click(screen.getByRole("button", { name: "Crear producto" }));
-  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 11, value: "1.25" }] } });
+  assert.deepEqual(request, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 11, value: "1.25" }] } });
   assert.ok(await screen.findByText("Producto creado: FIL-1. Stock inicial: 3 unidades.", { exact: true }));
 });
 
@@ -108,7 +137,7 @@ test("optionally assigns a generated active location after product creation", as
     command: "assign_product_primary_location_command",
     payload: { request: { product_id: 2, expected_revision: 0, location_id: 8 } },
   });
-  assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
+  assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
 });
 
 test("keeps product creation successful when the follow-up location assignment fails", async () => {

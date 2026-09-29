@@ -190,6 +190,7 @@ fn migrates_version_one_without_rewriting_legacy_facts_and_reopens_idempotently(
             .unwrap(),
         CURRENT_SCHEMA_VERSION
     );
+    assert_eq!(connection.query_row("SELECT low_stock_threshold FROM products WHERE id = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     drop(connection);
     assert_eq!(legacy_facts(&path), before);
     let connection = Connection::open(&path).unwrap();
@@ -716,6 +717,16 @@ fn rejects_v14_persisted_sentinel_price_before_advancing_to_v15() {
     assert!(open_database(&production_database_config(&directory)).is_err());
     assert_eq!(user_version(&path), 14);
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn low_stock_threshold_is_mandatory_positive_integer_with_default_one() {
+    let connection = open_seeded_catalog().unwrap();
+    assert_eq!(connection.query_row("SELECT low_stock_threshold FROM products WHERE id = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    assert!(connection.execute("UPDATE products SET low_stock_threshold = 0 WHERE id = 1", []).is_err());
+    assert!(connection.execute("UPDATE products SET low_stock_threshold = 1.5 WHERE id = 1", []).is_err());
+    connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'DEFAULT-THRESHOLD', 'Default threshold', 1, 100, 100)", []).unwrap();
+    assert_eq!(connection.query_row("SELECT low_stock_threshold FROM products WHERE sku = 'DEFAULT-THRESHOLD'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
 }
 
 #[test]

@@ -72,6 +72,7 @@ pub trait CatalogMetadataRepository {
         purchase_price_centavos: i64,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        low_stock_threshold: i64,
         values: &[ValidatedAttributeValue],
     ) -> Result<CatalogSnapshot>;
 }

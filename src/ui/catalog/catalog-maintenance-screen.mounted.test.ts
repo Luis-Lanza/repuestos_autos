@@ -788,6 +788,39 @@ test("recovers after product metadata saves but primary-location assignment fail
   assert.equal((within(dialog).getByRole("combobox", { name: "Sector" }) as HTMLSelectElement).value, "");
 });
 
+test("loads the saved low-stock threshold, validates it accessibly, and saves a changed integer", async () => {
+  let threshold = 5;
+  let editRequest: Record<string, unknown> | undefined;
+  mockIPC((command, payload) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse();
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, low_stock_threshold: threshold };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") { editRequest = payload?.request as Record<string, unknown>; threshold = Number(editRequest.low_stock_threshold); return { kind: "success", ...activeProduct, revision: 8 }; }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
+  const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
+  const thresholdInput = within(dialog).getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" }) as HTMLInputElement;
+  assert.equal(thresholdInput.value, "5");
+  await userEvent.clear(thresholdInput);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(editRequest?.low_stock_threshold, 1));
+  await waitFor(() => assert.equal((within(dialog).getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" }) as HTMLInputElement).value, "1"));
+  await userEvent.clear(thresholdInput);
+  await userEvent.type(thresholdInput, "0");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  assert.equal(thresholdInput.getAttribute("aria-invalid"), "true");
+  assert.equal(within(dialog).getByText("Ingresá un umbral entero mayor o igual a 1.").id, "catalog-edit-low-stock-threshold-error");
+  assert.equal(editRequest?.low_stock_threshold, 1);
+  await userEvent.clear(thresholdInput);
+  await userEvent.type(thresholdInput, "8");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(editRequest?.low_stock_threshold, 8));
+  await waitFor(() => assert.equal((within(dialog).getByRole("spinbutton", { name: "Umbral de stock bajo (opcional)" }) as HTMLInputElement).value, "8"));
+});
+
 test("keeps historical retired values out of product edit controls while preserving authoritative detail", async () => {
   let editRequest: Record<string, unknown> | undefined;
   mockIPC((command, payload) => {

@@ -543,9 +543,19 @@ impl InventoryAlert {
         active: bool,
         quantity: i64,
     ) -> Option<Self> {
-        let classification = match (active, quantity) {
-            (true, 0) => AlertClassification::OutOfStock,
-            (true, 1) => AlertClassification::LowStock,
+        Self::for_product_with_threshold(product_id, product_name, active, quantity, 1)
+    }
+
+    pub fn for_product_with_threshold(
+        product_id: i64,
+        product_name: &str,
+        active: bool,
+        quantity: i64,
+        low_stock_threshold: i64,
+    ) -> Option<Self> {
+        let classification = match (active, quantity, low_stock_threshold) {
+            (true, 0, _) => AlertClassification::OutOfStock,
+            (true, quantity, threshold) if quantity >= 1 && threshold >= 1 && quantity <= threshold => AlertClassification::LowStock,
             _ => return None,
         };
         Some(Self {

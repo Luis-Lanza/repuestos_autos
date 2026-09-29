@@ -72,6 +72,7 @@ pub enum EditCatalogInput {
         purchase_price_centavos: i64,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        low_stock_threshold: Option<i64>,
         expected_category_revision: i64,
         attribute_values: Vec<AttributeValueInput>,
     },
@@ -95,6 +96,26 @@ impl EditCatalogInput {
         expected_category_revision: i64,
         attribute_values: Vec<AttributeValueInput>,
     ) -> Self {
+        Self::product_with_threshold(
+            entity_id, expected_revision, sku, name, purchase_price_centavos,
+            sale_price_centavos, minimum_sale_price_centavos, None,
+            expected_category_revision, attribute_values,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn product_with_threshold(
+        entity_id: i64,
+        expected_revision: i64,
+        sku: impl Into<String>,
+        name: impl Into<String>,
+        purchase_price_centavos: i64,
+        sale_price_centavos: i64,
+        minimum_sale_price_centavos: i64,
+        low_stock_threshold: Option<i64>,
+        expected_category_revision: i64,
+        attribute_values: Vec<AttributeValueInput>,
+    ) -> Self {
         Self::Product {
             entity_id,
             expected_revision,
@@ -103,6 +124,7 @@ impl EditCatalogInput {
             purchase_price_centavos,
             sale_price_centavos,
             minimum_sale_price_centavos,
+            low_stock_threshold,
             expected_category_revision,
             attribute_values,
         }
@@ -171,6 +193,7 @@ where
                 purchase_price_centavos,
                 sale_price_centavos,
                 minimum_sale_price_centavos,
+                low_stock_threshold,
                 expected_category_revision,
                 attribute_values,
                 ..
@@ -195,12 +218,14 @@ where
                         value: value.value.clone(),
                     })
                     .collect::<Vec<_>>();
+                let low_stock_threshold = low_stock_threshold.unwrap_or(1);
                 let validated = crate::domain::catalog::validate_maintenance_product(
                     &sku,
                     &name,
                     purchase_price_centavos,
                     sale_price_centavos,
                     minimum_sale_price_centavos,
+                    low_stock_threshold,
                     &metadata.definitions,
                     &values,
                 )
@@ -217,6 +242,7 @@ where
                     purchase_price_centavos,
                     sale_price_centavos,
                     minimum_sale_price_centavos,
+                    low_stock_threshold,
                     &validated,
                 )
             }
@@ -679,10 +705,10 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     let query = input.query.as_deref().and_then(normalized_search_query);
     let stock_clause = match input.stock_filter {
         ProductStockFilter::All => "1 = 1",
-        ProductStockFilter::LowStock => "s.quantity BETWEEN 1 AND 1",
+        ProductStockFilter::LowStock => "s.quantity BETWEEN 1 AND p.low_stock_threshold",
         ProductStockFilter::OutOfStock => "s.quantity = 0",
-        ProductStockFilter::Available => "s.quantity > 1",
-        ProductStockFilter::Alerts => "s.quantity <= 1",
+        ProductStockFilter::Available => "s.quantity > p.low_stock_threshold",
+        ProductStockFilter::Alerts => "s.quantity BETWEEN 0 AND p.low_stock_threshold",
     };
     let activity_clause = match input.activity_filter {
         ProductActivityFilter::Active => "p.active = 1 AND c.active = 1",
@@ -882,6 +908,8 @@ pub struct CreateProductInput {
     #[serde(alias = "list_price_centavos")]
     pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
+    #[serde(default)]
+    pub low_stock_threshold: Option<i64>,
     pub opening_quantity: i64,
     pub attribute_values: Vec<AttributeValueInput>,
 }
@@ -896,6 +924,7 @@ pub struct CreatedProduct {
     pub purchase_price_centavos: i64,
     pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
+    pub low_stock_threshold: i64,
     pub available_quantity: i64,
     pub active: bool,
 }
@@ -919,6 +948,7 @@ pub enum CatalogMetadataDetail {
         purchase_price_centavos: Option<i64>,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        low_stock_threshold: i64,
         primary_location_id: Option<i64>,
         activity: &'static str,
         revision: i64,
@@ -937,6 +967,7 @@ pub enum CreateProductError {
     InvalidMinimumSalePrice,
     MinimumSalePriceExceedsSalePrice,
     InvalidOpeningQuantity,
+    InvalidLowStockThreshold,
     MissingRequiredField,
     InvalidAttributeValue,
     InvalidAttributeValueForField(AttributeValueFailure),
@@ -990,6 +1021,9 @@ where
             input.minimum_sale_price_centavos,
         )
         .map_err(map_product_validation)?;
+        let low_stock_threshold = input.low_stock_threshold.unwrap_or(1);
+        crate::domain::catalog::validate_low_stock_threshold(low_stock_threshold)
+            .map_err(map_product_validation)?;
         let validated = validate_product(
             &input.sku,
             &input.name,
@@ -1031,6 +1065,7 @@ where
             purchase_price_centavos: input.purchase_price_centavos,
             sale_price_centavos: input.sale_price_centavos,
             minimum_sale_price_centavos: input.minimum_sale_price_centavos,
+            low_stock_threshold,
             available_quantity: input.opening_quantity,
             active: true,
         })
@@ -1239,12 +1274,12 @@ pub fn read_catalog_metadata_detail(
             .transpose(),
         CatalogTarget::Product => connection
             .query_row(
-                "SELECT category_id, sku, name, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, primary_location_id, active, revision FROM products WHERE id = ?1",
+                "SELECT category_id, sku, name, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, low_stock_threshold, primary_location_id, active, revision FROM products WHERE id = ?1",
                 [entity_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
             )
             .optional()?
-            .map(|(category_id, sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, primary_location_id, active, revision)| {
+            .map(|(category_id, sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, low_stock_threshold, primary_location_id, active, revision)| {
                 let category_revision = connection.query_row("SELECT revision FROM categories WHERE id = ?1", [category_id], |row| row.get(0))?;
                 let mut statement = connection.prepare("SELECT definition_id, searchable_value FROM product_attribute_values WHERE product_id = ?1 ORDER BY definition_id")?;
                 let attribute_values = statement.query_map([entity_id], |row| Ok(AttributeValueInput { definition_id: row.get(0)?, value: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
@@ -1257,6 +1292,7 @@ pub fn read_catalog_metadata_detail(
                     purchase_price_centavos,
                     sale_price_centavos,
                     minimum_sale_price_centavos,
+                    low_stock_threshold,
                     primary_location_id,
                     activity: if active { "active" } else { "archived" },
                     revision,
@@ -1335,6 +1371,9 @@ fn map_product_validation(error: CatalogValidationError) -> CreateProductError {
         }
         CatalogValidationError::InvalidOpeningQuantity => {
             CreateProductError::InvalidOpeningQuantity
+        }
+        CatalogValidationError::InvalidLowStockThreshold => {
+            CreateProductError::InvalidLowStockThreshold
         }
         CatalogValidationError::MissingRequiredField => CreateProductError::MissingRequiredField,
         CatalogValidationError::InvalidAttributeValue => CreateProductError::InvalidAttributeValue,

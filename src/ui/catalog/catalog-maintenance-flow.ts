@@ -2,7 +2,7 @@ import { ATTRIBUTE_FIELD_TYPE, CATALOG_TARGET, type CatalogCategoryMaintenanceRe
 
 const STATUS = { LOADING: "loading", READY: "ready", PENDING: "pending", UNAVAILABLE: "unavailable" } as const;
 export interface CategorySchemaDraft { definition_id: number | null; label: string; field_type: (typeof ATTRIBUTE_FIELD_TYPE)[keyof typeof ATTRIBUTE_FIELD_TYPE]; required: boolean; options: string; active: boolean; }
-export interface CatalogEditForm { name: string; sku?: string; purchase_price_centavos?: string; sale_price_centavos?: string; minimum_sale_price_centavos?: string; primary_location_id?: number | null; attribute_values: Record<number, string>; category_fields?: CategorySchemaDraft[]; }
+export interface CatalogEditForm { name: string; sku?: string; purchase_price_centavos?: string; sale_price_centavos?: string; minimum_sale_price_centavos?: string; low_stock_threshold?: string; primary_location_id?: number | null; attribute_values: Record<number, string>; category_fields?: CategorySchemaDraft[]; }
 export type CatalogEditFieldErrors = Record<string, string>;
 export interface CatalogMaintenanceState { status: (typeof STATUS)[keyof typeof STATUS]; records: CatalogMaintenanceRecord[]; selected: CatalogMaintenanceRecord | null; detail: CatalogMetadataDetail | null; feedback: string | null; lifecycle_feedback: string | null; field_errors: CatalogEditFieldErrors; success_notice: string | null; recovery_required: boolean; }
 export const initialCatalogMaintenanceState: CatalogMaintenanceState = { status: STATUS.LOADING, records: [], selected: null, detail: null, feedback: null, lifecycle_feedback: null, field_errors: {}, success_notice: null, recovery_required: false };
@@ -19,7 +19,7 @@ export function formForCatalogDetail(detail: CatalogMetadataDetail): CatalogEdit
   const prices = detail as typeof detail & { list_price_centavos?: number };
   const salePrice = prices.sale_price_centavos ?? prices.list_price_centavos;
   const activeDefinitions = detail.attribute_definitions.filter((field) => field.active !== false);
-  return { sku: detail.sku, name: detail.name, purchase_price_centavos: detail.purchase_price_centavos == null ? "" : formatCatalogBs(detail.purchase_price_centavos), sale_price_centavos: salePrice == null ? "" : formatCatalogBs(salePrice), minimum_sale_price_centavos: formatCatalogBs(detail.minimum_sale_price_centavos), primary_location_id: detail.primary_location_id, attribute_values: Object.fromEntries(detail.attribute_values.filter((value) => activeDefinitions.some((field) => field.definition_id === value.definition_id)).map((value) => [value.definition_id, value.value])) };
+  return { sku: detail.sku, name: detail.name, purchase_price_centavos: detail.purchase_price_centavos == null ? "" : formatCatalogBs(detail.purchase_price_centavos), sale_price_centavos: salePrice == null ? "" : formatCatalogBs(salePrice), minimum_sale_price_centavos: formatCatalogBs(detail.minimum_sale_price_centavos), low_stock_threshold: String(detail.low_stock_threshold ?? 1), primary_location_id: detail.primary_location_id, attribute_values: Object.fromEntries(detail.attribute_values.filter((value) => activeDefinitions.some((field) => field.definition_id === value.definition_id)).map((value) => [value.definition_id, value.value])) };
 }
 export function fieldErrorsForCatalogEdit(detail: CatalogMetadataDetail, form: CatalogEditForm): CatalogEditFieldErrors {
   const errors: CatalogEditFieldErrors = {};
@@ -32,6 +32,9 @@ export function fieldErrorsForCatalogEdit(detail: CatalogMetadataDetail, form: C
   const minimumPrice = parseCatalogBs(form.minimum_sale_price_centavos ?? "");
   if (minimumPrice === null) errors.minimum_sale_price_centavos = "Ingresá un precio mínimo de venta válido en Bs.";
   else if (salePrice !== null && minimumPrice > salePrice) errors.minimum_sale_price_centavos = "El precio mínimo no puede superar el precio de venta.";
+  const thresholdText = form.low_stock_threshold ?? "";
+  const threshold = thresholdText.trim() === "" ? 1 : /^\d+$/.test(thresholdText.trim()) ? Number(thresholdText.trim()) : null;
+  if (threshold === null || !Number.isSafeInteger(threshold) || threshold < 1) errors.low_stock_threshold = "Ingresá un umbral entero mayor o igual a 1.";
   detail.attribute_definitions.filter((field) => field.active !== false).forEach((field) => { const value = form.attribute_values[field.definition_id] ?? ""; if (field.required && value.trim() === "") errors[`attribute-${field.definition_id}`] = "Ingresá un valor."; else if (field.field_type === ATTRIBUTE_FIELD_TYPE.OPTION && value !== "" && !field.options.includes(value)) errors[`attribute-${field.definition_id}`] = "Elegí una opción de la lista."; else if (field.field_type === ATTRIBUTE_FIELD_TYPE.NUMBER && value !== "" && !Number.isFinite(Number(value))) errors[`attribute-${field.definition_id}`] = "Ingresá un número."; });
   return errors;
 }
@@ -46,7 +49,7 @@ export function createCatalogEditRequest(detail: CatalogMetadataDetail, form: Ca
   if (detail.target === CATALOG_TARGET.CATEGORY) return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, name: form.name };
   const activeDefinitions = detail.attribute_definitions.filter((field) => field.active !== false);
   const values = activeDefinitions.map((field) => ({ definition_id: field.definition_id, value: form.attribute_values[field.definition_id] ?? "" }));
-  return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, expected_category_revision: detail.category_revision, sku: form.sku ?? "", name: form.name, purchase_price_centavos: parseCatalogBs(form.purchase_price_centavos ?? "") as number, sale_price_centavos: parseCatalogBs(form.sale_price_centavos ?? "") as number, minimum_sale_price_centavos: parseCatalogBs(form.minimum_sale_price_centavos ?? "") as number, attribute_values: values.filter((value) => activeDefinitions.find((field) => field.definition_id === value.definition_id)?.required || value.value !== "") };
+  return { target: detail.target, entity_id: detail.entity_id, expected_revision: detail.revision, expected_category_revision: detail.category_revision, sku: form.sku ?? "", name: form.name, purchase_price_centavos: parseCatalogBs(form.purchase_price_centavos ?? "") as number, sale_price_centavos: parseCatalogBs(form.sale_price_centavos ?? "") as number, minimum_sale_price_centavos: parseCatalogBs(form.minimum_sale_price_centavos ?? "") as number, low_stock_threshold: (form.low_stock_threshold ?? "").trim() === "" ? 1 : Number(form.low_stock_threshold), attribute_values: values.filter((value) => activeDefinitions.find((field) => field.definition_id === value.definition_id)?.required || value.value !== "") };
 }
 export function createCatalogMaintenanceFlow(state: CatalogMaintenanceState, action: CatalogMaintenanceAction): CatalogMaintenanceState {
   switch (action.type) {

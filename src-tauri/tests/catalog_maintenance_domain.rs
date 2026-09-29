@@ -33,7 +33,7 @@ fn maintenance_category_metadata_rejects_blank_names() {
 #[test]
 fn maintenance_product_metadata_rejects_non_positive_centavos() {
     assert_eq!(
-        validate_maintenance_product("FLT-001", "Oil filter", 1, 0, 100, &[], &[]),
+        validate_maintenance_product("FLT-001", "Oil filter", 1, 0, 100, 1, &[], &[]),
         Err(MaintenanceError::InvalidSalePrice)
     );
 }
@@ -41,7 +41,7 @@ fn maintenance_product_metadata_rejects_non_positive_centavos() {
 #[test]
 fn maintenance_product_metadata_rejects_minimum_above_list() {
     assert_eq!(
-        validate_maintenance_product("FLT-001", "Oil filter", 1_000, 2_500, 2_501, &[], &[]),
+        validate_maintenance_product("FLT-001", "Oil filter", 1_000, 2_500, 2_501, 1, &[], &[]),
         Err(MaintenanceError::MinimumSalePriceExceedsSalePrice)
     );
 }
@@ -49,7 +49,7 @@ fn maintenance_product_metadata_rejects_minimum_above_list() {
 #[test]
 fn maintenance_product_metadata_rejects_non_positive_minimum() {
     assert_eq!(
-        validate_maintenance_product("FLT-001", "Oil filter", 1_000, 2_500, 0, &[], &[]),
+        validate_maintenance_product("FLT-001", "Oil filter", 1_000, 2_500, 0, 1, &[], &[]),
         Err(MaintenanceError::InvalidMinimumSalePrice)
     );
 }
@@ -59,14 +59,14 @@ fn maintenance_product_metadata_rejects_prices_above_the_safe_integer_cap() {
     const CAP: i64 = 9_007_199_254_740_991;
 
     assert_eq!(
-        validate_maintenance_product("FLT-001", "Oil filter", CAP + 1, CAP, 1, &[], &[]),
+        validate_maintenance_product("FLT-001", "Oil filter", CAP + 1, CAP, 1, 1, &[], &[]),
         Err(MaintenanceError::InvalidPurchasePrice)
     );
     assert_eq!(
-        validate_maintenance_product("FLT-001", "Oil filter", 1, CAP + 1, CAP, &[], &[]),
+        validate_maintenance_product("FLT-001", "Oil filter", 1, CAP + 1, CAP, 1, &[], &[]),
         Err(MaintenanceError::InvalidSalePrice)
     );
-    assert!(validate_maintenance_product("FLT-001", "Oil filter", 1, CAP, CAP, &[], &[]).is_ok());
+    assert!(validate_maintenance_product("FLT-001", "Oil filter", 1, CAP, CAP, 1, &[], &[]).is_ok());
 }
 
 #[test]
@@ -78,6 +78,7 @@ fn maintenance_product_metadata_rejects_mistyped_values() {
             1_000,
             2_500,
             2_500,
+            1,
             &[AttributeDefinition {
                 id: 1,
                 field_type: FieldType::Number,

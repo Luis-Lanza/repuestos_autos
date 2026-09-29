@@ -195,7 +195,7 @@ impl<'connection> SqliteDashboardReader<'connection> {
                     CASE WHEN s.quantity = 0 THEN 'out_of_stock' ELSE 'low_stock' END
              FROM products p JOIN categories c ON c.id = p.category_id
              JOIN stock_balances s ON s.product_id = p.id
-             WHERE p.active = 1 AND c.active = 1 AND s.quantity <= 1
+             WHERE p.active = 1 AND c.active = 1 AND s.quantity <= p.low_stock_threshold
              ORDER BY s.quantity, lower(p.name), p.id LIMIT ?1",
         ).map_err(|_| ReportingError::Persistence)?;
         let rows = statement.query_map([DASHBOARD_STOCK_ALERTS_LIMIT], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?))).map_err(|_| ReportingError::Persistence)?;

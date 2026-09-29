@@ -8,7 +8,29 @@ use repuestos_autos::domain::catalog::{
 };
 use repuestos_autos::infrastructure::sqlite::{
     open_database, open_seeded_catalog, production_database_config, SqliteCatalogRepository,
+    CURRENT_SCHEMA_VERSION,
 };
+
+const VERSION_ONE_FIXTURE: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
+const MIGRATIONS_THROUGH_VERSION_EIGHTEEN: [&str; 17] = [
+    include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0005_catalog_onboarding_hardening.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0006_operational_inventory_control.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0007_catalog_maintenance.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0008_catalog_metadata_name_uniqueness.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0009_sales_history_index.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0010_post_sale_lifecycle.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0011_sale_idempotency_conflicts.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0012_inventory_idempotency_conflicts.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0013_catalog_dual_pricing.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0014_sale_list_price_snapshot.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0016_product_images.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"),
+];
 
 fn maintain(
     connection: &mut rusqlite::Connection,
@@ -530,13 +552,13 @@ fn product_edit_preserves_retired_values_and_detail_exposes_them() {
 }
 
 #[test]
-fn version_nineteen_schema_migrates_and_validates_field_lifecycle_metadata() {
+fn current_schema_migrates_and_validates_field_lifecycle_metadata() {
     let connection = open_seeded_catalog().unwrap();
     assert_eq!(
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        19
+        CURRENT_SCHEMA_VERSION
     );
     let columns = connection
         .prepare("PRAGMA table_info(attribute_definitions)")
@@ -654,7 +676,17 @@ fn version_nineteen_migration_preserves_definition_options_values_and_foreign_ke
     ));
     std::fs::create_dir_all(&directory).unwrap();
     let config = production_database_config(&directory);
-    let legacy = open_database(&config).unwrap();
+    std::fs::create_dir_all(&directory).unwrap();
+    let legacy = rusqlite::Connection::open(config.path()).unwrap();
+    legacy.execute_batch(VERSION_ONE_FIXTURE).unwrap();
+    legacy.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    for (index, migration) in MIGRATIONS_THROUGH_VERSION_EIGHTEEN.iter().enumerate() {
+        legacy.execute_batch(migration).unwrap();
+        legacy
+            .pragma_update(None, "user_version", (index + 2) as i64)
+            .unwrap();
+    }
+    assert_eq!(legacy.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 18);
     legacy
         .execute_batch(
             "INSERT INTO attribute_definitions (id, category_id, label, field_type, required)
@@ -663,7 +695,6 @@ fn version_nineteen_migration_preserves_definition_options_values_and_foreign_ke
          INSERT INTO product_attribute_values
              (product_id, definition_id, option_value, searchable_value)
          VALUES (1, 81, 'Original option', 'Original option');
-         DROP INDEX attribute_definitions_active_category_label_idx;
          CREATE UNIQUE INDEX legacy_attribute_definition_category_label
          ON attribute_definitions (category_id, label);
          PRAGMA user_version = 18;",
@@ -676,7 +707,7 @@ fn version_nineteen_migration_preserves_definition_options_values_and_foreign_ke
         migrated
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        19
+        CURRENT_SCHEMA_VERSION
     );
     assert_eq!(migrated.query_row(
         "SELECT id FROM attribute_definitions WHERE category_id = 1 AND label = 'Legacy migration field'",

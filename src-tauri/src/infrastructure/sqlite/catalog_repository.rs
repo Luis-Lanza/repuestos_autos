@@ -96,6 +96,7 @@ impl BootstrapDemoRepository for SqliteCatalogRepository {
                 purchase_price_centavos: 0,
                 sale_price_centavos: product.list_price_centavos,
                 minimum_sale_price_centavos: product.minimum_sale_price_centavos,
+                low_stock_threshold: None,
                 opening_quantity: product.opening_quantity,
                 attribute_values: Vec::new(),
             };
@@ -312,7 +313,7 @@ impl SqliteCatalogRepository {
         occurred_at: Option<&str>,
         has_purchase_price: bool,
     ) -> Result<i64> {
-        transaction.execute("INSERT INTO products (category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)", params![input.category_id, input.sku.trim(), input.name.trim(), has_purchase_price.then_some(input.purchase_price_centavos), input.sale_price_centavos, input.minimum_sale_price_centavos])?;
+        transaction.execute("INSERT INTO products (category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, low_stock_threshold) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7)", params![input.category_id, input.sku.trim(), input.name.trim(), has_purchase_price.then_some(input.purchase_price_centavos), input.sale_price_centavos, input.minimum_sale_price_centavos, input.low_stock_threshold.unwrap_or(1)])?;
         let product_id = transaction.last_insert_rowid();
         for value in values {
             match value {
@@ -590,11 +591,12 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         purchase_price_centavos: i64,
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        low_stock_threshold: i64,
         values: &[ValidatedAttributeValue],
     ) -> Result<CatalogSnapshot> {
         let target = CatalogTarget::Product;
         let before = product_metadata_json(transaction, id)?;
-        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, purchase_price_centavos = ?3, list_price_centavos = ?4, minimum_unit_price_centavos = ?5, revision = revision + 1 WHERE id = ?6 AND revision = ?7", params![sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
+        if transaction.execute("UPDATE OR IGNORE products SET sku = ?1, name = ?2, purchase_price_centavos = ?3, list_price_centavos = ?4, minimum_unit_price_centavos = ?5, low_stock_threshold = ?6, revision = revision + 1 WHERE id = ?7 AND revision = ?8", params![sku, name, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, low_stock_threshold, id, revision])? != 1 { return Err(rusqlite::Error::QueryReturnedNoRows) }
         transaction.execute(
             "DELETE FROM product_attribute_values
              WHERE product_id = ?1

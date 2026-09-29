@@ -99,17 +99,24 @@ test("allowlists metadata detail and edit payloads with typed pricing values", a
   const commands = createCatalogMaintenanceCommands(async (command, payload) => {
     calls.push({ command, payload });
     return command === "catalog_metadata_detail_command"
-      ? { target: "product", entity_id: 1, category_id: 2, category_revision: 6, sku: "FLT", name: "Filter", list_price_centavos: 3000, purchase_price_centavos: 1200, minimum_sale_price_centavos: 2500, primary_location_id: null, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }], sql: "hidden" }
+      ? { target: "product", entity_id: 1, category_id: 2, category_revision: 6, sku: "FLT", name: "Filter", list_price_centavos: 3000, purchase_price_centavos: 1200, minimum_sale_price_centavos: 2500, low_stock_threshold: 4, primary_location_id: null, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }], sql: "hidden" }
       : { kind: "success", entity_id: 1, target: "product", label: "", activity: "archived", revision: 4, sql: "hidden" };
   });
   const detail = await commands.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, ignored: true } as never);
-  const edited = await commands.edit({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, expected_revision: 3, expected_category_revision: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper", ignored: true }], ignored: true } as never);
+  const edited = await commands.edit({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, expected_revision: 3, expected_category_revision: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 4, attribute_values: [{ definition_id: 4, value: "Paper", ignored: true }], ignored: true } as never);
   assert.deepEqual(calls, [
     { command: "catalog_metadata_detail_command", payload: { request: { target: "product", entity_id: 1 } } },
-    { command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 3, expected_category_revision: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [{ definition_id: 4, value: "Paper" }] } } },
+    { command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 3, expected_category_revision: 2, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 4, attribute_values: [{ definition_id: 4, value: "Paper" }] } } },
   ]);
-  assert.deepEqual(detail, { kind: "success", detail: { target: "product", entity_id: 1, category_id: 2, category_revision: 6, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, primary_location_id: null, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] } });
+  assert.deepEqual(detail, { kind: "success", detail: { target: "product", entity_id: 1, category_id: 2, category_revision: 6, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 4, primary_location_id: null, activity: "archived", revision: 3, attribute_definitions: [{ definition_id: 4, label: "Material", field_type: "option", required: true, options: ["Paper"] }], attribute_values: [{ definition_id: 4, value: "Paper" }] } });
   assert.deepEqual(edited, { kind: "success", entity_id: 1, target: "product", label: "", activity: "archived", revision: 4 });
+});
+
+test("rejects malformed persisted product thresholds in metadata", async () => {
+  for (const low_stock_threshold of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const malformed = createCatalogMaintenanceCommands(async () => ({ target: "product", entity_id: 1, category_id: 2, category_revision: 0, sku: "FLT", name: "Filter", sale_price_centavos: 3000, purchase_price_centavos: 1200, minimum_sale_price_centavos: 2500, low_stock_threshold, primary_location_id: null, activity: "active", revision: 0, attribute_definitions: [], attribute_values: [] }));
+    assert.deepEqual(await malformed.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: 1 }), { kind: "error", code: "persistence_failure", message: "The catalog could not be loaded." });
+  }
 });
 
 test("projects category detail and rejects malformed detail payloads", async () => {
@@ -238,12 +245,12 @@ test("edits category schemas through a typed envelope and decodes recoverable st
     { definition_id: null, label: "Length", field_type: "number", required: false, options: [] },
   ] }), { kind: "success", entity_id: 2, target: "category", label: "", activity: "active", revision: 4 });
   response = { kind: "error", code: "stale_category_schema", message: "native internal text" };
-  assert.deepEqual(await commands.edit({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, expected_revision: 8, expected_category_revision: 3, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [] }), { kind: "error", code: "stale_category_schema", message: "Category fields changed. Reload before saving this product." });
+  assert.deepEqual(await commands.edit({ target: CATALOG_TARGET.PRODUCT, entity_id: 1, expected_revision: 8, expected_category_revision: 3, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 4, attribute_values: [] }), { kind: "error", code: "stale_category_schema", message: "Category fields changed. Reload before saving this product." });
   assert.deepEqual(calls, [
     { command: "edit_category_schema_command", payload: { request: { category_id: 2, expected_revision: 3, fields: [
       { definition_id: 5, label: "Material", field_type: "option", required: true, options: ["Steel", "Paper"] },
       { definition_id: null, label: "Length", field_type: "number", required: false, options: [] },
     ] } } },
-    { command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 8, expected_category_revision: 3, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, attribute_values: [] } } },
+    { command: "edit_catalog_command", payload: { request: { target: "product", entity_id: 1, expected_revision: 8, expected_category_revision: 3, sku: "FLT", name: "Filter", purchase_price_centavos: 1200, sale_price_centavos: 3000, minimum_sale_price_centavos: 2500, low_stock_threshold: 4, attribute_values: [] } } },
   ]);
 });

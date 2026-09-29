@@ -135,6 +135,10 @@ fn map_product_error(error: CreateProductError) -> OnboardingError {
             "invalid_opening_quantity",
             "Opening stock must be a positive whole number.",
         ),
+        CreateProductError::InvalidLowStockThreshold => (
+            "invalid_low_stock_threshold",
+            "Low-stock threshold must be a whole number greater than zero.",
+        ),
         CreateProductError::MissingRequiredField => (
             "missing_required_field",
             "A required category field is missing.",

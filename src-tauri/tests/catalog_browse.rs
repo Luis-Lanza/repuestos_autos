@@ -1,7 +1,8 @@
 use repuestos_autos::application::catalog::{browse_active_products, create_product, AttributeValueInput, BrowseProductsInput, CreateProductInput, ProductActivityFilter, ProductStockFilter};
 use repuestos_autos::application::catalog::locations::{assign_product_location, create_product_location, save_location_schema, CreateProductLocationInput, SaveLocationSchemaInput};
 use repuestos_autos::catalog::open_seeded_catalog;
-use repuestos_autos::infrastructure::sqlite::SqliteCatalogRepository;
+use repuestos_autos::infrastructure::sqlite::{dashboard_repository::SqliteDashboardReader, SqliteCatalogRepository};
+use repuestos_autos::application::reporting::{DashboardRange, DashboardReader};
 
 fn browse(connection: &rusqlite::Connection, stock_filter: ProductStockFilter, page: i64, page_size: i64) -> repuestos_autos::application::catalog::ProductBrowsePage {
     browse_active_products(connection, &SqliteCatalogRepository, &BrowseProductsInput {
@@ -69,7 +70,7 @@ fn page_attributes_include_every_definition_in_id_order_and_default_missing_valu
     create_product(&mut connection, CreateProductInput {
         sku: "ZZZ-001".into(), name: "Zulu filter".into(), category_id: 1,
         purchase_price_centavos: 100, sale_price_centavos: 200,
-        minimum_sale_price_centavos: 100, opening_quantity: 2,
+        minimum_sale_price_centavos: 100, low_stock_threshold: None, opening_quantity: 2,
         attribute_values: vec![AttributeValueInput { definition_id: 12, value: "99".into() }],
     }).unwrap();
 
@@ -99,6 +100,36 @@ fn browse_includes_optional_generated_primary_location_without_changing_global_s
     let assigned = browse(&connection, ProductStockFilter::All, 1, 20);
     assert_eq!(assigned.products[0].primary_location_code.as_deref(), Some("A1-SHELF2"));
     assert_eq!(assigned.products[0].available_quantity, unassigned.products[0].available_quantity);
+}
+
+#[test]
+fn stock_filters_use_each_products_threshold_and_keep_zero_out_of_low_stock() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("UPDATE products SET low_stock_threshold = 4 WHERE id = 1", []).unwrap();
+    connection.execute("UPDATE stock_balances SET quantity = 4 WHERE product_id = 1", []).unwrap();
+
+    assert_eq!(browse(&connection, ProductStockFilter::LowStock, 1, 20).total, 1);
+    assert_eq!(browse(&connection, ProductStockFilter::Alerts, 1, 20).total, 1);
+    assert_eq!(browse(&connection, ProductStockFilter::Available, 1, 20).total, 0);
+
+    connection.execute("UPDATE stock_balances SET quantity = 0 WHERE product_id = 1", []).unwrap();
+    assert_eq!(browse(&connection, ProductStockFilter::LowStock, 1, 20).total, 0);
+    assert_eq!(browse(&connection, ProductStockFilter::Alerts, 1, 20).total, 1);
+    assert_eq!(browse(&connection, ProductStockFilter::OutOfStock, 1, 20).total, 1);
+}
+
+#[test]
+fn dashboard_alerts_use_product_threshold_and_preserve_zero_classification() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("UPDATE products SET low_stock_threshold = 4 WHERE id = 1", []).unwrap();
+    connection.execute("UPDATE stock_balances SET quantity = 4 WHERE product_id = 1", []).unwrap();
+    let range = DashboardRange::parse("2024-03-01T00:00:00Z", "2024-04-01T00:00:00Z").unwrap();
+    let report = SqliteDashboardReader::new(&connection).read(&range, &range).unwrap();
+    assert_eq!(report.stock_alerts.iter().map(|alert| (alert.quantity, alert.classification.as_str())).collect::<Vec<_>>(), vec![(4, "low_stock")]);
+
+    connection.execute("UPDATE stock_balances SET quantity = 0 WHERE product_id = 1", []).unwrap();
+    let report = SqliteDashboardReader::new(&connection).read(&range, &range).unwrap();
+    assert_eq!(report.stock_alerts.iter().map(|alert| (alert.quantity, alert.classification.as_str())).collect::<Vec<_>>(), vec![(0, "out_of_stock")]);
 }
 
 #[test]

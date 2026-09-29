@@ -321,6 +321,8 @@ pub enum EditCatalogRequest {
         #[serde(alias = "list_price_centavos")]
         sale_price_centavos: i64,
         minimum_sale_price_centavos: i64,
+        #[serde(default)]
+        low_stock_threshold: Option<i64>,
         expected_category_revision: i64,
         attribute_values: Vec<EditAttributeValueRequest>,
     },
@@ -548,12 +550,13 @@ pub fn edit_catalog(
             purchase_price_centavos,
             sale_price_centavos,
             minimum_sale_price_centavos,
+            low_stock_threshold,
             expected_category_revision,
             attribute_values,
         } if entity_id > 0 && expected_revision >= 0 && expected_category_revision >= 0 => (
             entity_id,
             "product",
-            catalog::EditCatalogInput::product(
+            catalog::EditCatalogInput::product_with_threshold(
                 entity_id,
                 expected_revision,
                 sku,
@@ -561,6 +564,7 @@ pub fn edit_catalog(
                 purchase_price_centavos,
                 sale_price_centavos,
                 minimum_sale_price_centavos,
+                low_stock_threshold,
                 expected_category_revision,
                 attribute_values
                     .into_iter()

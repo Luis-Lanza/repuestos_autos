@@ -6,6 +6,21 @@ pub mod location;
 pub const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LowStockThreshold(i64);
+
+impl LowStockThreshold {
+    pub fn new(value: i64) -> Result<Self, CatalogValidationError> {
+        (value >= 1)
+            .then_some(Self(value))
+            .ok_or(CatalogValidationError::InvalidLowStockThreshold)
+    }
+
+    pub fn value(self) -> i64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
     Text,
     Number,
@@ -111,6 +126,7 @@ pub enum CatalogValidationError {
     InvalidMinimumSalePrice,
     MinimumSalePriceExceedsSalePrice,
     InvalidOpeningQuantity,
+    InvalidLowStockThreshold,
     MissingRequiredField,
     InvalidAttributeValue,
 }
@@ -169,6 +185,7 @@ pub enum MaintenanceError {
     InvalidSalePrice,
     InvalidMinimumSalePrice,
     MinimumSalePriceExceedsSalePrice,
+    InvalidLowStockThreshold,
     InvalidAttributeValue,
     LifecycleBlocked,
     InvalidCategorySchema,
@@ -267,12 +284,15 @@ pub fn validate_maintenance_product(
     purchase_price_centavos: i64,
     sale_price_centavos: i64,
     minimum_sale_price_centavos: i64,
+    low_stock_threshold: i64,
     definitions: &[AttributeDefinition],
     values: &[AttributeValueDraft],
 ) -> Result<Vec<ValidatedAttributeValue>, MaintenanceError> {
     if sku.trim().is_empty() || name.trim().is_empty() {
         return Err(MaintenanceError::InvalidProduct);
     }
+    LowStockThreshold::new(low_stock_threshold)
+        .map_err(|_| MaintenanceError::InvalidLowStockThreshold)?;
     validate_current_prices(
         purchase_price_centavos,
         sale_price_centavos,
@@ -378,6 +398,10 @@ pub fn attribute_value_failure(
     None
 }
 
+pub fn validate_low_stock_threshold(value: i64) -> Result<LowStockThreshold, CatalogValidationError> {
+    LowStockThreshold::new(value)
+}
+
 pub fn validate_product(
     sku: &str,
     name: &str,
@@ -403,7 +427,6 @@ pub fn validate_product(
     if opening_quantity <= 0 {
         return Err(CatalogValidationError::InvalidOpeningQuantity);
     }
-
     validate_attribute_values(definitions, values)
 }
 

@@ -105,6 +105,7 @@ impl CatalogMetadataRepository for MetadataRepository {
         _: i64,
         _: i64,
         _: i64,
+        _: i64,
         _: &[ValidatedAttributeValue],
     ) -> rusqlite::Result<CatalogSnapshot> {
         if self.write_stale {

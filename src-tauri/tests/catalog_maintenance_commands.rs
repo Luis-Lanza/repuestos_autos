@@ -269,6 +269,7 @@ fn schema_edit_is_typed_registered_use_case_and_stale_product_saves_are_recovera
             purchase_price_centavos: 2_000,
             sale_price_centavos: 2_500,
             minimum_sale_price_centavos: 2_500,
+            low_stock_threshold: None,
             expected_category_revision: 0,
             attribute_values: vec![],
         },

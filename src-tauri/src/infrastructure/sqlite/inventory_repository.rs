@@ -177,7 +177,7 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
 
     fn list_alerts(&self) -> Result<Vec<InventoryAlert>, InventoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT p.id, p.name, p.active, b.quantity FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.active = 1 AND c.active = 1 AND b.quantity IN (0, 1) ORDER BY CASE b.quantity WHEN 0 THEN 0 ELSE 1 END, lower(p.name), p.id",
+            "SELECT p.id, p.name, p.active, b.quantity, p.low_stock_threshold FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.active = 1 AND c.active = 1 AND (b.quantity = 0 OR (b.quantity BETWEEN 1 AND p.low_stock_threshold)) ORDER BY CASE b.quantity WHEN 0 THEN 0 ELSE 1 END, lower(p.name), p.id",
         ).map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
         let alerts = statement
             .query_map([], |row| {
@@ -185,14 +185,15 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                     row.get(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get(3)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
             })
             .map_err(|_| InventoryError::PERSISTENCE_FAILURE)?
             .map(|row| {
                 row.map_err(|_| InventoryError::PERSISTENCE_FAILURE)
-                    .and_then(|(id, name, active, quantity)| {
-                        InventoryAlert::for_product(id, &name, active != 0, quantity)
+                    .and_then(|(id, name, active, quantity, threshold)| {
+                        InventoryAlert::for_product_with_threshold(id, &name, active != 0, quantity, threshold)
                             .ok_or(InventoryError::PERSISTED_DATA_INVALID)
                     })
             })
