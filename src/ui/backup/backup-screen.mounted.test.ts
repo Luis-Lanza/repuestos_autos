@@ -8,13 +8,13 @@ import userEvent from "@testing-library/user-event";
 import { BackupScreen } from "./backup-screen.ts";
 
 const prepared = { kind: "prepared", token: "restore-token", size_bytes: 2048, schema_version: 6 };
-const created = { kind: "created", path: "C:\\copias\\backup.db", created_at_unix_seconds: 1_755_172_920, size_bytes: 4096, schema_version: 6 };
+const created = { kind: "created", file_name: "backup-20250814.sqlite3", created_at_unix_seconds: 1_755_172_920, size_bytes: 4096, schema_version: 6, durability_warning: false, cleanup_warning: false };
 
 function mountIPC(overrides: Record<string, unknown> = {}) {
   const value = (key: string, fallback: unknown) => typeof overrides[key] === "function" ? (overrides[key] as () => unknown)() : overrides[key] ?? fallback;
   mockIPC((command, payload) => {
-    if (command === "choose_backup_destination_command") return value("backupPicker", { kind: "selected", path: "C:\\copias" });
-    if (command === "choose_restore_source_command") return value("restorePicker", { kind: "selected", path: "C:\\copias\\backup.db" });
+    if (command === "choose_backup_destination_command") return value("backupPicker", { kind: "selected", token: "destination-token" });
+    if (command === "choose_restore_source_command") return value("restorePicker", { kind: "selected", token: "source-token" });
     if (command === "create_backup_command") return value("create", created);
     if (command === "prepare_restore_command") return value("prepare", prepared);
     if (command === "confirm_restore_command") return value("restore", { kind: "restored" });
@@ -22,7 +22,7 @@ function mountIPC(overrides: Record<string, unknown> = {}) {
   });
 }
 
-test("renders Spanish continuity regions and persisted backup facts", async () => {
+test("renders Spanish continuity regions and a path-free backup summary", async () => {
   mountIPC();
   const user = userEvent.setup({ document });
   render(createElement(BackupScreen));
@@ -32,8 +32,18 @@ test("renders Spanish continuity regions and persisted backup facts", async () =
   assert.ok(screen.getByRole("region", { name: "Restauración" }));
   await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
   const summary = screen.getByRole("region", { name: "Última copia creada" });
-  assert.equal(within(summary).getByText("C:\\copias\\backup.db").textContent, "C:\\copias\\backup.db");
+  assert.ok(within(summary).getByText("backup-20250814.sqlite3"));
+  assert.equal(within(summary).queryByText(/C:\\\\copias/), null);
   assert.ok(within(summary).getByText("14/08/2025, 12:02")); assert.ok(within(summary).getByText("4096 bytes")); assert.ok(within(summary).getByText("6"));
+});
+
+test("announces durability uncertainty and internal cleanup failure as separate accessible warnings", async () => {
+  mountIPC({ create: { ...created, durability_warning: true, cleanup_warning: true } });
+  const user = userEvent.setup({ document }); render(createElement(BackupScreen));
+  await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
+  assert.match((await screen.findByRole("alert")).textContent ?? "", /durabilidad del directorio final/);
+  assert.match(screen.getByRole("status").textContent ?? "", /limpieza de un archivo interno temporal/);
+  assert.equal(screen.queryByText("Copia creada correctamente."), null);
 });
 
 test("keeps picker cancellation harmless and bounds invalid, expired, and unavailable feedback", async () => {
@@ -51,6 +61,29 @@ test("keeps picker cancellation harmless and bounds invalid, expired, and unavai
     const copy = await screen.findByRole("alert");
     assert.ok(copy.textContent?.includes(code === "invalid_backup" ? "válido" : code === "token_expired" ? "venció" : code === "recovery_failed" ? "recuperar" : code === "restore_failed" ? "restaurar" : "disponible"));
   }
+});
+
+test("shows license denial after restore prepare without entering the confirmation flow", async () => {
+  mountIPC({ prepare: { kind: "error", code: "license_required", message: "native detail" } });
+  const user = userEvent.setup({ document });
+  render(createElement(BackupScreen));
+  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+  assert.match((await screen.findByRole("alert")).textContent ?? "", /licencia válida/);
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(screen.queryByRole("region", { name: "Candidato de restauración" }), null);
+});
+
+test("shows license denial after confirmation without reporting restore success", async () => {
+  mountIPC({ restore: { kind: "error", code: "license_required", message: "native detail" } });
+  const user = userEvent.setup({ document });
+  render(createElement(BackupScreen));
+  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+  await user.click(screen.getByRole("button", { name: "Revisar restauración" }));
+  const dialog = screen.getByRole("dialog", { name: "Restaurar datos locales" });
+  await user.click(within(dialog).getByRole("checkbox"));
+  await user.click(within(dialog).getByRole("button", { name: "Restaurar datos" }));
+  assert.match((await screen.findByRole("alert")).textContent ?? "", /licencia válida/);
+  assert.equal(screen.queryByText("Restauración completada correctamente."), null);
 });
 
 test("gates acknowledgement, uses the exact restore dialog, contains focus, and locks pending", async () => {
@@ -95,6 +128,6 @@ test("ignores completion after the backup screen unmounts", async () => {
   mountIPC({ backupPicker: () => new Promise((resolve) => { resolvePicker = resolve; }) });
   const user = userEvent.setup({ document }); const view = render(createElement(BackupScreen));
   await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" })); view.unmount();
-  resolvePicker({ kind: "selected", path: "C:\\copias" }); await Promise.resolve();
+  resolvePicker({ kind: "selected", token: "destination-token" }); await Promise.resolve();
   assert.equal(document.body.textContent?.includes("Copia creada correctamente."), false);
 });

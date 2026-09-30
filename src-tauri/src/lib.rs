@@ -48,24 +48,42 @@ impl DatabaseState {
     }
 
     pub fn recover_on_startup(config: DatabaseConfig, store: &BackupStore) -> Self {
+        let recovery_evidence = has_recovery_evidence(config.path(), store);
         match store.read_restore_state() {
-            Ok(None) => match open_database(&config)
-                .map_err(|_| ())
-                .and_then(|connection| {
+            Ok(None) if !recovery_evidence => {
+                match open_database(&config).map_err(|_| ()).and_then(|connection| {
                     validate_restored_database(&connection).map_err(|_| ())?;
                     Ok(connection)
                 }) {
-                Ok(connection) => Self::from_connection(config, connection),
-                Err(_) => Self::unavailable(config),
-            },
-            Ok(Some(_)) => match open_validated_recovery_database(&config, store) {
-                Ok(connection) => {
-                    let recovered = Self::from_connection(config, connection);
-                    let _ = store.complete_durable_restore();
-                    recovered
+                    Ok(connection) => {
+                        if !cleanup_abandoned_restore_artifacts(config.path()) {
+                            return Self::unavailable(config);
+                        }
+                        Self::from_connection(config, connection)
+                    }
+                    Err(_) => Self::unavailable(config),
                 }
-                Err(()) => Self::unavailable(config),
-            },
+            }
+            Ok(_) if has_ambiguous_recovery_artifacts(config.path()) => Self::unavailable(config),
+            Ok(marker) => {
+                let canonical_was_valid = is_valid_database(config.path());
+                match open_validated_recovery_database(&config, store, marker) {
+                    Ok(connection) => {
+                        let marker_completed = !canonical_was_valid || cfg!(windows);
+                        if marker_completed && store.complete_durable_restore().is_err() {
+                            return Self::unavailable(config);
+                        }
+                        if marker_completed
+                            && (!reconcile_abandoned_cleanup(config.path())
+                                || !cleanup_abandoned_stages(config.path()))
+                        {
+                            return Self::unavailable(config);
+                        }
+                        Self::from_connection(config, connection)
+                    }
+                    Err(()) => Self::unavailable(config),
+                }
+            }
             Err(_) => Self::unavailable(config),
         }
     }
@@ -157,13 +175,20 @@ impl DatabaseState {
                 state.status = DatabaseStatus::Ready;
                 clear_restore_state().map_err(|_| "restore_failed".to_string())
             }
-            Err(()) => match open_validated_recovery_database(&state.config, store) {
-                Ok(connection) => {
-                    state.connection = Some(connection);
-                    state.status = DatabaseStatus::Ready;
-                    Err("restore_failed".into())
-                }
-                Err(()) => {
+            Err(()) => match store.read_restore_state() {
+                Ok(marker) => match open_validated_recovery_database(&state.config, store, marker) {
+                    Ok(connection) => {
+                        state.connection = Some(connection);
+                        state.status = DatabaseStatus::Ready;
+                        Err("restore_failed".into())
+                    }
+                    Err(()) => {
+                        state.connection = None;
+                        state.status = DatabaseStatus::Unavailable;
+                        Err("database_unavailable".into())
+                    }
+                },
+                Err(_) => {
                     state.connection = None;
                     state.status = DatabaseStatus::Unavailable;
                     Err("database_unavailable".into())
@@ -176,22 +201,172 @@ impl DatabaseState {
 fn open_validated_recovery_database(
     config: &DatabaseConfig,
     store: &BackupStore,
+    marker: Option<RestoreState>,
 ) -> Result<rusqlite::Connection, ()> {
     let canonical = config.path();
     if !is_valid_database(canonical) {
         let rollback = canonical.with_file_name("restore-rollback.sqlite3");
         let protective = canonical.parent().ok_or(())?.join("pre-restore.sqlite3");
-        let recovery_source = [&rollback, &protective]
-            .into_iter()
-            .find(|path| is_valid_database(path))
-            .ok_or(())?;
-        store
-            .recover_canonical_durably(recovery_source, canonical)
-            .map_err(|_| ())?;
+        let candidates: [&std::path::Path; 2] = match marker {
+            Some(RestoreState::Prepared) => [&protective, &rollback],
+            Some(RestoreState::LiveMoved | RestoreState::CandidateInstalled) | None => {
+                [&rollback, &protective]
+            }
+        };
+        let staging = canonical
+            .parent()
+            .ok_or(())?
+            .join("backup-restore/staging");
+        std::fs::create_dir_all(&staging).map_err(|_| ())?;
+        let mut recovered = false;
+        for source in candidates {
+            let stage = staging.join(format!("{}.sqlite3", uuid::Uuid::new_v4()));
+            match infrastructure::sqlite::stage_and_validate(source, &stage) {
+                Ok(_) => {
+                    store
+                        .recover_canonical_durably(&stage, canonical)
+                        .map_err(|_| ())?;
+                    recovered = true;
+                    break;
+                }
+                Err(_) => {
+                    if !commands::backup::remove_stage_with_evidence(&stage) {
+                        return Err(());
+                    }
+                }
+            }
+        }
+        if !recovered {
+            return Err(());
+        }
     }
-    let connection = open_database(config).map_err(|_| ())?;
+    open_existing_validated_database(config)
+}
+
+fn open_existing_validated_database(
+    config: &DatabaseConfig,
+) -> Result<rusqlite::Connection, ()> {
+    let connection = rusqlite::Connection::open_with_flags(
+        config.path(),
+        OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )
+    .map_err(|_| ())?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|_| ())?;
     validate_restored_database(&connection).map_err(|_| ())?;
     Ok(connection)
+}
+
+fn path_has_entry_or_error(path: &std::path::Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
+fn has_ambiguous_recovery_artifacts(canonical: &std::path::Path) -> bool {
+    let Some(root) = canonical.parent() else { return true };
+    [
+        root.join("restore-state.json.part"),
+        root.join("restore-recovery.sqlite3.part"),
+    ]
+    .iter()
+    .any(|path| path_has_entry_or_error(path))
+        || match recovery_sidecar_entries(root) {
+            Ok(entries) => !entries.is_empty(),
+            Err(()) => true,
+        }
+}
+
+fn recovery_sidecar_entries(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, ()> {
+    let mut sidecars = Vec::new();
+    for entry in std::fs::read_dir(root).map_err(|_| ())? {
+        let entry = entry.map_err(|_| ())?;
+        let name = entry.file_name();
+        if name.to_str().is_some_and(|name| name.starts_with("restore-state.json.previous-")) {
+            // Metadata is intentionally inspected without following symlinks. Even known
+            // sidecars are retained recovery evidence and make normal startup ambiguous.
+            std::fs::symlink_metadata(entry.path()).map_err(|_| ())?;
+            sidecars.push(entry.path());
+        }
+    }
+    Ok(sidecars)
+}
+
+fn has_recovery_evidence(canonical: &std::path::Path, store: &BackupStore) -> bool {
+    let Some(root) = canonical.parent() else { return true };
+    [
+        root.join("restore-rollback.sqlite3"),
+        root.join("pre-restore.sqlite3"),
+        root.join("restore-state.json.part"),
+        root.join("restore-recovery.sqlite3.part"),
+    ]
+    .iter()
+    .any(|path| path_has_entry_or_error(path))
+        || has_ambiguous_recovery_artifacts(canonical)
+        || store.read_restore_state().is_err()
+}
+
+fn cleanup_abandoned_stages(canonical: &std::path::Path) -> bool {
+    cleanup_abandoned_stages_using(canonical, &mut commands::backup::RealStageCleanup)
+}
+
+fn cleanup_abandoned_stages_using(canonical: &std::path::Path, cleanup: &mut impl commands::backup::StageCleanup) -> bool {
+    let Some(root) = canonical.parent() else { return false };
+    cleanup_abandoned_directory_using(&root.join("backup-restore/staging"), false, cleanup)
+}
+
+fn cleanup_abandoned_restore_artifacts(canonical: &std::path::Path) -> bool {
+    let Some(root) = canonical.parent() else { return false };
+    reconcile_abandoned_cleanup(canonical)
+        && cleanup_abandoned_directory(&root.join("backup-restore/staging"), false)
+        && cleanup_abandoned_directory(&root.join("backup-restore/snapshots"), true)
+}
+
+fn reconcile_abandoned_cleanup(canonical: &std::path::Path) -> bool {
+    reconcile_abandoned_cleanup_using(canonical, &mut commands::backup::RealStageCleanup)
+}
+
+fn reconcile_abandoned_cleanup_using(canonical: &std::path::Path, cleanup: &mut impl commands::backup::StageCleanup) -> bool {
+    let Some(root) = canonical.parent() else { return false };
+    commands::backup::reconcile_cleanup_evidence_using(&root.join("backup-restore/staging"), cleanup)
+        && commands::backup::reconcile_cleanup_evidence_using(&root.join("backup-restore/snapshots"), cleanup)
+}
+
+fn cleanup_abandoned_directory(directory: &std::path::Path, snapshots: bool) -> bool {
+    cleanup_abandoned_directory_using(directory, snapshots, &mut commands::backup::RealStageCleanup)
+}
+
+fn cleanup_abandoned_directory_using(directory: &std::path::Path, snapshots: bool, cleanup: &mut impl commands::backup::StageCleanup) -> bool {
+    // This is called only after its caller established the artifact is abandoned. In-memory
+    // confirmation tokens do not survive restart, so every unowned stage is abandoned.
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => return false,
+    };
+    let mut count = 0usize;
+    for entry in entries {
+        let Ok(entry) = entry else { return false };
+        let path = entry.path();
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            _ => return false,
+        };
+        let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        let recognized = if snapshots {
+            filename.strip_suffix(".sqlite3").and_then(|stem| stem.split_once('-')).is_some_and(|(timestamp, id)| timestamp.parse::<u64>().is_ok() && uuid::Uuid::parse_str(id).is_ok())
+        } else {
+            filename.strip_suffix(".sqlite3").is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+        };
+        if !recognized { return false; }
+        count += 1;
+        if count > 8 { return false; }
+        let removed = commands::backup::remove_stage_with_evidence_using(&path, cleanup);
+        if !removed { return false; }
+    }
+    true
 }
 
 fn is_valid_database(path: &std::path::Path) -> bool {
@@ -206,6 +381,109 @@ mod database_state_tests {
     use std::{cell::Cell, fs};
 
     use super::*;
+
+    #[test]
+    fn fallback_recovery_after_live_moved_crash_reclaims_stage_and_retains_sources() {
+        let directory = std::env::temp_dir().join(format!("r-a-recovery-stage-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let initialized = DatabaseState::open(config.clone()).unwrap();
+        let rollback = directory.join("restore-rollback.sqlite3");
+        let protective = directory.join("pre-restore.sqlite3");
+        initialized.with_read(|connection| {
+            create_snapshot(connection, &rollback).map_err(|_| "snapshot_failed".to_string())?;
+            create_snapshot(connection, &protective).map_err(|_| "snapshot_failed".to_string())?;
+            Ok(())
+        }).unwrap();
+        drop(initialized);
+        fs::remove_file(config.path()).unwrap(); // Simulate the durable live-to-rollback rename.
+        let rollback_before = fs::read(&rollback).unwrap();
+        let protective_before = fs::read(&protective).unwrap();
+        let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+        fs::write(&stage, b"candidate before stage-to-canonical rename").unwrap();
+        fs::write(directory.join("restore-state.json"), br#"{"state":"live_moved"}"#).unwrap();
+
+        let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert!(recovered.with_read(|_| Ok(())).is_ok());
+        assert!(config.path().is_file());
+        assert!(!stage.exists());
+        assert_eq!(fs::read(&rollback).unwrap(), rollback_before);
+        assert_eq!(fs::read(&protective).unwrap(), protective_before);
+        assert_eq!(BackupStore::new(&directory).read_restore_state().unwrap(), None);
+        drop(recovered);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_abandoned_stage_cleanup_failure_fails_closed_and_keeps_evidence() {
+        use std::os::unix::fs::symlink;
+
+        let directory = std::env::temp_dir().join(format!("r-a-abandoned-failure-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let initialized = DatabaseState::open(config.clone()).unwrap();
+        drop(initialized);
+        let target = directory.join("source");
+        fs::write(&target, b"must remain").unwrap();
+        let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+        symlink(&target, &stage).unwrap();
+        let evidence = stage.with_file_name(format!(".{}.cleanup-needed", stage.file_name().unwrap().to_string_lossy()));
+        fs::write(&evidence, b"restore-stage-cleanup-required\n").unwrap();
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert!(recovered.with_read(|_| Ok(())).is_err(), "startup must fail closed");
+        assert!(fs::symlink_metadata(&stage).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(&target).unwrap(), b"must remain");
+        assert!(evidence.exists(), "startup reconciliation must retain existing cleanup evidence");
+        drop(recovered);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn startup_removes_abandoned_stage_and_snapshot_only_without_recovery_evidence() {
+        let directory = std::env::temp_dir().join(format!("r-a-abandoned-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+        fs::create_dir_all(directory.join("backup-restore/snapshots")).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let initialized = DatabaseState::open(config.clone()).unwrap();
+        drop(initialized);
+        let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+        let snapshot = directory.join(format!("backup-restore/snapshots/{}-{}.sqlite3", 1, uuid::Uuid::new_v4()));
+        fs::write(&stage, b"stage").unwrap();
+        fs::write(&snapshot, b"snapshot").unwrap();
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert!(recovered.with_read(|_| Ok(())).is_ok());
+        assert!(!stage.exists());
+        assert!(!snapshot.exists());
+        drop(recovered);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn startup_preserves_abandoned_stage_while_restore_marker_is_active() {
+        let directory = std::env::temp_dir().join(format!("r-a-active-stage-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let initialized = DatabaseState::open(config.clone()).unwrap();
+        drop(initialized);
+        let stage = directory.join("backup-restore/staging/active.sqlite3");
+        fs::write(&stage, b"recovery-owned").unwrap();
+        fs::write(directory.join("restore-state.json"), br#"{"state":"candidate_installed"}"#).unwrap();
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert!(recovered.with_read(|_| Ok(())).is_ok());
+        assert!(stage.exists());
+        assert!(directory.join("restore-state.json").exists());
+        drop(recovered);
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn post_disruption_failure_recovers_ready_without_clearing_evidence() {
@@ -425,8 +703,9 @@ fn import_license_command(state: tauri::State<'_, commands::license::LicenseComm
 #[tauri::command]
 async fn choose_backup_destination_command<R: Runtime>(
     window: tauri::WebviewWindow<R>,
-) -> commands::backup::PathSelection {
-    commands::backup::select_callback_path(|complete| {
+    commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,
+) -> commands::backup::BackupDestinationSelection {
+    let selection = commands::backup::select_callback_path(|complete| {
         #[cfg(test)]
         {
             let _ = window;
@@ -443,15 +722,26 @@ async fn choose_backup_destination_command<R: Runtime>(
                 });
         }
     })
-    .await
+    .await;
+    let commands::backup::PathSelection::Selected { path } = selection else {
+        return commands::backup::BackupDestinationSelection::Cancelled;
+    };
+    let Ok(mut commands) = commands.lock() else {
+        return commands::backup::BackupDestinationSelection::Error {
+            code: "storage_unavailable",
+            message: "Backup storage is unavailable.",
+        };
+    };
+    commands.select_backup_destination(path)
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 async fn choose_restore_source_command<R: Runtime>(
     window: tauri::WebviewWindow<R>,
-) -> commands::backup::PathSelection {
-    commands::backup::select_callback_path(|complete| {
+    commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,
+) -> commands::backup::RestoreSourceSelection {
+    let selection = commands::backup::select_callback_path(|complete| {
         #[cfg(test)]
         {
             let _ = window;
@@ -469,7 +759,17 @@ async fn choose_restore_source_command<R: Runtime>(
                 });
         }
     })
-    .await
+    .await;
+    let commands::backup::PathSelection::Selected { path } = selection else {
+        return commands::backup::RestoreSourceSelection::Cancelled;
+    };
+    let Ok(mut commands) = commands.lock() else {
+        return commands::backup::RestoreSourceSelection::Error {
+            code: "storage_unavailable",
+            message: "Backup storage is unavailable.",
+        };
+    };
+    commands.select_restore_source(path)
 }
 
 #[cfg(feature = "desktop")]
@@ -568,10 +868,10 @@ fn create_backup_command(
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::CreateBackupRequest,
 ) -> commands::backup::BackupResponse {
-    let Ok(commands) = commands.lock() else {
+    let Ok(mut commands) = commands.lock() else {
         return commands::backup::BackupResponse::error("storage_unavailable");
     };
-    commands::backup::create_backup(&state, &commands, request)
+    commands::backup::create_backup(&state, &mut commands, request)
 }
 
 #[cfg(feature = "desktop")]
@@ -1221,7 +1521,7 @@ mod command_surface_tests {
             ("assign_product_primary_location_command", serde_json::json!({"product_id":1,"expected_revision":0,"location_id":1})),
             ("create_category_command", serde_json::json!({"name":"Blocked","fields":[]})),
             ("create_product_command", serde_json::json!({"sku":"BLOCKED","name":"Blocked","category_id":1,"purchase_price_centavos":1,"sale_price_centavos":2,"minimum_sale_price_centavos":1,"opening_quantity":1,"attribute_values":[]})),
-            ("prepare_restore_command", serde_json::json!({"source":"/not-read.sqlite3"})),
+            ("prepare_restore_command", serde_json::json!({"source_token":"unissued-token"})),
             ("confirm_restore_command", serde_json::json!({"token":"unknown","confirmed":true})),
         ];
         for (command, payload) in cases {
@@ -1252,10 +1552,8 @@ mod command_surface_tests {
         }
         let alerts = get_ipc_response(&window, request("list_inventory_alerts_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(alerts["kind"], "alerts");
-        let destination = std::env::temp_dir().join(format!("license-backup-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&destination).unwrap();
-        let backup = get_ipc_response(&window, request_with("create_backup_command", serde_json::json!({"destination": destination}))).unwrap().deserialize::<serde_json::Value>().unwrap();
-        assert_eq!(backup["kind"], "created", "{backup}");
+        let backup = get_ipc_response(&window, request_with("create_backup_command", serde_json::json!({"destination_token": "webview-supplied-token"}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(backup["code"], "destination_token_invalid", "{backup}");
     }
 
     #[test]
@@ -1396,7 +1694,7 @@ mod command_surface_tests {
             &window,
             request_with(
                 "create_backup_command",
-                serde_json::json!({ "destination": "/definitely/missing" }),
+                serde_json::json!({ "destination_token": "webview-supplied-token" }),
             ),
         )
         .is_ok());
@@ -1404,7 +1702,7 @@ mod command_surface_tests {
             &window,
             request_with(
                 "prepare_restore_command",
-                serde_json::json!({ "source": "/definitely/missing.sqlite3" }),
+                serde_json::json!({ "source_token": "unissued-token" }),
             ),
         )
         .is_ok());

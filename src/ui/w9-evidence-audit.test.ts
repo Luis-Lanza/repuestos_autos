@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -580,6 +581,43 @@ function assertReportsRegistrationAllowlist(libDiff: string, contract: "export" 
   assert.deepEqual(unexpectedLines, [], "unexpected Reports command registration drift");
 }
 
+function assertBackupRecoveryStartupAllowlist(libDiff: string) {
+  const changedLines = libDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /has_recovery_evidence/);
+  assert.match(libDiff, /reconcile_abandoned_cleanup/);
+  assert.match(libDiff, /cleanup_abandoned_restore_artifacts/);
+  assert.match(libDiff, /stage_and_validate\(source, &stage\)/);
+  assert.match(libDiff, /recover_canonical_durably\(&stage, canonical\)/);
+  const allowedStartupHunks = new Set([51, 53, 66, 178, 204, 210, 218, 224, 242, 360, 377]);
+  const allowedBackupRecoveryHunks = new Set([...allowedStartupHunks, 58, 192, 210, 243, 261, 385, 698, 706, 710, 717, 725, 729, 734, 742, 746, 754, 762, 766, 863, 866, 871, 874, 875, 878, 1516, 1524, 1528, 1547, 1555, 1559, 1689, 1697, 1701, 1705, 1709]);
+  const hunks = libDiff.split(/(?=^@@ )/m);
+  const changedHunks = hunks.filter((hunk) => /^[+-](?![+-])/m.test(hunk));
+  const unexpectedHunks = changedHunks.filter((hunk) => {
+    const header = hunk.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    return !header || !allowedBackupRecoveryHunks.has(Number(header[1]));
+  });
+  assert.deepEqual(unexpectedHunks, [], "unexpected backup recovery/lib command-seam hunk drift");
+  const startupLines = hunks.flatMap((hunk) => {
+    const header = hunk.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (!header || !allowedStartupHunks.has(Number(header[1]))) return [];
+    return hunk.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  });
+  assert.ok(startupLines.length > 0, "expected bounded backup recovery startup hunks");
+  assert.ok(changedLines.length >= startupLines.length, "recovery audit must not omit unrelated lib.rs changes");
+  const registrationLines = changedLines.filter((line) => ticket11RegistrationLineAllowlist.has(line.slice(1).trim()));
+  const registrationDiff = [
+    "+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {",
+    "+choose_backup_destination_command,",
+    "+choose_restore_source_command,",
+    "+create_backup_command,",
+    "+prepare_restore_command,",
+    "+confirm_restore_command",
+    ...registrationLines,
+    "+command_builder(builder.plugin(tauri_plugin_dialog::init()))",
+  ].join("\n");
+  assertTicket11RegistrationAllowlist(registrationDiff);
+}
+
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -624,8 +662,68 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
   ], "unexpected Reports capability diff");
 }
 
+const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
+  "src-tauri/src/lib.rs": "e945616a073644f9e406aa88bd7541756381e3c4b54d38c9971db17b17b82471",
+  "src-tauri/src/commands/backup.rs": "bb8475664d4aff302a37fbf53fd6fbc57843daeb99ceb612c9495e6b03c47958",
+  "src-tauri/tests/backup_restore.rs": "85792fffe9275deff7baeb009ef7f22566a1fd0ad38694ca25fc5e6d26539285",
+  "src/ui/w9-evidence-audit.test.ts": "ee826456f1f9bc6539fbf9aaef2245e12b15f8af4bdf1ac56bc9843dda4806f6",
+  "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "fb3567d1e813b7a31b43b9581774419cb233481b90f0db9815499921e417b4b6",
+  "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "ecb5c6da1186571a7ba76d3098325512d6206b453a49d7e9de296a9abb2c6665",
+  "src-tauri/src/infrastructure/sqlite/backup.rs": "ddd5303d41faf161dda7a11c19914099ed98bbb169f0d74628d81fc048fb7c77",
+  "src/commands/backup.ts": "22801231a00ee33709afa0e9ba5d67072775e9d1849edde32afafad693b00166",
+  "src/commands/backup.test.ts": "2cd2f99f37cc8f3dc28c9f9bc14b5a9fe90bd6c6dee49b7e235a81d44abd66ad",
+  "src/ui/backup/backup-flow.ts": "3070565d5f770fc9f8482c8951671663c612575390d8176ee7edf6b6b473de2f",
+  "src/ui/backup/backup-flow.test.ts": "cfcf08a4834f1aac93b4eb89a9cdf1d21dbe5c337fc49eda465096adb655fe46",
+  "src/ui/backup/backup-screen.ts": "b7a1fa63d38aec6719db217ee5fd0ad3f2495decfa29a4f96fc35f04234be809",
+  "src/ui/backup/backup-screen.mounted.test.ts": "a8edf1386a28fdab5096581b3e5d41705e50214ada534825f44aa13bd17a3daf",
+};
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+const backupIntegrityCandidatePaths = new Set([
+  "src-tauri/src/lib.rs",
+  "src-tauri/src/commands/backup.rs",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+  "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+  "src-tauri/src/infrastructure/sqlite/backup.rs",
+  "src-tauri/tests/backup_restore.rs",
+  "src/commands/backup.ts",
+  "src/commands/backup.test.ts",
+  "src/ui/backup/backup-flow.ts",
+  "src/ui/backup/backup-flow.test.ts",
+  "src/ui/backup/backup-screen.ts",
+  "src/ui/backup/backup-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+  "odd/tasks/backup-restore-integrity-hardening.md",
+]);
+
+function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffer>) {
+  for (const [path, content] of Object.entries(diffs)) {
+    const expected = backupIntegrityDiffSha256Allowlist[path];
+    assert.ok(expected, `backup-integrity diff is not allowlisted: ${path}`);
+    const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
+      ? content
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+      : content;
+    assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
+  }
+}
+
 function changedPathsFromGitOutput(trackedChanges: string, untrackedFiles: string): string[] {
   return [...new Set(`${trackedChanges}\n${untrackedFiles}`.split("\n").map((path) => path.trim()).filter(Boolean))].sort();
+}
+
+function isTrackedPath(path: string): boolean {
+  const trackedPaths = execFileSync(
+    "git",
+    ["ls-files", "--cached", "-z", "--", `:(literal)${path}`],
+    { cwd: root },
+  );
+  return trackedPaths.length > 0;
 }
 
 const preExistingUnrelatedOddTaskBaseline = new Set([
@@ -655,6 +753,17 @@ function assertW9ProtectedDiffPolicy(
     "package.json",
     "package-lock.json",
     "src-tauri/src/lib.rs",
+    "src-tauri/src/commands/backup.rs",
+    "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+    "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+    "src-tauri/src/infrastructure/sqlite/backup.rs",
+    "src/commands/backup.ts",
+    "src/commands/backup.test.ts",
+    "src/ui/backup/backup-flow.ts",
+    "src/ui/backup/backup-flow.test.ts",
+    "src/ui/backup/backup-screen.ts",
+    "src/ui/backup/backup-screen.mounted.test.ts",
+    "odd/tasks/backup-restore-integrity-hardening.md",
     "src/commands/catalog.ts",
     "src/commands/catalog.test.ts",
     "src-tauri/src/application/catalog/mod.rs",
@@ -776,6 +885,7 @@ function assertW9ProtectedDiffPolicy(
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("has_recovery_evidence")) assertBackupRecoveryStartupAllowlist(libDiff);
     else assertTicket11RegistrationAllowlist(libDiff);
   }
 }
@@ -849,6 +959,89 @@ test("W9 audits Spanish presentation, money, whole units, and non-color state cu
   assert.match(css, /data-ui-badge/);
   assert.match(css, /font-variant-numeric: tabular-nums/);
   assert.match(read("openspec/changes/archive/2026-09-14-define-frontend-ui-ux-visual-system/design.md"), /contrast[\s\S]*validate/i);
+});
+
+test("W9 enforces the named backup-integrity candidate policy and its backend/frontend evidence", () => {
+  const backupPaths = [
+    "src-tauri/src/commands/backup.rs",
+    "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+    "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+    "src-tauri/src/infrastructure/sqlite/backup.rs",
+    "src/commands/backup.ts",
+    "src/commands/backup.test.ts",
+    "src/ui/backup/backup-flow.ts",
+    "src/ui/backup/backup-flow.test.ts",
+    "src/ui/backup/backup-screen.ts",
+    "src/ui/backup/backup-screen.mounted.test.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+    "odd/tasks/backup-restore-integrity-hardening.md",
+  ];
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(
+    backupPaths,
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ));
+  assert.throws(() => assertW9ProtectedDiffPolicy(
+    [...backupPaths, "src-tauri/src/commands/unrelated.rs"],
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ), /unexpected protected-path drift/);
+
+  const backend = read("src-tauri/src/commands/backup.rs");
+  assert.match(backend, /CleanupResult::DurablyEvidencedFailure => BackupResponse::Created/);
+  assert.match(backend, /CleanupResult::UnaccountedFailure => BackupResponse::error\("storage_unavailable"\)/);
+  assert.doesNotMatch(backend, /let _ = remove_stage_with_evidence_using/);
+  assert.match(backend, /published_backup_with_snapshot_cleanup_failure_returns_created_warning_and_evidence/);
+  assert.match(backend, /restore-stage-cleanup-required\\n/);
+  const frontend = read("src/commands/backup.ts");
+  assert.match(frontend, /cleanup_warning: boolean/);
+  assert.match(read("src/ui/backup/backup-flow.ts"), /cleanup_warning \? "La copia fue creada/);
+  assert.match(read("odd/tasks/backup-restore-integrity-hardening.md"), /T9 Close Linux cleanup-accounting gaps/);
+});
+
+test("W9 binds every changed backup-integrity file to its exact unified-zero diff", () => {
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  const changedCandidates = changedPaths.filter((path) => backupIntegrityCandidatePaths.has(path));
+  const diffs: Record<string, string | Buffer> = {};
+  for (const path of changedCandidates) {
+    diffs[path] = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path));
+  }
+  assertBackupIntegrityDiffAllowlist(diffs);
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  if (candidate) {
+    assert.throws(
+      () => assertBackupIntegrityDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\n+arbitrary candidate drift` }),
+      /unexpected backup-integrity diff content/,
+    );
+  }
+  assert.throws(
+    () => assertBackupIntegrityDiffAllowlist({ "src-tauri/src/commands/backup.rs": "+unallowlisted candidate" }),
+    /unexpected backup-integrity diff content/,
+  );
+});
+
+test("W9 binds permitted untracked task-file bytes and rejects a one-byte alteration", () => {
+  const path = "odd/tasks/backup-restore-integrity-hardening.md";
+  assert.equal(isTrackedPath(path), false);
+  const contents = readFileSync(resolve(root, path));
+  assert.doesNotThrow(() => assertBackupIntegrityDiffAllowlist({ [path]: contents }));
+
+  const alteredContents = Buffer.from(contents);
+  alteredContents[0] ^= 1;
+  assert.throws(
+    () => assertBackupIntegrityDiffAllowlist({ [path]: alteredContents }),
+    /unexpected backup-integrity diff content/,
+  );
 });
 
 test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam", () => {

@@ -204,6 +204,7 @@ fn lifecycle_facts(path: &Path) -> Vec<Vec<Vec<String>>> {
     .collect()
 }
 
+#[cfg(windows)]
 #[test]
 fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root() {
     let directory = temporary_directory("publish");
@@ -211,7 +212,7 @@ fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root()
     let selected_root = directory.join("USB á");
     let destination = selected_root.join("backup-restore");
     fs::create_dir_all(&selected_root).unwrap();
-    fs::write(&snapshot, b"consistent snapshot").unwrap();
+    versioned_database(&snapshot, CURRENT_SCHEMA_VERSION);
 
     let store = BackupStore::new(directory.join("app-data"));
     let published = store
@@ -219,10 +220,16 @@ fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root()
         .unwrap();
 
     assert!(destination.is_dir());
-    assert_eq!(fs::read(&published.path).unwrap(), b"consistent snapshot");
-    assert!(!destination
-        .join("backup-20260827T204000Z.sqlite3.part")
-        .exists());
+    assert_eq!(
+        repuestos_autos::infrastructure::sqlite::validate_restored_database(&Connection::open(&published.path).unwrap()),
+        Ok(()),
+    );
+    let entries = fs::read_dir(&destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(entries.iter().any(|name| name == "backup-20260827T204000Z.sqlite3"));
+    assert!(!entries.iter().any(|name| name.starts_with(".backup-20260827T204000Z.sqlite3.") && name.ends_with(".part")), "randomized publication temporary must be gone: {entries:?}");
     assert_eq!(
         store
             .publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3")
@@ -244,6 +251,7 @@ fn publishes_a_synced_non_overwriting_backup_beneath_an_existing_selected_root()
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(windows)]
 #[test]
 fn rejects_a_selected_root_that_disappears_before_publication_without_recreating_it() {
     let directory = temporary_directory("removed-selected-root");
@@ -261,6 +269,43 @@ fn rejects_a_selected_root_that_disappears_before_publication_without_recreating
         Err(StorageError::StorageUnavailable)
     );
     assert!(!selected_root.exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn accepts_a_fixed_ntfs_destination_for_publication() {
+    let directory = temporary_directory("fixed-ntfs-validation");
+    fs::create_dir_all(&directory).unwrap();
+
+    assert_eq!(BackupStore::validate_destination(&directory), Ok(()));
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn rejects_backup_destinations_when_ntfs_cannot_be_established() {
+    let directory = temporary_directory("unsupported-backup-destination");
+    fs::create_dir_all(&directory).unwrap();
+    assert_eq!(
+        BackupStore::validate_destination(&directory),
+        Err(StorageError::UnsupportedDestination),
+    );
+
+    let snapshot = directory.join("snapshot.sqlite3");
+    fs::write(&snapshot, b"snapshot").unwrap();
+    let destination = directory.join("selected-root").join("backup-restore");
+    assert_eq!(
+        BackupStore::new(directory.join("app-data")).publish_snapshot(
+            &snapshot,
+            &destination,
+            "backup.sqlite3",
+        ),
+        Err(StorageError::UnsupportedDestination),
+        "the production publication entry point must perform real platform validation",
+    );
+    assert!(!destination.exists(), "rejected destinations are not created");
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1210,6 +1255,28 @@ fn category_count(state: &DatabaseState, category_name: &str) -> i64 {
         .unwrap()
 }
 
+#[cfg(windows)]
+#[test]
+fn startup_recovery_durably_installs_the_migrated_fallback_stage() {
+    let directory = temporary_directory("recover-migrated-fallback");
+    fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+    let config = production_database_config(&directory);
+    let fallback = directory.join("restore-rollback.sqlite3");
+    versioned_database(&fallback, CURRENT_SCHEMA_VERSION - 1);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert!(recovered.with_read(|_| Ok(())).is_ok(), "recovery must reach Ready");
+    let canonical = Connection::open_with_flags(config.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(canonical.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), CURRENT_SCHEMA_VERSION);
+    assert!(config.path().is_file());
+    assert_eq!(BackupStore::new(&directory).read_restore_state().unwrap(), None);
+    drop(canonical);
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_installed_markers() {
     for (name, state) in [
@@ -1225,6 +1292,9 @@ fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_instal
         database_with_category(config.path(), "canonical");
         database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
         database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+        let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+        fs::create_dir_all(stage.parent().unwrap()).unwrap();
+        fs::write(&stage, b"unowned-candidate-stage").unwrap();
         let store = BackupStore::new(&directory);
         write_restore_state(&directory, state);
 
@@ -1241,9 +1311,226 @@ fn startup_recovery_keeps_valid_canonical_data_for_prepared_and_candidate_instal
             "{state:?}"
         );
         assert!(directory.join("pre-restore.sqlite3").exists(), "{state:?}");
+        #[cfg(windows)]
+        assert!(!stage.exists(), "completed durable marker must release an unowned stage: {state:?}");
+        #[cfg(not(windows))]
+        assert!(stage.exists(), "unsupported durable marker remains recovery-owned: {state:?}");
         drop(recovered);
         fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[test]
+fn malformed_restore_marker_fails_closed_and_retains_valid_recovery_evidence() {
+    let directory = temporary_directory("malformed-recovery-marker");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    database_with_category(&rollback, "rollback");
+    fs::write(directory.join("restore-state.json"), br#"{"state":"unknown"}"#).unwrap();
+    let before = fs::read(&rollback).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert!(!config.path().exists());
+    assert_eq!(fs::read(&rollback).unwrap(), before);
+    assert!(directory.join("restore-state.json").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn startup_rejects_partial_current_version_canonical_without_replacing_it_with_empty_database() {
+    let directory = temporary_directory("partial-current-canonical");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "partial-canonical");
+    Connection::open(config.path()).unwrap().execute_batch("DROP TABLE location_schema;").unwrap();
+    let canonical_before = fs::read(config.path()).unwrap();
+    database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback-fallback");
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    #[cfg(not(windows))]
+    {
+        assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+        assert_eq!(fs::read(config.path()).unwrap(), canonical_before);
+    }
+    #[cfg(windows)]
+    assert_eq!(category_count(&recovered, "rollback-fallback"), 1);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn failed_candidate_migration_retains_source_and_does_not_create_canonical() {
+    let directory = temporary_directory("failed-recovery-migration");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    versioned_database(&rollback, 17);
+    Connection::open(&rollback).unwrap().execute_batch("DROP TABLE inventory_movements;").unwrap();
+    let source_before = fs::read(&rollback).unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::LiveMoved);
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert!(!config.path().exists());
+    assert_eq!(fs::read(&rollback).unwrap(), source_before);
+    assert_eq!(store.read_restore_state().unwrap(), Some(RestoreState::LiveMoved));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn unexpected_or_malformed_restore_sidecars_without_canonical_fail_closed() {
+    for sidecar in ["restore-state.json.previous-8", "restore-state.json.previous-0"] {
+        let directory = temporary_directory("sidecar-without-canonical");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(sidecar), b"malformed sidecar").unwrap();
+        let config = production_database_config(&directory);
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{sidecar}");
+        assert!(!config.path().exists(), "{sidecar} must not trigger fresh database creation");
+        assert!(directory.join(sidecar).exists(), "{sidecar} remains as evidence");
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn fresh_start_without_recovery_evidence_creates_a_valid_database() {
+    let directory = temporary_directory("fresh-start-no-recovery-evidence");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let store = BackupStore::new(&directory);
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(state.with_read(|_| Ok(())).unwrap(), ());
+    assert!(config.path().is_file());
+    assert_eq!(store.read_restore_state().unwrap(), None);
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_restore_marker_with_valid_canonical_fails_closed_without_modifying_database() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary_directory("dangling-restore-marker");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "canonical");
+    let canonical_before = fs::read(config.path()).unwrap();
+    symlink(directory.join("missing-marker-target"), directory.join("restore-state.json")).unwrap();
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert_eq!(fs::read(config.path()).unwrap(), canonical_before);
+    assert!(fs::symlink_metadata(directory.join("restore-state.json")).is_ok());
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn ambiguous_restore_temporaries_and_sidecars_fail_closed_without_modifying_canonical() {
+    for artifact in ["restore-state.json.part", "restore-recovery.sqlite3.part", "restore-state.json.previous-0"] {
+        let directory = temporary_directory("ambiguous-recovery-artifact");
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        database_with_category(config.path(), "canonical");
+        let canonical_before = fs::read(config.path()).unwrap();
+        fs::write(directory.join(artifact), b"malformed recovery artifact").unwrap();
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{artifact}");
+        assert_eq!(fs::read(config.path()).unwrap(), canonical_before, "{artifact}");
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn prepared_recovery_prefers_protective_source_when_both_fallbacks_validate() {
+    let directory = temporary_directory("prepared-recovery-source-precedence");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    let protective = directory.join("pre-restore.sqlite3");
+    database_with_category(&rollback, "rollback");
+    database_with_category(&protective, "protective");
+    let rollback_before = fs::read(&rollback).unwrap();
+    let protective_before = fs::read(&protective).unwrap();
+    let store = BackupStore::new(&directory);
+    write_restore_state(&directory, RestoreState::Prepared);
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &store);
+
+    assert_eq!(category_count(&state, "protective"), 1);
+    assert_eq!(category_count(&state, "rollback"), 0);
+    assert_eq!(fs::read(&protective).unwrap(), protective_before);
+    assert_eq!(fs::read(&rollback).unwrap(), rollback_before);
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn markerless_recovery_selects_rollback_before_protective_without_creating_empty_database() {
+    for (name, canonical_setup) in [("missing", false), ("invalid", true)] {
+        let directory = temporary_directory(&format!("markerless-{name}"));
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        if canonical_setup {
+            fs::write(config.path(), b"invalid canonical").unwrap();
+        }
+        database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
+        database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+
+        let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(category_count(&recovered, "rollback"), 1, "{name}");
+        assert_eq!(category_count(&recovered, "protective"), 0, "{name}");
+        assert!(config.path().exists(), "{name}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn fallback_recovery_after_live_moved_crash_removes_abandoned_candidate_stage() {
+    let directory = temporary_directory("recover-live-moved-with-stage");
+    fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
+    let config = production_database_config(&directory);
+    let rollback = directory.join("restore-rollback.sqlite3");
+    let protective = directory.join("pre-restore.sqlite3");
+    database_with_category(&rollback, "rollback-recovered");
+    database_with_category(&protective, "protective-retained");
+    let stage = directory.join(format!("backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4()));
+    fs::write(&stage, b"candidate before stage-to-canonical rename").unwrap();
+    write_restore_state(&directory, RestoreState::LiveMoved);
+    let rollback_before = fs::read(&rollback).unwrap();
+    let protective_before = fs::read(&protective).unwrap();
+
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(category_count(&recovered, "rollback-recovered"), 1);
+    assert!(config.path().is_file(), "fallback must be installed as canonical");
+    assert!(!stage.exists(), "the abandoned pre-rename candidate stage is reclaimed");
+    assert_eq!(fs::read(&rollback).unwrap(), rollback_before, "rollback evidence remains retained");
+    assert_eq!(fs::read(&protective).unwrap(), protective_before, "protective evidence remains retained");
+    assert_eq!(BackupStore::new(&directory).read_restore_state().unwrap(), None);
+    drop(recovered);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -1495,10 +1782,14 @@ fn aborts_before_replacement_when_protective_backup_fails() {
 #[test]
 fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes() {
     let request: PrepareRestoreRequest =
-        serde_json::from_str(r#"{"source":"/media/USB/backup.sqlite3"}"#).unwrap();
-    assert_eq!(request.source, PathBuf::from("/media/USB/backup.sqlite3"));
+        serde_json::from_str(r#"{"source_token":"native-picker-token"}"#).unwrap();
+    assert_eq!(request.source_token, "native-picker-token");
     assert!(serde_json::from_str::<PrepareRestoreRequest>(
-        r#"{"source":"backup.sqlite3","unexpected":true}"#
+        r#"{"source":"/media/USB/backup.sqlite3"}"#
+    )
+    .is_err());
+    assert!(serde_json::from_str::<PrepareRestoreRequest>(
+        r#"{"source_token":"token","unexpected":true}"#
     )
     .is_err());
     assert_eq!(
@@ -1532,6 +1823,19 @@ fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes(
             );
         }
     }
+    let created = serde_json::to_value(BackupResponse::Created {
+        file_name: "backup-safe-name.sqlite3".into(),
+        created_at_unix_seconds: 1,
+        size_bytes: 2,
+        schema_version: 23,
+        durability_warning: true,
+        cleanup_warning: false,
+    }).unwrap();
+    assert_eq!(created["file_name"], "backup-safe-name.sqlite3");
+    assert_eq!(created["durability_warning"], true);
+    assert_eq!(created["cleanup_warning"], false);
+    assert!(created.get("path").is_none(), "created backup responses never disclose an absolute path");
+
     assert_eq!(
         ALLOWED_COMMANDS,
         [
@@ -1558,7 +1862,7 @@ fn backup_command_boundary_serializes_only_allowlisted_stable_and_safe_outcomes(
             &state,
             &mut commands,
             PrepareRestoreRequest {
-                source: PathBuf::from("/untrusted/internal.sqlite3"),
+                source_token: "unissued-token".into(),
             }
         ),
         BackupResponse::error("database_unavailable")

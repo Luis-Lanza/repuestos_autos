@@ -191,8 +191,8 @@ test("unlicensed startup defaults to activation and recovery exposes only safe n
     if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
     if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
     if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
-    if (command === "choose_backup_destination_command") return { kind: "selected", path: "C:\\\\backup" };
-    if (command === "create_backup_command") { backups++; return { kind: "created", path: "C:\\\\backup\\\\data.db", created_at_unix_seconds: 1, size_bytes: 32, schema_version: 1 }; }
+    if (command === "choose_backup_destination_command") return { kind: "selected", token: "recovery-destination-token" };
+    if (command === "create_backup_command") { backups++; return { kind: "created", file_name: "backup-recovery.sqlite3", created_at_unix_seconds: 1, size_bytes: 32, schema_version: 6, durability_warning: true, cleanup_warning: false }; }
     if (command === "choose_restore_source_command" || command === "prepare_restore_command" || command === "confirm_restore_command") { restores++; throw new Error("restore IPC must not run"); }
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -207,6 +207,8 @@ test("unlicensed startup defaults to activation and recovery exposes only safe n
   assert.ok(screen.getByText("La restauración está disponible con una licencia activa."));
   await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
   await waitFor(() => assert.equal(backups, 1));
+  assert.ok(await screen.findByText("backup-recovery.sqlite3"));
+  assert.match((await screen.findByRole("alert")).textContent ?? "", /durabilidad del directorio final/);
   assert.equal(restores, 0);
 });
 

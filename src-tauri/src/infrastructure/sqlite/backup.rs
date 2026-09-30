@@ -5,8 +5,7 @@ use std::time::Duration;
 use rusqlite::{backup::Backup, Connection, OpenFlags};
 
 use super::{
-    migrate_if_needed, validate_foreign_keys, validate_version_eighteen_schema,
-    CURRENT_SCHEMA_VERSION,
+    migrate_if_needed, validate_foreign_keys, CURRENT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,8 +58,11 @@ pub fn stage_and_validate(
 }
 
 pub fn validate_restored_database(connection: &Connection) -> Result<(), BackupValidationError> {
-    metadata(connection)?;
-    validate_version_eighteen_schema(connection)
+    let version = metadata(connection)?.schema_version;
+    if version != CURRENT_SCHEMA_VERSION {
+        return Err(BackupValidationError::InvalidBackup);
+    }
+    super::validate_version_twenty_three_schema(connection)
         .map_err(|_| BackupValidationError::InvalidBackup)?;
     validate_foreign_keys(connection).map_err(|_| BackupValidationError::InvalidBackup)
 }

@@ -13,6 +13,17 @@ const LIVE_MOVED: &[u8] = br#"{"state":"live_moved"}"#;
 const CANDIDATE_INSTALLED: &[u8] = br#"{"state":"candidate_installed"}"#;
 const MARKER_BACKUP_LIMIT: usize = 8;
 
+#[cfg(any(windows, test))]
+fn is_internal_recovery_migration_stage(root: &Path, source: &Path) -> bool {
+    let staging = root.join("backup-restore/staging");
+    source.parent() == Some(staging.as_path())
+        && source.extension().is_some_and(|extension| extension == "sqlite3")
+        && source
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| uuid::Uuid::parse_str(name).is_ok())
+}
+
 #[rustfmt::skip]
 #[derive(Clone, Copy)]
 enum VerificationPhase<'a> {
@@ -59,7 +70,7 @@ fn verify_test_phase(root: &Path, phase: VerificationPhase<'_>, inspect: impl Fn
     }
     let supported = match phase {
         VerificationPhase::Prepare { stage, protective, canonical: actual } => stage.starts_with(root.join("backup-restore/staging")) && protective == root.join("pre-restore.sqlite3") && actual == canonical && inspect(&marker)?.is_none() && required(stage)? && required(protective)? && required(actual)?,
-        VerificationPhase::Recovery { marker: actual, source, canonical: target } => actual == marker && target == canonical && [root.join("restore-rollback.sqlite3"), root.join("pre-restore.sqlite3")].contains(&source.to_path_buf()) && required(source)? && optional(target)? && active(actual)?,
+        VerificationPhase::Recovery { marker: actual, source, canonical: target } => actual == marker && target == canonical && ([root.join("restore-rollback.sqlite3"), root.join("pre-restore.sqlite3")].contains(&source.to_path_buf()) || is_internal_recovery_migration_stage(root, source)) && required(source)? && optional(target)? && (inspect(actual)?.is_none() || active(actual)?),
         VerificationPhase::Completion { marker: actual, canonical: target } => actual == marker && target == canonical && required(target)? && (inspect(&marker)?.is_none() || active(&marker)?),
     };
     if supported { Ok(()) } else { Err(io::ErrorKind::Unsupported.into()) }
@@ -514,8 +525,10 @@ mod platform {
             }
             VerificationPhase::Recovery { marker, source, canonical } => {
                 let sources = [root.join("restore-rollback.sqlite3"), root.join("pre-restore.sqlite3")];
-                if marker != marker_expected || canonical != canonical_expected || !sources.iter().any(|path| source == path) || !valid_marker(marker)? { return Err(io::ErrorKind::Unsupported.into()); }
-                required.extend([marker.to_path_buf(), source.to_path_buf()]); if inspect_presence(canonical)? { required.push(canonical.to_path_buf()); }
+                let migration_stage = is_internal_recovery_migration_stage(root, source);
+                if marker != marker_expected || canonical != canonical_expected || (!sources.iter().any(|path| source == path) && !migration_stage) || (inspect_presence(marker)? && !valid_marker(marker)?) { return Err(io::ErrorKind::Unsupported.into()); }
+                if inspect_presence(marker)? { required.push(marker.to_path_buf()); } required.push(source.to_path_buf()); if inspect_presence(canonical)? { required.push(canonical.to_path_buf()); }
+                if migration_stage { stage_path = Some(source); }
             }
             VerificationPhase::Completion { marker, canonical } => {
                 if marker != marker_expected || canonical != canonical_expected || !inspect_presence(canonical)? || (inspect_presence(marker)? && !valid_marker(marker)?) { return Err(io::ErrorKind::Unsupported.into()); }
@@ -1371,6 +1384,45 @@ mod tests {
             })
     }
 
+    #[test]
+    fn recovery_accepts_only_uuid_named_same_volume_migration_stages_or_retained_fallbacks() {
+        let stage = PathBuf::from(format!(
+            "/app/backup-restore/staging/{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let transitions = protocol(RecordingFs::seeded(&[
+            ("/app/repuestos-autos.sqlite3", b"live"),
+            ("/app/pre-restore.sqlite3", b"protective"),
+            ("/app/restore-rollback.sqlite3", b"rollback"),
+            ("/app/restore-state.json", LIVE_MOVED),
+        ]));
+        transitions.fs.0.borrow_mut().files.insert(stage.clone(), b"validated-migrated-stage".to_vec());
+
+        transitions.recover_canonical_durably(&stage, Path::new(CANONICAL)).unwrap();
+        assert_eq!(transitions.fs.0.borrow().files.get(Path::new(CANONICAL)), Some(&b"validated-migrated-stage".to_vec()));
+
+        for arbitrary in [
+            PathBuf::from("/app/backup-restore/staging/not-a-uuid.sqlite3"),
+            PathBuf::from(format!("/app/other-staging/{}.sqlite3", uuid::Uuid::new_v4())),
+            PathBuf::from(format!("/other-volume/backup-restore/staging/{}.sqlite3", uuid::Uuid::new_v4())),
+        ] {
+            let rejected = protocol(RecordingFs::seeded(&[
+                ("/app/repuestos-autos.sqlite3", b"live"),
+                ("/app/restore-rollback.sqlite3", b"rollback"),
+                ("/app/restore-state.json", LIVE_MOVED),
+            ]));
+            rejected.fs.0.borrow_mut().files.insert(arbitrary.clone(), b"arbitrary".to_vec());
+            assert!(rejected.recover_canonical_durably(&arbitrary, Path::new(CANONICAL)).is_err(), "accepted {arbitrary:?}");
+            assert!(no_mutation(&rejected), "mutated files for {arbitrary:?}");
+        }
+
+        for retained in [Path::new("/app/restore-rollback.sqlite3"), Path::new(PROTECTIVE)] {
+            let accepted = completed_cycle();
+            accepted.fs.0.borrow_mut().files.insert(PathBuf::from("/app/restore-rollback.sqlite3"), b"rollback".to_vec());
+            accepted.recover_canonical_durably(retained, Path::new(CANONICAL)).unwrap();
+        }
+    }
+
     #[rustfmt::skip]
     #[test]
     fn malformed_sidecar_and_recovery_preconditions_fail_before_mutation() {
@@ -1378,13 +1430,17 @@ mod tests {
         malformed.fs.0.borrow_mut().files.insert("/app/restore-state.json.previous-0".into(), b"malformed".to_vec());
         assert!(malformed.prepare_durable_restore(Path::new(STAGE), Path::new(PROTECTIVE), Path::new(CANONICAL)).is_err());
         assert!(no_mutation(&malformed));
-        for (marker, source, canonical) in [(None, "/app/restore-rollback.sqlite3", CANONICAL), (Some(b"invalid".as_slice()), "/app/restore-rollback.sqlite3", CANONICAL), (Some(PREPARED), "/app/wrong.sqlite3", CANONICAL), (Some(PREPARED), "/app/restore-rollback.sqlite3", "/app/wrong.sqlite3")] {
+        for (marker, source, canonical) in [(Some(b"invalid".as_slice()), "/app/restore-rollback.sqlite3", CANONICAL), (Some(PREPARED), "/app/wrong.sqlite3", CANONICAL), (Some(PREPARED), "/app/restore-rollback.sqlite3", "/app/wrong.sqlite3")] {
             let transitions = completed_cycle();
             transitions.fs.0.borrow_mut().files.insert("/app/restore-rollback.sqlite3".into(), b"rollback".to_vec());
             if let Some(bytes) = marker { transitions.fs.0.borrow_mut().files.insert("/app/restore-state.json".into(), bytes.to_vec()); }
             assert!(transitions.recover_canonical_durably(Path::new(source), Path::new(canonical)).is_err());
             assert!(no_mutation(&transitions));
         }
+        let markerless = completed_cycle();
+        markerless.fs.0.borrow_mut().files.remove(Path::new("/app/restore-state.json"));
+        markerless.fs.0.borrow_mut().files.insert("/app/restore-rollback.sqlite3".into(), b"rollback".to_vec());
+        markerless.recover_canonical_durably(Path::new("/app/restore-rollback.sqlite3"), Path::new(CANONICAL)).unwrap();
     }
 
     #[rustfmt::skip]
