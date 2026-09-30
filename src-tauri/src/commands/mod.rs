@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod confirm_sale;
 pub mod dashboard;
 pub mod inventory;
+pub mod license;
 pub mod movement_ledger;
 pub mod onboarding;
 pub mod post_sale;

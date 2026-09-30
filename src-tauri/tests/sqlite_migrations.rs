@@ -11,6 +11,8 @@ use repuestos_autos::infrastructure::sqlite::{
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 const LEGACY_FIXTURE: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
+const VERSION_ONE_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0001_confirm_sale.sql");
 const VERSION_TWO_MIGRATION: &str =
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql");
 const VERSION_THREE_MIGRATION: &str =
@@ -52,6 +54,20 @@ const VERSION_SIXTEEN_MIGRATION: &str =
 const VERSION_SEVENTEEN_MIGRATION: &str = include_str!(
     "../src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"
 );
+const VERSION_EIGHTEEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"
+);
+const VERSION_NINETEEN_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql"
+);
+const VERSION_TWENTY_MIGRATION: &str =
+    include_str!("../src/infrastructure/sqlite/migrations/0020_product_locations.sql");
+const VERSION_TWENTY_ONE_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql"
+);
+const VERSION_TWENTY_TWO_MIGRATION: &str = include_str!(
+    "../src/infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql"
+);
 fn temporary_directory(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "repuestos-autos-{name}-{}-{}",
@@ -68,6 +84,94 @@ fn create_legacy_database(directory: &Path) -> PathBuf {
     let connection = Connection::open(&path).unwrap();
     connection.execute_batch(LEGACY_FIXTURE).unwrap();
     path
+}
+
+fn create_v22_demo_database(directory: &Path) -> (PathBuf, repuestos_autos::infrastructure::sqlite::DatabaseConfig) {
+    std::fs::create_dir_all(directory).unwrap();
+    let config = production_database_config(directory);
+    let path = config.path().to_path_buf();
+    let connection = Connection::open(&path).unwrap();
+    for (version, migration) in [
+        (1, VERSION_ONE_MIGRATION),
+        (2, VERSION_TWO_MIGRATION),
+        (3, VERSION_THREE_MIGRATION),
+        (4, VERSION_FOUR_MIGRATION),
+        (5, VERSION_FIVE_MIGRATION),
+        (6, VERSION_SIX_MIGRATION),
+        (7, VERSION_SEVEN_MIGRATION),
+        (8, VERSION_EIGHT_MIGRATION),
+        (9, VERSION_NINE_MIGRATION),
+        (10, VERSION_TEN_MIGRATION),
+        (11, VERSION_ELEVEN_MIGRATION),
+        (12, VERSION_TWELVE_MIGRATION),
+        (13, VERSION_THIRTEEN_MIGRATION),
+        (14, VERSION_FOURTEEN_MIGRATION),
+        (15, VERSION_FIFTEEN_MIGRATION),
+        (16, VERSION_SIXTEEN_MIGRATION),
+        (17, VERSION_SEVENTEEN_MIGRATION),
+        (18, VERSION_EIGHTEEN_MIGRATION),
+        (19, VERSION_NINETEEN_MIGRATION),
+        (20, VERSION_TWENTY_MIGRATION),
+        (21, VERSION_TWENTY_ONE_MIGRATION),
+        (22, VERSION_TWENTY_TWO_MIGRATION),
+    ] {
+        if version == 19 {
+            connection.pragma_update(None, "foreign_keys", false).unwrap();
+        }
+        connection.execute_batch(migration).unwrap();
+        connection.pragma_update(None, "user_version", version).unwrap();
+        if version == 19 {
+            connection.pragma_update(None, "foreign_keys", true).unwrap();
+        }
+    }
+    assert_eq!(
+        connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+        22,
+        "demo fixture must stop before the schema-v23 cleanup",
+    );
+    for (table, column) in [
+        ("products", "low_stock_threshold"),
+        ("products", "primary_location_id"),
+        ("sale_lines", "unit_cost_snapshot_centavos"),
+    ] {
+        assert!(connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+            rusqlite::params![table, column],
+            |row| row.get::<_, bool>(0),
+        ).unwrap(), "schema-v22 fixture is missing {table}.{column}");
+    }
+    for (sku, stock, search) in [
+        ("FLT-001", 8_i64, "flt-001 filtro de aceite filtros toyota "),
+        ("BUJ-001", 4_i64, "buj-001 bujia archivada bujias  "),
+    ] {
+        assert_eq!(connection.query_row(
+            "SELECT b.quantity FROM products p JOIN stock_balances b ON b.product_id = p.id WHERE p.sku = ?1",
+            [sku], |row| row.get::<_, i64>(0),
+        ).unwrap(), stock);
+        assert_eq!(connection.query_row(
+            "SELECT content FROM catalog_product_search f JOIN products p ON p.id = f.product_id WHERE p.sku = ?1",
+            [sku], |row| row.get::<_, String>(0),
+        ).unwrap(), search);
+    }
+    drop(connection);
+    (path, config)
+}
+
+fn assert_v22_seed_is_preserved(name: &str, setup_sql: &str) {
+    let directory = temporary_directory(name);
+    let (path, config) = create_v22_demo_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(setup_sql).unwrap();
+    drop(connection);
+
+    let connection = open_database(&config).unwrap();
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM products WHERE sku = 'FLT-001'", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "{name}");
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM categories WHERE id = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "{name}");
+    assert!(connection.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+    drop(connection);
+    drop(open_database(&config).unwrap());
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 fn create_version_four_database(directory: &Path) -> PathBuf {
     let path = create_legacy_database(directory);
@@ -327,6 +431,146 @@ fn rejects_foreign_key_corruption_without_changing_legacy_rows_or_version() {
     assert_eq!(legacy_facts(&path), before);
     std::fs::remove_dir_all(directory).unwrap();
 }
+#[test]
+fn schema_v23_fresh_database_has_no_demo_catalog_and_reopens_idempotently() {
+    let directory = temporary_directory("migration-v23-fresh-empty");
+    let config = production_database_config(&directory);
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&config.path()), 23);
+    for table in ["categories", "products", "stock_balances", "product_searchable_values", "catalog_product_search"] {
+        assert_eq!(connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 0, "{table}");
+    }
+    assert!(connection.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+    drop(connection);
+    let reopened = open_database(&config).unwrap();
+    assert_eq!(reopened.query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    drop(reopened);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn schema_v23_removes_only_the_exact_untouched_v22_seed() {
+    let directory = temporary_directory("migration-v23-clean-seed");
+    let (path, config) = create_v22_demo_database(&directory);
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 23);
+    for table in ["categories", "products", "stock_balances", "product_searchable_values", "catalog_product_search"] {
+        assert_eq!(connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 0, "{table}");
+    }
+    assert!(connection.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+    drop(connection);
+    let reopened = open_database(&config).unwrap();
+    assert_eq!(reopened.query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    drop(reopened);
+    assert_eq!(user_version(&path), 23);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn schema_v23_preserves_seed_products_with_sales_movements_or_changed_balances() {
+    assert_v22_seed_is_preserved(
+        "migration-v23-seed-sale",
+        "INSERT INTO sales (id, request_id, status, total_centavos, confirmed_at) VALUES (1, 'seed-sale', 'confirmed', 2500, '2025-01-01T00:00:00Z');
+         INSERT INTO sale_lines (id, sale_id, product_id, quantity, negotiated_unit_price_centavos, minimum_unit_price_snapshot_centavos, line_total_centavos) VALUES (1, 1, 1, 1, 2500, 2500, 2500);",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-seed-movement",
+        "INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta) VALUES (1, 1, 'opening_stock', 1);",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-changed-balance",
+        "UPDATE stock_balances SET quantity = 7 WHERE product_id = 1;",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-changed-search-state",
+        "UPDATE product_searchable_values SET value = 'Honda' WHERE product_id = 1;",
+    );
+}
+
+#[test]
+fn schema_v23_preserves_seed_product_with_attribute_value() {
+    let directory = temporary_directory("migration-v23-seed-attribute-value");
+    let (path, config) = create_v22_demo_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(
+        "INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (1, 1, 'Vehicle', 'text', 0);
+         INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 1, 'Toyota Corolla', 'Toyota Corolla');",
+    ).unwrap();
+    drop(connection);
+
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 23);
+    assert_eq!(
+        connection.query_row(
+            "SELECT sku, name FROM products WHERE id = 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).unwrap(),
+        ("FLT-001".to_string(), "Filtro de aceite".to_string()),
+    );
+    assert_eq!(
+        connection.query_row(
+            "SELECT text_value, searchable_value FROM product_attribute_values WHERE product_id = 1 AND definition_id = 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).unwrap(),
+        ("Toyota Corolla".to_string(), "Toyota Corolla".to_string()),
+        "the customer-owned attribute value must not be deleted",
+    );
+    assert!(connection.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn schema_v23_preserves_seed_product_with_changed_core_field() {
+    let directory = temporary_directory("migration-v23-seed-changed-name");
+    let (path, config) = create_v22_demo_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute("UPDATE products SET name = 'Customer-renamed filter' WHERE id = 1", []).unwrap();
+    drop(connection);
+
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 23);
+    assert_eq!(
+        connection.query_row(
+            "SELECT sku, name, active, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?)),
+        ).unwrap(),
+        ("FLT-001".to_string(), "Customer-renamed filter".to_string(), true, 2_500, 2_500),
+        "the product with a customer-modified core field must remain intact",
+    );
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM stock_balances WHERE product_id = 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    assert!(connection.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+    drop(connection);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn schema_v23_preserves_products_with_images_audits_category_definitions_or_locations() {
+    assert_v22_seed_is_preserved(
+        "migration-v23-seed-image",
+        "INSERT INTO product_images (product_id, mime_type, image_bytes) VALUES (1, 'image/png', x'01');",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-seed-audit",
+        "INSERT INTO catalog_audit (entity_type, entity_id, operation, before_json, after_json, revision) VALUES ('product', 1, 'edit', '{}', '{}', 1);",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-category-audit",
+        "INSERT INTO catalog_audit (entity_type, entity_id, operation, before_json, after_json, revision) VALUES ('category', 1, 'edit', '{}', '{}', 1);",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-category-definition",
+        "INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (1, 1, 'Customer field', 'text', 0);",
+    );
+    assert_v22_seed_is_preserved(
+        "migration-v23-product-location",
+        "INSERT INTO product_locations (id, code) VALUES (1, 'A-1'); UPDATE products SET primary_location_id = 1 WHERE id = 1;",
+    );
+}
+
 #[test]
 fn migrates_a_new_version_zero_database_through_version_eleven() {
     let directory = temporary_directory("migration-version-zero");
@@ -911,6 +1155,7 @@ fn fresh_v18_schema_has_nullable_price_columns_and_rejects_malformed_costs() {
     let directory = temporary_directory("migration-v18-fresh-schema");
     let connection = open_database(&production_database_config(&directory)).unwrap();
     assert_eq!(user_version(&directory.join("repuestos-autos.sqlite3")), CURRENT_SCHEMA_VERSION);
+    connection.execute("INSERT INTO categories (name) VALUES ('Fresh category')", []).unwrap();
     connection.execute(
         "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 'FRESH-001', 'Fresh product', 1, 100, 100)",
         [],

@@ -848,18 +848,36 @@ fn persists_confirmed_sales_when_reopening_the_production_database() {
     let config = production_database_config(&directory);
     assert_eq!(config.path(), directory.join("repuestos-autos.sqlite3"));
 
-    let first = {
+    let (product_id, first) = {
         let mut connection = open_database(&config).unwrap();
-        confirm_sale(
+        connection
+            .execute("INSERT INTO categories (name) VALUES ('Persistence test')", [])
+            .unwrap();
+        let category_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (?1, 'TEST-PERSISTENCE-001', 'Persistence test product', 1, 2500, 2500)",
+                [category_id],
+            )
+            .unwrap();
+        let product_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO stock_balances (product_id, quantity) VALUES (?1, 8)",
+                [product_id],
+            )
+            .unwrap();
+        let first = confirm_sale(
             &mut connection,
             single_line_request(
                 "550e8400-e29b-41d4-a716-446655440031",
-                1,
+                product_id,
                 2_500,
                 vec![Payment::qr(MoneyCentavos::new(2_500).unwrap())],
             ),
         )
-        .unwrap()
+        .unwrap();
+        (product_id, first)
     };
 
     let mut reopened = open_database(&config).unwrap();
@@ -867,7 +885,7 @@ fn persists_confirmed_sales_when_reopening_the_production_database() {
         &mut reopened,
         single_line_request(
             "550e8400-e29b-41d4-a716-446655440031",
-            1,
+            product_id,
             9_999,
             vec![Payment::qr(MoneyCentavos::new(9_999).unwrap())],
         ),
@@ -884,8 +902,8 @@ fn persists_confirmed_sales_when_reopening_the_production_database() {
     assert_eq!(
         reopened
             .query_row(
-                "SELECT quantity FROM stock_balances WHERE product_id = 1",
-                [],
+                "SELECT quantity FROM stock_balances WHERE product_id = ?1",
+                [product_id],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),

@@ -27,6 +27,19 @@ fn scalar<P: rusqlite::Params>(connection: &Connection, sql: &str, params: P) ->
 }
 
 fn confirm_two_line_sale(connection: &mut Connection) -> i64 {
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO categories (id, name) VALUES (1, 'Post-sale lifecycle')",
+            [],
+        )
+        .unwrap();
+    connection.execute("INSERT OR IGNORE INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (1, 1, 'PSL-001', 'Lifecycle base product', 1, 2500, 2500)", []).unwrap();
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO stock_balances (product_id, quantity) VALUES (1, 8)",
+            [],
+        )
+        .unwrap();
     connection.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (3, 1, 'FLT-002', 'Filter two', 1, 3000, 3000)", []).unwrap();
     connection
         .execute(

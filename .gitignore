@@ -9,3 +9,6 @@ src-tauri/gen/schemas/
 
 # Local Markdown issue workspace
 .scratch/
+
+# Standalone Rust package build output
+**/target/

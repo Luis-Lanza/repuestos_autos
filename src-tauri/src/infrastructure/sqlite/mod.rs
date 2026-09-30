@@ -21,7 +21,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 22;
+pub const CURRENT_SCHEMA_VERSION: i64 = 23;
 const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
@@ -108,6 +108,19 @@ pub fn open_seeded_catalog() -> Result<Connection> {
     let mut connection = Connection::open_in_memory()?;
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     migrate_if_needed(&mut connection)?;
+    // Disposable test/application fixtures opt into demo-like records explicitly;
+    // production databases remain empty after migration.
+    connection.execute_batch(
+        "INSERT INTO categories (id, name) VALUES (1, 'Filtros'), (2, 'Bujias');
+         INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES
+             (1, 1, 'FLT-001', 'Filtro de aceite', 1, 2500, 2500),
+             (2, 2, 'BUJ-001', 'Bujia archivada', 0, 1800, 1800);
+         INSERT INTO product_searchable_values (product_id, field_name, value) VALUES (1, 'vehicle', 'Toyota');
+         INSERT INTO stock_balances (product_id, quantity) VALUES (1, 8), (2, 4);
+         INSERT INTO catalog_product_search (rowid, product_id, content) VALUES
+             (1, 1, 'flt-001 filtro de aceite filtros toyota '),
+             (2, 2, 'buj-001 bujia archivada bujias  ');",
+    )?;
     Ok(connection)
 }
 
@@ -356,8 +369,20 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         version = 22;
     }
 
+    if version == 22 {
+        let transaction = connection.transaction()?;
+        validate_version_twenty_two_schema(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0023_remove_untouched_demo_catalog.sql"
+        ))?;
+        validate_version_twenty_three_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 23)?;
+        transaction.commit()?;
+        version = 23;
+    }
+
     if version == CURRENT_SCHEMA_VERSION {
-        validate_version_twenty_two_schema(connection)?;
+        validate_version_twenty_three_schema(connection)?;
     }
 
     Ok(())
@@ -1090,6 +1115,10 @@ fn validate_version_twenty_one_schema(connection: &Connection) -> Result<()> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     validate_foreign_keys(connection)
+}
+
+fn validate_version_twenty_three_schema(connection: &Connection) -> Result<()> {
+    validate_version_twenty_two_schema(connection)
 }
 
 fn validate_version_twenty_two_schema(connection: &Connection) -> Result<()> {

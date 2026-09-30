@@ -451,6 +451,15 @@ fn retry_returns_original_result_and_alerts_are_active_ordered_and_indexed() {
     let _ = std::fs::remove_dir_all(&directory);
     let config = production_database_config(&directory);
     let mut connection = open_database(&config).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO categories (id, name) VALUES (1, 'Filters'), (2, 'Spark plugs');
+             INSERT INTO products (id, category_id, sku, name, active, purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos, low_stock_threshold) VALUES
+                 (1, 1, 'TEST-001', 'Oil filter', 1, NULL, 3_000, 2_500, 1),
+                 (2, 2, 'TEST-002', 'Spark plug', 0, NULL, 2_000, 1_800, 1);
+             INSERT INTO stock_balances (product_id, quantity) VALUES (1, 8), (2, 4);",
+        )
+        .unwrap();
     let operation = InventoryOperation::stock_entry_with_prices(
         1,
         request("550e8400-e29b-41d4-a716-446655440107"),

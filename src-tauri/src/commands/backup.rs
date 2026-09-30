@@ -76,6 +76,7 @@ pub enum BackupResponse {
 impl BackupResponse {
     pub fn error(code: &'static str) -> Self {
         let message = match code {
+            "license_required" => "A valid license is required to restore a backup.",
             "database_unavailable" => "The database is unavailable.",
             "destination_exists" => "A backup already exists at that destination.",
             "invalid_backup" => "The selected backup is invalid.",

@@ -1,3 +1,5 @@
+#![cfg_attr(all(target_os = "windows", feature = "desktop", not(debug_assertions)), windows_subsystem = "windows")]
+
 #[cfg(feature = "desktop")]
 fn main() {
     if let Err(error) = repuestos_autos::run() {
