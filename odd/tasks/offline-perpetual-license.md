@@ -22,10 +22,10 @@ Add an offline perpetual, single-PC licensing boundary that activates from a ven
 
 ## Tasks
 - [x] T1 Write and verify a change-local protocol/design: license envelope/version, Ed25519 signing/verification, installation-code derivation, storage, error states, allowed recovery operations, private CLI boundary, and reactivation policy. Route: delegated design/research. Evidence: read-only mapping plus protocol handoff completed.
-- [ ] T2 Create vendor-only signing CLI outside the app package, with deterministic test vectors and no committed private key. Route: delegated writer.
-- [ ] T3 Implement application-side machine identity, license verifier/storage/import, typed IPC, and activation UI. Route: delegated vertical slices.
-- [ ] T4 Gate authoritative business writes and ordinary restore while preserving reads, backup creation, and startup recovery. Route: delegated vertical slices.
-- [ ] T5 Independently verify valid, invalid, tampered, mismatched-machine, missing-license, backup/recovery, and Windows installation paths. Route: delegated verifier.
+- [x] T2 Create vendor-only signing CLI outside the app package, with deterministic test vectors and no committed private key. Route: delegated writer. Evidence: `671c165`; protocol 10 tests and CLI 5 safety tests pass.
+- [x] T3 Implement application-side machine identity, license verifier/storage/import, typed IPC, and activation UI. Route: delegated vertical slices. Evidence: `671c165`; Rust and 24 focused UI tests pass.
+- [x] T4 Gate authoritative business writes and ordinary restore while preserving reads, backup creation, and startup recovery. Route: delegated vertical slices. Evidence: `671c165`; backend and independent source audit passed.
+- [ ] T5 Independently verify valid, invalid, tampered, mismatched-machine, missing-license, backup/recovery, and Windows installation paths. Route: delegated verifier. Status: local automated checks pass; Windows desktop/runtime and installer evidence remain pending.
 
 ## Acceptance Criteria
 - A vendor-signed perpetual license validates only on its intended Windows installation.
@@ -59,4 +59,4 @@ Add an offline perpetual, single-PC licensing boundary that activates from a ven
 - Protocol research: Ed25519 verification/signing, Windows registry MachineGuid access, and Tauri non-blocking license-file import patterns.
 
 ## Next Step
-- Implement T3 application-side verification, activation/import, and enforcement using the provisioned public key; do not create, read, or store private signing material.
+- On a real Windows target, build/install the NSIS package and exercise valid activation, tampered/wrong-machine license rejection, recovery-mode backup/restore policy, and data preservation. Do not create, read, or store private signing material in this repository.
