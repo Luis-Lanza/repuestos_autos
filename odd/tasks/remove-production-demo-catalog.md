@@ -25,6 +25,7 @@ Windows fresh-install validation showed `Filtro de aceite` (`FLT-001`) and `Buj√
 - Windows installation evidence confirms an empty Catalog before user onboarding.
 
 ## Progress
+- 2026-09-30: Work-unit commit `9c44e1a fix(catalog): remove untouched demo seed` pushed for Windows fresh-install validation.
 - 2026-09-30: Independent review recommendation addressed with focused schema-v23 preservation tests for a customer product attribute value and a customer-modified product name. The exact product fields, dependent attribute fact, and foreign-key integrity remain intact; targeted migration tests and the complete Rust suite pass.
 - 2026-09-30: User approved correcting production demo catalog seed before merge.
 - 2026-09-30: T2 implemented as schema 23; focused migration and catalog-search tests pass. The stale nullable-price migration test now creates its category explicitly for the empty fresh schema. The complete Rust test suite passes, including versioned backup/restore fixtures through v23; Windows fresh-install evidence remains pending T3.
