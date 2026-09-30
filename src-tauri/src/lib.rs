@@ -393,7 +393,9 @@ fn license_installation_code_command(state: tauri::State<'_, commands::license::
 async fn choose_license_file_command<R: Runtime>(
     state: tauri::State<'_, commands::license::LicenseCommandState>,
     window: tauri::WebviewWindow<R>,
-) -> commands::license::LicenseFileSelection {
+) -> Result<commands::license::LicenseFileSelection, String> {
+    let selected_file = state.selected_file.clone();
+    drop(state);
     let app_handle = window.app_handle().clone();
     drop(window);
     let selection = commands::backup::select_callback_path(|complete| {
@@ -406,9 +408,9 @@ async fn choose_license_file_command<R: Runtime>(
         commands::backup::PathSelection::Selected { path } => Some(path),
         commands::backup::PathSelection::Cancelled => None,
     };
-    let Ok(mut pending) = state.selected_file.lock() else { return commands::license::LicenseFileSelection::Cancelled; };
+    let Ok(mut pending) = selected_file.lock() else { return Ok(commands::license::LicenseFileSelection::Cancelled); };
     *pending = selected;
-    if pending.is_some() { commands::license::LicenseFileSelection::Selected } else { commands::license::LicenseFileSelection::Cancelled }
+    Ok(if pending.is_some() { commands::license::LicenseFileSelection::Selected } else { commands::license::LicenseFileSelection::Cancelled })
 }
 
 #[cfg(feature = "desktop")]
