@@ -12,7 +12,8 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 ## Tasks
 - [x] W1 Correct Windows platform imports and recovery-stage verifier scope with focused tests.
 - [x] W2 Make desktop picker commands return owned, bounded IPC `Result` responses; retain path-free contracts.
-- [ ] W3 Linux checks pass; Windows-native compilation/runtime startup remains pending. The Linux cross-target check was attempted but could not proceed because `x86_64-w64-mingw32-gcc` is unavailable.
+- [x] W3 Windows-native desktop compilation/runtime startup passed on the user host; it exposed a recovery-policy regression, not a compilation failure.
+- [x] W4 Open a valid canonical database when only valid retained transition sidecars remain; preserve those artifacts and still fail closed for malformed/unexpected sidecars or a missing/invalid canonical.
 
 ## Acceptance
 - `npm run tauri:dev` compiles on Windows.

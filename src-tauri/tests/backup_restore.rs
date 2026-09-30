@@ -1385,21 +1385,100 @@ fn failed_candidate_migration_retains_source_and_does_not_create_canonical() {
 }
 
 #[test]
-fn unexpected_or_malformed_restore_sidecars_without_canonical_fail_closed() {
-    for sidecar in ["restore-state.json.previous-8", "restore-state.json.previous-0"] {
-        let directory = temporary_directory("sidecar-without-canonical");
+fn markerless_valid_canonical_opens_and_preserves_valid_retained_restore_evidence() {
+    let directory = temporary_directory("markerless-valid-retained-evidence");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "canonical");
+    let rollback = directory.join("restore-rollback.sqlite3");
+    let protective = directory.join("pre-restore.sqlite3");
+    database_with_category(&rollback, "rollback");
+    database_with_category(&protective, "protective");
+    let sidecar0 = directory.join("restore-state.json.previous-0");
+    let sidecar1 = directory.join("restore-state.json.previous-1");
+    fs::write(&sidecar0, br#"{"state":"prepared"}"#).unwrap();
+    fs::write(&sidecar1, br#"{"state":"candidate_installed"}"#).unwrap();
+    let evidence = [&rollback, &protective, &sidecar0, &sidecar1]
+        .map(|path| (path.to_path_buf(), fs::read(path).unwrap()));
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(category_count(&state, "canonical"), 1);
+    assert_eq!(category_count(&state, "rollback"), 0);
+    assert_eq!(category_count(&state, "protective"), 0);
+    for (path, bytes) in evidence {
+        assert_eq!(fs::read(path).unwrap(), bytes, "retained evidence is untouched");
+    }
+    assert!(!directory.join("restore-state.json").exists());
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn markerless_evidence_without_valid_canonical_never_creates_or_promotes_a_database() {
+    for (name, canonical_state) in [("missing", None), ("invalid", Some(b"invalid".as_slice()))] {
+        let directory = temporary_directory(&format!("markerless-evidence-{name}"));
         fs::create_dir_all(&directory).unwrap();
-        fs::write(directory.join(sidecar), b"malformed sidecar").unwrap();
         let config = production_database_config(&directory);
+        if let Some(bytes) = canonical_state {
+            fs::write(config.path(), bytes).unwrap();
+        }
+        let rollback = directory.join("restore-rollback.sqlite3");
+        database_with_category(&rollback, "fallback");
+        let rollback_before = fs::read(&rollback).unwrap();
+        fs::write(directory.join("restore-state.json.previous-0"), br#"{"state":"prepared"}"#).unwrap();
 
         let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
 
-        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{sidecar}");
-        assert!(!config.path().exists(), "{sidecar} must not trigger fresh database creation");
-        assert!(directory.join(sidecar).exists(), "{sidecar} remains as evidence");
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{name}");
+        assert_eq!(fs::read(&rollback).unwrap(), rollback_before, "{name}");
+        assert_eq!(fs::read(config.path()).ok().as_deref(), canonical_state, "{name}");
         drop(state);
         fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[test]
+fn malformed_or_unexpected_markerless_evidence_fails_closed_with_valid_canonical() {
+    for (artifact, contents) in [
+        ("restore-state.json.previous-0", b"malformed".as_slice()),
+        ("restore-state.json.previous-8", br#"{"state":"prepared"}"#.as_slice()),
+        ("restore-rollback.sqlite3", b"malformed database".as_slice()),
+        ("pre-restore.sqlite3", b"malformed database".as_slice()),
+    ] {
+        let directory = temporary_directory("invalid-markerless-sidecar");
+        fs::create_dir_all(&directory).unwrap();
+        let config = production_database_config(&directory);
+        database_with_category(config.path(), "canonical");
+        let before = fs::read(config.path()).unwrap();
+        fs::write(directory.join(artifact), contents).unwrap();
+
+        let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{artifact}");
+        assert_eq!(fs::read(config.path()).unwrap(), before, "{artifact}");
+        drop(state);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_regular_markerless_sidecar_fails_closed_with_valid_canonical() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temporary_directory("non-regular-markerless-sidecar");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    database_with_category(config.path(), "canonical");
+    symlink(directory.join("missing-target"), directory.join("restore-state.json.previous-0")).unwrap();
+
+    let state = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+    assert_eq!(state.with_read(|_| Ok(())).unwrap_err(), "database_unavailable");
+    assert!(fs::symlink_metadata(directory.join("restore-state.json.previous-0")).unwrap().file_type().is_symlink());
+    drop(state);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

@@ -50,7 +50,19 @@ impl DatabaseState {
     pub fn recover_on_startup(config: DatabaseConfig, store: &BackupStore) -> Self {
         let recovery_evidence = has_recovery_evidence(config.path(), store);
         match store.read_restore_state() {
-            Ok(None) if !recovery_evidence => {
+            Ok(None) if recovery_evidence => {
+                if has_ambiguous_temporary_artifacts(config.path())
+                    || !retained_recovery_evidence_is_valid(config.path())
+                    || !is_valid_database(config.path())
+                {
+                    return Self::unavailable(config);
+                }
+                match open_existing_validated_database(&config) {
+                    Ok(connection) => Self::from_connection(config, connection),
+                    Err(()) => Self::unavailable(config),
+                }
+            }
+            Ok(None) => {
                 match open_database(&config).map_err(|_| ()).and_then(|connection| {
                     validate_restored_database(&connection).map_err(|_| ())?;
                     Ok(connection)
@@ -265,7 +277,7 @@ fn path_has_entry_or_error(path: &std::path::Path) -> bool {
     }
 }
 
-fn has_ambiguous_recovery_artifacts(canonical: &std::path::Path) -> bool {
+fn has_ambiguous_temporary_artifacts(canonical: &std::path::Path) -> bool {
     let Some(root) = canonical.parent() else { return true };
     [
         root.join("restore-state.json.part"),
@@ -273,6 +285,11 @@ fn has_ambiguous_recovery_artifacts(canonical: &std::path::Path) -> bool {
     ]
     .iter()
     .any(|path| path_has_entry_or_error(path))
+}
+
+fn has_ambiguous_recovery_artifacts(canonical: &std::path::Path) -> bool {
+    let Some(root) = canonical.parent() else { return true };
+    has_ambiguous_temporary_artifacts(canonical)
         || match recovery_sidecar_entries(root) {
             Ok(entries) => !entries.is_empty(),
             Err(()) => true,
@@ -284,14 +301,54 @@ fn recovery_sidecar_entries(root: &std::path::Path) -> Result<Vec<std::path::Pat
     for entry in std::fs::read_dir(root).map_err(|_| ())? {
         let entry = entry.map_err(|_| ())?;
         let name = entry.file_name();
-        if name.to_str().is_some_and(|name| name.starts_with("restore-state.json.previous-")) {
-            // Metadata is intentionally inspected without following symlinks. Even known
-            // sidecars are retained recovery evidence and make normal startup ambiguous.
-            std::fs::symlink_metadata(entry.path()).map_err(|_| ())?;
+        if name.to_string_lossy().starts_with("restore-state.json.previous-") {
             sidecars.push(entry.path());
         }
     }
     Ok(sidecars)
+}
+
+fn retained_recovery_evidence_is_valid(canonical: &std::path::Path) -> bool {
+    let Some(root) = canonical.parent() else { return false };
+    let sidecars = match recovery_sidecar_entries(root) {
+        Ok(sidecars) => sidecars,
+        Err(()) => return false,
+    };
+    for path in sidecars {
+        let Some(slot) = path.file_name().and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("restore-state.json.previous-"))
+            .and_then(|slot| slot.parse::<u8>().ok())
+        else {
+            return false;
+        };
+        if slot >= 8 {
+            return false;
+        }
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else { return false };
+        if !metadata.file_type().is_file() {
+            return false;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { return false };
+        if !bytes.is_empty()
+            && ![
+                br#"{"state":"prepared"}"#.as_slice(),
+                br#"{"state":"live_moved"}"#.as_slice(),
+                br#"{"state":"candidate_installed"}"#.as_slice(),
+            ].contains(&bytes.as_slice())
+        {
+            return false;
+        }
+    }
+    for name in ["restore-rollback.sqlite3", "pre-restore.sqlite3"] {
+        let path = root.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() && is_valid_database(&path) => {}
+            Ok(_) => return false,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return false,
+        }
+    }
+    true
 }
 
 fn has_recovery_evidence(canonical: &std::path::Path, store: &BackupStore) -> bool {

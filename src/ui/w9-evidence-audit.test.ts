@@ -583,12 +583,9 @@ function assertReportsRegistrationAllowlist(libDiff: string, contract: "export" 
 
 function assertBackupRecoveryStartupAllowlist(libDiff: string) {
   const changedLines = libDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
-  assert.match(libDiff, /has_recovery_evidence/);
-  assert.match(libDiff, /reconcile_abandoned_cleanup/);
-  assert.match(libDiff, /cleanup_abandoned_restore_artifacts/);
-  assert.match(libDiff, /stage_and_validate\(source, &stage\)/);
-  assert.match(libDiff, /recover_canonical_durably\(&stage, canonical\)/);
-  const allowedStartupHunks = new Set([51, 53, 66, 178, 204, 210, 218, 224, 242, 360, 377]);
+  assert.match(libDiff, /retained_recovery_evidence_is_valid/);
+  assert.match(libDiff, /has_ambiguous_temporary_artifacts/);
+  const allowedStartupHunks = new Set([51, 53, 66, 178, 204, 210, 218, 224, 242, 280, 288, 304, 311, 360, 377]);
   const allowedBackupRecoveryHunks = new Set([...allowedStartupHunks, 58, 192, 210, 243, 261, 385, 698, 706, 710, 717, 725, 729, 734, 742, 746, 754, 762, 766, 863, 866, 871, 874, 875, 878, 1516, 1524, 1528, 1547, 1555, 1559, 1689, 1697, 1701, 1705, 1709]);
   const hunks = libDiff.split(/(?=^@@ )/m);
   const changedHunks = hunks.filter((hunk) => /^[+-](?![+-])/m.test(hunk));
@@ -707,10 +704,10 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 }
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
-  "src-tauri/src/lib.rs": "a72f4c4a8c685927d1096fbdfd6cc95b4a25761cc5aaa70d877a9098762fb109",
+  "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
   "src-tauri/src/commands/backup.rs": "bb8475664d4aff302a37fbf53fd6fbc57843daeb99ceb612c9495e6b03c47958",
-  "src-tauri/tests/backup_restore.rs": "85792fffe9275deff7baeb009ef7f22566a1fd0ad38694ca25fc5e6d26539285",
-  "src/ui/w9-evidence-audit.test.ts": "eaf115c0e2f4e398db017f9a45155bd4ff8ec9e1cd2a8d795b1af25fd7b2372e",
+  "src-tauri/tests/backup_restore.rs": "bdb7edb76e524167f9c3f7f468cd0b50367fa3c746cca1320d508b880ffea663",
+  "src/ui/w9-evidence-audit.test.ts": "a92cc7ab0cd2353812d66a1ec517a4b0d7ce43323c10ae56eef1e314b9e2b4c7",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "bdf866cf29a2577742d8abd0c401672d18b45153e82057352f2b3d7694f85f32",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
@@ -732,6 +729,7 @@ const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/src/infrastructure/filesystem/backup_store.rs",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
   "src-tauri/src/lib.rs",
+  "src-tauri/tests/backup_restore.rs",
   "src/commands/backup.test.ts",
 ]);
 
@@ -739,10 +737,11 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "bdf866cf29a2577742d8abd0c401672d18b45153e82057352f2b3d7694f85f32",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
-  "src-tauri/src/lib.rs": "a72f4c4a8c685927d1096fbdfd6cc95b4a25761cc5aaa70d877a9098762fb109",
+  "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
+  "src-tauri/tests/backup_restore.rs": "bdb7edb76e524167f9c3f7f468cd0b50367fa3c746cca1320d508b880ffea663",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "d8b137d036b105b786e799135ea7264de9af937ab091dbfe46fb0026b1cccdac",
-  "odd/tasks/windows-desktop-build-fixes.md": "8a7f904747134e368366a6913bcd024156bfe0d813bf9294bd88e05632c3d2d5",
+  "src/ui/w9-evidence-audit.test.ts": "a92cc7ab0cd2353812d66a1ec517a4b0d7ce43323c10ae56eef1e314b9e2b4c7",
+  "odd/tasks/windows-desktop-build-fixes.md": "8b6d929f1b41cb6cc2a99af58750714b74d3911b4a0eb97eda651db74c315691",
 };
 
 const backupIntegrityCandidatePaths = new Set([
@@ -965,7 +964,7 @@ function assertW9ProtectedDiffPolicy(
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
     else if (libDiff.includes("Result<commands::backup::BackupDestinationSelection, String>")) assertWindowsPickerCommandDiffAllowlist(libDiff);
-    else if (libDiff.includes("has_recovery_evidence")) assertBackupRecoveryStartupAllowlist(libDiff);
+    else if (libDiff.includes("retained_recovery_evidence_is_valid") || libDiff.includes("has_recovery_evidence")) assertBackupRecoveryStartupAllowlist(libDiff);
     else assertTicket11RegistrationAllowlist(libDiff);
   }
 }
