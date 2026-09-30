@@ -41,9 +41,10 @@ Make each product line in Sales **Revisar y cobrar** show its captured stock ava
 - 2026-09-29: Verification found checkout details could lose the thumbnail after browsing away. User chose a product/revision SaleScreen-lifetime cache and authorized exact W9 admission for `src/ui/sales/sale-screen.ts`.
 - 2026-09-29: User authorized exact W9 admission for this task record and the already changed `src/ui/sales/sale-flow.ts` and `sale-flow.test.ts` paths.
 - 2026-09-29: Windows smoke user requested simplified checkout availability copy `Stock: N`; confirmation-time stock validation remains unchanged.
+- 2026-09-29: Issue #216 and PR #217 were created and PR #217 merged to `master` at `0ddf5c8` by user request. Final Windows checkout smoke remains pending.
 
 ## Evidence
 - Automated: focused Sales flow/screen/ProductBrowser suite passed (71 tests); thumbnail screen suite passed (35 tests); `npm test` passed (367 tests); `npm run typecheck:tests` and `git diff --check` passed. Independent verification confirmed snapshot truthfulness, unchanged confirmation payload/no checkout-detail fetch, full shared detail content, nested focus/dismissal behavior, bounded exact W9 paths, cross-page thumbnail retention, and same-product wrong-revision rejection.
 
 ## Next Step
-- Push a smoke-validation checkpoint if the user authorizes it, then run the Windows checkout detail smoke sequence.
+- On Windows, smoke-test Stock, full checkout details/image viewer, focus restoration, and cross-page image retention. The merged PR intentionally records this manual validation as pending.
