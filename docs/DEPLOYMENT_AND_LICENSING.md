@@ -1,90 +1,68 @@
-# Deployment and Offline Licensing Proposal
+# Deployment and licensing
 
-## Recommendation
+## Decision
 
-Distribute the application as a signed Windows NSIS installer. Monthly or annual subscriptions enforced with a signed offline license file are a future commercial-control option; they are not part of v1.
+The app uses a **perpetual license for one Windows PC**, activated manually and entirely offline. There are no subscriptions, expiry dates, grace periods, renewals, online checks, or remote revocation. Licensing is a practical commercial boundary, not perfect DRM; it cannot prevent a determined person with full control of the PC from modifying the application.
 
-V1 must not validate licenses or block sales, stock changes, or configuration changes because of subscription status. Any future licensing mechanism remains separate from inventory and sales domain logic.
+## Quick activation path
 
-## Deployment
+1. On the customer PC, open activation and copy the **installation code** shown by the app.
+2. The customer sends that code to the vendor through the agreed support channel.
+3. On a vendor-controlled system, use the local signing CLI to sign a `.lic` file with the private Ed25519 key.
+4. Return the `.lic` file to the customer. In the app, choose **Import license** and select the file.
+5. Confirm the app reports an active license. No internet connection is used to activate or verify it.
 
-```text
-Vendor build
-  -> signed Windows installer (.exe)
-  -> install on the store computer
-  -> application files
-  -> local SQLite data directory
-  -> first-run installation code
-```
+The code is a machine-binding hash, not a signing secret. Each accepted license is permanent for the PC it was issued for.
 
-| Area | Decision |
+## What the license binds and verifies
+
+| Part | Maintainer rule |
 | --- | --- |
-| Installer | Tauri NSIS setup executable (`.exe`). |
-| Offline installation | Embed the WebView2 offline installer when the target computer may lack WebView2. |
-| Installation scope | Prefer `perMachine` for a shared store computer; it requires an administrator during installation. |
-| Data location | Keep SQLite data and backups outside the application install directory, in a dedicated local data directory. The installer/updater must never overwrite this directory. |
-| Trust | Sign production installers with a Windows code-signing certificate to reduce SmartScreen warnings. |
-| Updates | Deliver a new signed installer manually in v1. Database migrations run on launch and must be backed up first. |
+| PC identity | On Windows, the app reads `MachineGuid`, normalizes it, and derives a SHA-256 hash bound to this product. The raw Windows identifier is not stored or logged. The app stores the hash, not the raw identifier. |
+| License | The vendor signs the license with Ed25519. The app contains the public verification key and checks the signature and PC binding locally. |
+| Key custody | The private signing key stays on vendor-controlled storage, outside Git, the app build inputs, installer, and customer PC. Never copy a real public key or key ID into this guide or support messages. |
+| File handling | Customers import the vendor-provided `.lic` file through the app. Rejected imports do not replace an existing valid license. |
 
-Tauri supports NSIS Windows setup executables and an offline WebView2 installer mode. Its default per-user installation avoids administrator privileges; `perMachine` installation is appropriate when the same store computer may have different Windows accounts. [Tauri Windows installers](https://tauri.app/distribute/windows-installer/)
+## Unlicensed recovery and access
 
-## Offline subscription flow
+A missing, invalid, or PC-mismatched license must not hold customer data hostage.
 
-```text
-1. First run: app generates an Installation Code.
-2. Customer pays monthly or annually.
-3. Vendor generates a signed license for that Installation Code and expiry date.
-4. Customer imports the license file from USB, email attachment, or messaging app.
-5. App verifies the signature locally and enables write operations until expiry.
-6. On renewal, the vendor sends a new license file; the customer imports it.
-```
-
-### License payload
-
-The file contains a JSON payload plus an Ed25519 signature. The vendor keeps the private signing key; the application contains only the public verification key.
-
-```json
-{
-  "license_id": "lic_...",
-  "installation_id": "install_...",
-  "customer_name": "...",
-  "plan": "monthly",
-  "issued_at": "2026-08-19T00:00:00Z",
-  "expires_at": "2026-09-19T00:00:00Z",
-  "features": ["inventory", "pos", "reports"]
-}
-```
-
-The app accepts a license only when its signature is valid, its installation ID matches, and it has not expired.
-
-## Expiry policy
-
-| State | Application behavior |
+| Allowed without a valid license | Blocked without a valid license |
 | --- | --- |
-| Active | All functions available. |
-| Grace period (7 days) | Full function with a prominent renewal warning. |
-| Expired | Block new sales, stock changes, and configuration changes. Preserve read-only access to history, reports, and backup export. |
-| Renewed | Importing a valid newer license restores normal operation immediately. |
+| Read existing records and history | Sales and other business mutations |
+| View reports and export data | Catalog, stock, location, and configuration changes |
+| Create backups | Corrections and operator-requested restore |
+| Open activation and import a license | Ordinary restore workflow |
+| Automatic startup crash recovery | — |
 
-Never encrypt, delete, or hold the customer’s operational data hostage. Subscription expiry controls future write operations, not access to existing records or the ability to make a backup.
+Startup crash recovery is independent of licensing so the app can protect durable data after a crash. It is not an operator restore path. A valid license is required for a user-selected restore.
 
-## Security boundary
+## PC replacement and reissue
 
-An offline license is a **commercial deterrent**, not perfect DRM. A user with full control of the computer can change the system clock or restore an old disk/database snapshot.
+A license is for one PC and cannot be self-transferred. A license for a different PC requires vendor-managed reissue and is normally paid. After a PC replacement, the vendor may, at its discretion, waive the reissue fee after reviewing reasonable replacement evidence. There is no remote revocation: an offline PC cannot receive a revocation command.
 
-Mitigations for a future licensing release:
+## Deployment and data practices
 
-- Store the last accepted wall-clock time locally; if the clock moves substantially backwards, require license renewal before writes.
-- Store license state separately from ordinary database backups when possible.
-- Validate signature, installation ID, expiry, and monotonic last-seen time on every application launch and before write operations.
-- Make the license code easy to operate administratively; avoid fragile hardware fingerprints that create support incidents after a Windows or hardware repair.
+- Build a signed Windows NSIS installer (`.exe`). When needed, include the WebView2 offline installer so setup does not depend on internet access.
+- Prefer per-machine installation for a shared store PC; it requires administrator approval. Per-user installation remains an option for a single Windows account.
+- Keep SQLite data and backups in the dedicated local data directory, outside the application install directory. Installers and updates must never overwrite that directory.
+- Deliver updates as signed installers. Before an update that runs database migrations, make and verify a backup.
+- Test backup creation, startup recovery, export, and operator restore separately; licensing must not disable the first three recovery/access paths.
 
-Perfect enforcement requires periodic contact with a server. If a future version allows occasional internet access, add signed online renewal/validation with a grace period; do not add cloud inventory synchronization merely for billing.
+## Vendor key-handling reminders
 
-## Vendor operations checklist
+- Keep the private key and its protected backup under vendor control, outside Git and outside all customer-facing artifacts. Restrict access and verify that the backup can be recovered.
+- The vendor CLI is intentionally outside the application package and build graph; it is never included in the customer installer. Use its interactive prompts for private-key location and `.lic` output location. Never put private-key bytes or a private-key path in command arguments or environment variables.
+- Never print, log, paste into tickets, or commit private-key material. Do not store customer records or issued `.lic` files in this repository.
+- If the signing key is lost, licenses for that key cannot be issued. If it is compromised, treat it as a vendor security incident; rotation requires an application trust update and customer rollout.
 
-- [ ] Keep the private signing key outside the application and outside the source repository.
-- [ ] Record license ID, customer, installation ID, plan, issue date, and expiry in a vendor-controlled register.
-- [ ] Send a renewed signed license only after confirming payment.
-- [ ] Test expiry, grace, renewal, clock rollback, and backup/restore behavior before release.
-- [ ] Test installation and restore on a clean Windows target device.
+## Pre-release Windows verification checklist
+
+- [ ] On a clean supported Windows PC, install the signed NSIS installer; verify the WebView2 offline setup path where applicable and the intended per-machine/per-user behavior.
+- [ ] Confirm first launch shows an installation code and works offline.
+- [ ] Import a vendor-signed `.lic` file; verify activation succeeds only on the intended PC and remains active after restart with the network disconnected.
+- [ ] Verify malformed, altered, unsupported, unknown-key, and different-PC license files fail closed; a rejected import must leave a previously valid license intact.
+- [ ] Without a valid license, verify reads/history/reports, export, and backup creation work; sales and other business mutations, corrections, and operator restore are blocked.
+- [ ] Verify startup crash recovery still runs without a valid license, and verify a valid license permits the normal operator restore flow.
+- [ ] Update over an existing installation; confirm application data and backups are preserved and migrations are preceded by a verified backup.
+- [ ] Audit the release artifacts and repository for signing private-key material, customer records, and issued license files; none may be present.

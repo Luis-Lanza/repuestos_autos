@@ -1,0 +1,11 @@
+[package]
+name = "license-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+license-protocol = { path = "../../crates/license-protocol" }
+rand_core = { version = "0.6", features = ["getrandom"] }
+time = { version = "0.3", features = ["formatting"] }

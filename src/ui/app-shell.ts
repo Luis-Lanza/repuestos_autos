@@ -8,6 +8,7 @@ interface AppShellProps {
   inventoryCue?: string | null;
   onInventoryAlerts?: () => void;
   children?: ReactNode;
+  recoveryMode?: boolean;
 }
 
 const items = [
@@ -21,12 +22,12 @@ const items = [
   ["Copia y restauración", "backup", "open_backup"],
 ] as const satisfies ReadonlyArray<readonly [string, Screen, NavigationAction]>;
 
-export function AppShell({ screen, onNavigate, onInventoryAlerts, inventoryCue, children }: AppShellProps) {
+export function AppShell({ screen, onNavigate, onInventoryAlerts, inventoryCue, children, recoveryMode = false }: AppShellProps) {
   return createElement("div", { "data-ui-app-shell": true },
     createElement("aside", { "data-ui-shell-sidebar": true },
       createElement("div", { "data-ui-shell-identity": true }, "Repuestos Autos"),
       createElement("nav", { "aria-label": "Navegación principal", "data-ui-shell-navigation": true },
-        items.map(([label, destination, action]) => createElement("button", {
+        items.filter(([, destination]) => !recoveryMode || destination === "dashboard" || destination === "sales_history" || destination === "reports" || destination === "backup").map(([label, destination, action]) => createElement("button", {
           key: destination,
           type: "button",
           "aria-current": screen === destination ? "page" : undefined,

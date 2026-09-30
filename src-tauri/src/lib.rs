@@ -317,6 +317,10 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         edit_category_schema_command,
         catalog_metadata_detail_command,
         choose_product_image_command,
+        license_status_command,
+        license_installation_code_command,
+        choose_license_file_command,
+        import_license_command,
         remove_product_image_command,
         catalog_product_image_thumbnail_command,
         location_schema_command,
@@ -358,12 +362,61 @@ pub fn run() -> Result<(), tauri::Error> {
             let store = BackupStore::new(&app_data_directory);
             let state = DatabaseState::recover_on_startup(database_config, &store);
             app.manage(state);
+            app.manage(commands::license::LicenseCommandState::new(
+                application::license::LicenseService::new(
+                    infrastructure::windows_machine_identity::SystemMachineIdentity,
+                    application::license::FileLicenseStorage::new(&app_data_directory),
+                ),
+            ));
             app.manage(Mutex::new(commands::backup::BackupCommandState::new(
                 app_data_directory,
             )));
             Ok(())
         })
         .run(tauri::generate_context!())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn license_status_command(state: tauri::State<'_, commands::license::LicenseCommandState>) -> commands::license::LicenseStatusResponse {
+    commands::license::status(&state.service)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn license_installation_code_command(state: tauri::State<'_, commands::license::LicenseCommandState>) -> commands::license::InstallationCodeResponse {
+    commands::license::installation_code(&state.service)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn choose_license_file_command<R: Runtime>(
+    state: tauri::State<'_, commands::license::LicenseCommandState>,
+    window: tauri::WebviewWindow<R>,
+) -> commands::license::LicenseFileSelection {
+    let app_handle = window.app_handle().clone();
+    drop(window);
+    let selection = commands::backup::select_callback_path(|complete| {
+        #[cfg(test)] { let _ = app_handle; complete(None); }
+        #[cfg(not(test))] { app_handle.dialog().file().add_filter("License file", &["lic"]).pick_file(move |path| {
+            complete(path.and_then(|path| path.into_path().ok()));
+        }); }
+    }).await;
+    let selected = match selection {
+        commands::backup::PathSelection::Selected { path } => Some(path),
+        commands::backup::PathSelection::Cancelled => None,
+    };
+    let Ok(mut pending) = state.selected_file.lock() else { return commands::license::LicenseFileSelection::Cancelled; };
+    *pending = selected;
+    if pending.is_some() { commands::license::LicenseFileSelection::Selected } else { commands::license::LicenseFileSelection::Cancelled }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn import_license_command(state: tauri::State<'_, commands::license::LicenseCommandState>) -> commands::license::LicenseImportResponse {
+    let Ok(mut pending) = state.selected_file.lock() else { return commands::license::LicenseImportResponse::Error { code: "license_storage_unavailable" }; };
+    let selected = pending.take();
+    commands::license::import_selected(&state.service, selected)
 }
 
 #[cfg(feature = "desktop")]
@@ -421,9 +474,15 @@ async fn choose_restore_source_command<R: Runtime>(
 #[tauri::command]
 async fn choose_product_image_command<R: Runtime>(
     state: tauri::State<'_, AppState>,
+    license: tauri::State<'_, commands::license::LicenseCommandState>,
     window: tauri::WebviewWindow<R>,
     request: commands::catalog::ProductImageRequest,
 ) -> Result<commands::catalog::ProductImageResponse, String> {
+    if license.authorize_business_operation().is_err() {
+        return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "license_required", message: "A valid license is required to change the catalog.",
+        }));
+    }
     let Ok(request) = commands::catalog::parse_product_image_request(request) else {
         return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
             code: "validation_error", message: "Review the catalog values and try again.",
@@ -442,6 +501,11 @@ async fn choose_product_image_command<R: Runtime>(
     let commands::backup::PathSelection::Selected { path } = selection else {
         return Ok(commands::catalog::ProductImageResponse::Cancelled);
     };
+    if license.authorize_business_operation().is_err() {
+        return Ok(commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
+            code: "license_required", message: "A valid license is required to change the catalog.",
+        }));
+    }
     let read_result = read_selected_image(&path);
     let (mime, bytes) = match read_result {
         Ok(value) => value,
@@ -473,8 +537,11 @@ fn read_selected_image(path: &std::path::Path) -> Result<(&'static str, Vec<u8>)
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn remove_product_image_command(
-    state: tauri::State<AppState>, request: commands::catalog::ProductImageRequest,
+    state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::ProductImageRequest,
 ) -> commands::catalog::ProductImageResponse {
+    if license.authorize_business_operation().is_err() {
+        return commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError { code: "license_required", message: "A valid license is required to change the catalog." });
+    }
     state.with_write(|connection| Ok(commands::catalog::remove_product_image(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductImageResponse::Error(commands::catalog::CatalogMaintenanceError {
             code: "persistence_failure", message: "The catalog could not be completed.",
@@ -509,9 +576,11 @@ fn create_backup_command(
 #[tauri::command]
 fn prepare_restore_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::PrepareRestoreRequest,
 ) -> commands::backup::BackupResponse {
+    if license.authorize_business_operation().is_err() { return commands::backup::BackupResponse::error("license_required"); }
     let Ok(mut commands) = commands.lock() else {
         return commands::backup::BackupResponse::error("storage_unavailable");
     };
@@ -522,9 +591,11 @@ fn prepare_restore_command(
 #[tauri::command]
 fn confirm_restore_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::ConfirmRestoreRequest,
 ) -> commands::backup::BackupResponse {
+    if license.authorize_business_operation().is_err() { return commands::backup::BackupResponse::error("license_required"); }
     let Ok(mut commands) = commands.lock() else {
         return commands::backup::BackupResponse::error("storage_unavailable");
     };
@@ -564,8 +635,10 @@ fn browse_products_command(
 #[tauri::command]
 fn confirm_sale_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::confirm_sale::ConfirmSaleRequest,
 ) -> Result<commands::confirm_sale::ConfirmSaleResponse, String> {
+    if license.authorize_business_operation().is_err() { return Ok(commands::confirm_sale::ConfirmSaleResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to confirm sales." })); }
     state.with_write(|connection| commands::confirm_sale::confirm_sale(connection, request))
 }
 
@@ -573,8 +646,10 @@ fn confirm_sale_command(
 #[tauri::command]
 fn create_sale_return_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::post_sale::CreateSaleReturnRequest,
 ) -> commands::post_sale::PostSaleCommandResponse {
+    if license.authorize_business_operation().is_err() { return commands::post_sale::PostSaleCommandResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to correct sales." }); }
     state
         .with_write(|connection| Ok(commands::post_sale::create_sale_return(connection, request)))
         .unwrap_or_else(|_| {
@@ -588,8 +663,10 @@ fn create_sale_return_command(
 #[tauri::command]
 fn cancel_sale_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::post_sale::CancelSaleRequest,
 ) -> commands::post_sale::CancelSaleCommandResponse {
+    if license.authorize_business_operation().is_err() { return commands::post_sale::CancelSaleCommandResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to correct sales." }); }
     state
         .with_write(|connection| Ok(commands::post_sale::cancel_sale(connection, request)))
         .unwrap_or_else(|_| {
@@ -603,8 +680,10 @@ fn cancel_sale_command(
 #[tauri::command]
 fn confirm_stock_entry_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::inventory::StockEntryRequest,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
+    if license.authorize_business_operation().is_err() { return Ok(commands::inventory::InventoryCommandResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to change inventory." })); }
     state.with_write(|connection| {
         commands::inventory::confirm_stock_entry_command(connection, request)
     })
@@ -614,8 +693,10 @@ fn confirm_stock_entry_command(
 #[tauri::command]
 fn confirm_physical_count_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::inventory::PhysicalCountRequest,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
+    if license.authorize_business_operation().is_err() { return Ok(commands::inventory::InventoryCommandResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to change inventory." })); }
     state.with_write(|connection| {
         commands::inventory::confirm_physical_count_command(connection, request)
     })
@@ -626,7 +707,7 @@ fn confirm_physical_count_command(
 fn list_inventory_alerts_command(
     state: tauri::State<AppState>,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
-    state.with_write(commands::inventory::list_inventory_alerts_command)
+    state.with_read(commands::inventory::list_inventory_alerts_command)
 }
 
 #[cfg(feature = "desktop")]
@@ -649,8 +730,10 @@ fn list_catalog_categories_command(
 #[tauri::command]
 fn maintain_catalog_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::catalog::MaintainCatalogRequest,
 ) -> Result<commands::catalog::CatalogMaintenanceResponse, String> {
+    if license.authorize_business_operation().is_err() { return Ok(commands::catalog::CatalogMaintenanceResponse::Error(commands::catalog::CatalogMaintenanceError { code: "license_required", message: "A valid license is required to change the catalog." })); }
     state.with_write(|connection| commands::catalog::maintain_catalog(connection, request))
 }
 
@@ -658,8 +741,10 @@ fn maintain_catalog_command(
 #[tauri::command]
 fn edit_catalog_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::catalog::EditCatalogRequest,
 ) -> commands::catalog::CatalogMaintenanceResponse {
+    if license.authorize_business_operation().is_err() { return commands::catalog::CatalogMaintenanceResponse::Error(commands::catalog::CatalogMaintenanceError { code: "license_required", message: "A valid license is required to change the catalog." }); }
     state
         .with_write(|connection| commands::catalog::edit_catalog(connection, request))
         .unwrap_or_else(|error| {
@@ -673,8 +758,10 @@ fn edit_catalog_command(
 #[tauri::command]
 fn edit_category_schema_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: commands::catalog::EditCategorySchemaRequest,
 ) -> commands::catalog::CatalogMaintenanceResponse {
+    if license.authorize_business_operation().is_err() { return commands::catalog::CatalogMaintenanceResponse::Error(commands::catalog::CatalogMaintenanceError { code: "license_required", message: "A valid license is required to change the catalog." }); }
     state
         .with_write(|connection| Ok(commands::catalog::edit_category_schema(connection, request)))
         .unwrap_or_else(|error| {
@@ -816,6 +903,14 @@ async fn export_movement_ledger_command<R: Runtime>(
 }
 
 #[cfg(feature = "desktop")]
+fn license_required_location_response() -> commands::catalog::ProductLocationResponse {
+    commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError {
+        code: "license_required",
+        message: "A valid license is required to change the catalog.",
+    })
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn location_schema_command(state: tauri::State<AppState>) -> commands::catalog::ProductLocationResponse {
     state.with_read(|connection| Ok(commands::catalog::location_schema(connection)))
@@ -824,7 +919,8 @@ fn location_schema_command(state: tauri::State<AppState>) -> commands::catalog::
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn save_location_schema_command(state: tauri::State<AppState>, request: commands::catalog::SaveLocationSchemaRequest) -> commands::catalog::ProductLocationResponse {
+fn save_location_schema_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::SaveLocationSchemaRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::save_location_schema(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
@@ -838,35 +934,40 @@ fn list_product_locations_command(state: tauri::State<AppState>, request: comman
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn create_product_location_command(state: tauri::State<AppState>, request: commands::catalog::CreateProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+fn create_product_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::CreateProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::create_product_location(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn activate_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+fn activate_product_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::set_product_location_activity(connection, request, true)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn deactivate_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+fn deactivate_product_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::set_product_location_activity(connection, request, false)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn delete_product_location_command(state: tauri::State<AppState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+fn delete_product_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::ProductLocationLifecycleRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::delete_product_location(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn assign_product_primary_location_command(state: tauri::State<AppState>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+fn assign_product_primary_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::assign_product_primary_location(connection, request)))
         .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
 }
@@ -883,8 +984,10 @@ fn list_categories_command(
 #[tauri::command]
 fn create_category_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: application::catalog::CreateCategoryInput,
 ) -> Result<commands::onboarding::CreateCategoryResponse, String> {
+    if license.authorize_business_operation().is_err() { return Ok(commands::onboarding::CreateCategoryResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
     state.with_write(|connection| commands::onboarding::create_category(connection, request))
 }
 
@@ -892,8 +995,10 @@ fn create_category_command(
 #[tauri::command]
 fn create_product_command(
     state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
     request: application::catalog::CreateProductInput,
 ) -> Result<commands::onboarding::CreateProductResponse, String> {
+    if license.authorize_business_operation().is_err() { return Ok(commands::onboarding::CreateProductResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
     state.with_write(|connection| commands::onboarding::create_product(connection, request))
 }
 
@@ -914,6 +1019,14 @@ mod command_surface_tests {
         payments: i64,
         sale_lines: i64,
         movements: i64,
+        categories: Vec<(i64, String, i64)>,
+        products: Vec<(i64, String, i64)>,
+        locations: i64,
+        location_segments: i64,
+        location_values: i64,
+        attribute_definitions: i64,
+        attribute_values: i64,
+        images: i64,
     }
 
     fn snapshot(connection: &rusqlite::Connection) -> PersistenceSnapshot {
@@ -937,6 +1050,14 @@ mod command_surface_tests {
             payments: count("sale_payments"),
             sale_lines: count("sale_lines"),
             movements: count("inventory_movements"),
+            categories: connection.prepare("SELECT id, name, revision FROM categories ORDER BY id").unwrap().query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap(),
+            products: connection.prepare("SELECT id, name, revision FROM products ORDER BY id").unwrap().query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap(),
+            locations: count("product_locations"),
+            location_segments: count("location_segments"),
+            location_values: count("product_location_values"),
+            attribute_definitions: count("attribute_definitions"),
+            attribute_values: count("product_attribute_values"),
+            images: count("product_images"),
         }
     }
 
@@ -968,11 +1089,26 @@ mod command_surface_tests {
         tauri::App<tauri::test::MockRuntime>,
         tauri::WebviewWindow<tauri::test::MockRuntime>,
     ) {
+        test_window_with_authority(true)
+    }
+
+    fn test_window_with_authority(authorized: bool) -> (
+        tauri::App<tauri::test::MockRuntime>,
+        tauri::WebviewWindow<tauri::test::MockRuntime>,
+    ) {
+        let license = commands::license::LicenseCommandState::new(
+            application::license::LicenseService::new(
+                infrastructure::windows_machine_identity::SystemMachineIdentity,
+                application::license::FileLicenseStorage::new(std::env::temp_dir()),
+            ),
+        );
+        license.set_test_authorized(authorized);
         let app = command_builder(mock_builder())
             .manage(AppState::from_connection(
                 infrastructure::sqlite::production_database_config(std::env::temp_dir()),
                 infrastructure::sqlite::open_seeded_catalog().unwrap(),
             ))
+            .manage(license)
             .manage(Mutex::new(commands::backup::BackupCommandState::new(
                 std::env::temp_dir(),
             )))
@@ -1042,6 +1178,82 @@ mod command_surface_tests {
                 .unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn registers_license_commands_with_stable_path_free_responses() {
+        let (_app, window) = test_window();
+        let status = get_ipc_response(&window, request("license_status_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(status["kind"], "status");
+        assert!(status["code"].as_str().is_some_and(|code| !code.is_empty()));
+        let code = get_ipc_response(&window, request("license_installation_code_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert!(matches!(code["kind"].as_str(), Some("code" | "error")));
+        let selection = get_ipc_response(&window, request("choose_license_file_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(selection, serde_json::json!({"kind":"cancelled"}));
+        let imported = get_ipc_response(&window, request("import_license_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(imported, serde_json::json!({"kind":"cancelled"}));
+        assert!(!status.to_string().contains("path"));
+        assert!(!code.to_string().contains("path"));
+    }
+
+    #[test]
+    fn rejects_all_business_mutations_and_both_restore_stages_without_data_changes() {
+        let (app, window) = test_window_with_authority(false);
+        let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();
+        let cases = [
+            ("confirm_sale_command", serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440099","lines":[],"payment":{"amount_tendered_centavos":null,"qr_applied_centavos":null}})),
+            ("create_sale_return_command", serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440098","sale_id":1,"lines":[]})),
+            ("cancel_sale_command", serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440097","sale_id":1,"reason":"test"})),
+            ("confirm_stock_entry_command", serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440096","product_id":1,"quantity":1,"unit_purchase_price_centavos":1})),
+            ("confirm_physical_count_command", serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440095","product_id":1,"count":7,"reason":"count"})),
+            ("maintain_catalog_command", serde_json::json!({"target":"product","entity_id":1,"intent":"archive","expected_revision":0})),
+            ("edit_catalog_command", serde_json::json!({"target":"category","entity_id":1,"expected_revision":0,"name":"Changed"})),
+            ("edit_category_schema_command", serde_json::json!({"category_id":1,"expected_revision":0,"fields":[]})),
+            ("remove_product_image_command", serde_json::json!({"product_id":1,"expected_revision":0})),
+            ("choose_product_image_command", serde_json::json!({"product_id":1,"expected_revision":0})),
+            ("save_location_schema_command", serde_json::json!({"expected_revision":0,"segments":["Zone"]})),
+            ("create_product_location_command", serde_json::json!({"values":["A1"]})),
+            ("activate_product_location_command", serde_json::json!({"location_id":1,"expected_revision":0})),
+            ("deactivate_product_location_command", serde_json::json!({"location_id":1,"expected_revision":0})),
+            ("delete_product_location_command", serde_json::json!({"location_id":1,"expected_revision":0})),
+            ("assign_product_primary_location_command", serde_json::json!({"product_id":1,"expected_revision":0,"location_id":1})),
+            ("create_category_command", serde_json::json!({"name":"Blocked","fields":[]})),
+            ("create_product_command", serde_json::json!({"sku":"BLOCKED","name":"Blocked","category_id":1,"purchase_price_centavos":1,"sale_price_centavos":2,"minimum_sale_price_centavos":1,"opening_quantity":1,"attribute_values":[]})),
+            ("prepare_restore_command", serde_json::json!({"source":"/not-read.sqlite3"})),
+            ("confirm_restore_command", serde_json::json!({"token":"unknown","confirmed":true})),
+        ];
+        for (command, payload) in cases {
+            let response = get_ipc_response(&window, request_with(command, payload)).unwrap_or_else(|error| panic!("{command}: {error:?}"));
+            let value = response.deserialize::<serde_json::Value>().unwrap();
+            assert_eq!(value["code"], "license_required", "{command}: {value}");
+            assert!(!value.to_string().contains("sqlite") && !value.to_string().contains("path"), "{command}: {value}");
+        }
+        assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
+    }
+
+    #[test]
+    fn active_test_authority_allows_a_business_write() {
+        let (_app, window) = test_window_with_authority(true);
+        let response = get_ipc_response(&window, request_with("confirm_sale_command", serde_json::json!({
+            "request_id":"550e8400-e29b-41d4-a716-446655440094",
+            "lines":[{"product_id":1,"quantity":1,"captured_unit_price_centavos":2500,"captured_revision":0}],
+            "payment":{"amount_tendered_centavos":null,"qr_applied_centavos":2500}
+        }))).unwrap();
+        assert_eq!(response.deserialize::<serde_json::Value>().unwrap()["kind"], "success");
+    }
+
+    #[test]
+    fn reads_activation_backup_and_inventory_alerts_remain_available_unlicensed() {
+        let (_app, window) = test_window_with_authority(false);
+        for command in ["license_status_command", "license_installation_code_command", "choose_license_file_command", "import_license_command", "list_inventory_alerts_command", "list_catalog_maintenance_command"] {
+            assert!(get_ipc_response(&window, request(command)).is_ok(), "{command}");
+        }
+        let alerts = get_ipc_response(&window, request("list_inventory_alerts_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(alerts["kind"], "alerts");
+        let destination = std::env::temp_dir().join(format!("license-backup-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&destination).unwrap();
+        let backup = get_ipc_response(&window, request_with("create_backup_command", serde_json::json!({"destination": destination}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(backup["kind"], "created", "{backup}");
     }
 
     #[test]

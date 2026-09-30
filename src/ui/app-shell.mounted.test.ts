@@ -66,12 +66,13 @@ test("AppShell exposes identity and the dashboard-first Spanish navigation", asy
 
 test("App keeps the global Inventory alert count across screens and opens the alert filter", async () => {
   mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [{ product_id: 7, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] };
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup({ document });
   render(createElement(App));
-  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
   const inventory = within(navigation).getByRole("button", { name: "Inventario" });
   assert.equal(inventory.textContent, "Inventario");
   await user.click(inventory);
@@ -85,6 +86,7 @@ test("App keeps the global Inventory alert count across screens and opens the al
 
 test("opens Reports directly to the Movement Ledger and keeps sidebar focus and active state", async () => {
   mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
     if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
@@ -92,7 +94,7 @@ test("opens Reports directly to the Movement Ledger and keeps sidebar focus and 
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup({ document }); render(createElement(App));
-  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
   const reports = within(navigation).getByRole("button", { name: "Reportes" });
   await user.click(reports);
   assert.ok(await screen.findByRole("heading", { level: 1, name: "Registro de movimientos" }));
@@ -104,14 +106,15 @@ test("opens Reports directly to the Movement Ledger and keeps sidebar focus and 
 test("clears the sidebar count while a refresh fails instead of retaining stale alert state", async () => {
   let calls = 0;
   mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command !== "list_inventory_alerts_command") throw new Error(`Unexpected command: ${command}`);
     calls += 1;
     return calls === 1 ? { kind: "alerts", alerts: [{ product_id: 7, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] } : Promise.reject(new Error("refresh failed"));
   });
   const user = userEvent.setup({ document });
   render(createElement(App));
-  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
-  const inventory = within(navigation).getByRole("button", { name: "Inventario" });
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
+  const inventory = within(navigation).getByRole("button", { name: /Inventario/ });
   await waitFor(() => assert.match(inventory.textContent ?? "", /1 alerta de stock/));
   await user.click(within(navigation).getByRole("button", { name: "Ventas" }));
   await waitFor(() => assert.doesNotMatch(inventory.textContent ?? "", /alerta de stock/));
@@ -128,10 +131,19 @@ test("screenAfter preserves the complete transition table and Sales fallback", (
 });
 
 test("App keeps one shell mounted while safe navigation changes content, active state, and retained focus", async () => {
+  mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
+    if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
+    if (command === "choose_backup_destination_command") return { kind: "cancelled" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
   const user = userEvent.setup({ document });
   render(createElement(App));
 
-  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
   assert.ok(screen.getByRole("heading", { level: 1, name: "Dashboard" }));
   assert.equal(within(navigation).getByRole("button", { name: "Dashboard" }).getAttribute("aria-current"), "page");
 
@@ -148,6 +160,54 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   assert.ok(screen.getByRole("heading", { level: 1, name: "Ventas" }));
   assert.equal(sales.getAttribute("aria-current"), "page");
   assert.equal(document.activeElement, sales);
+});
+
+test("license import success remains announced after App transitions to active navigation", async () => {
+  mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "license_missing" };
+    if (command === "license_installation_code_command") return { kind: "code", code: "c".repeat(64) };
+    if (command === "choose_license_file_command") return { kind: "selected" };
+    if (command === "import_license_command") return { kind: "imported", status: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(App));
+
+  await user.click(await screen.findByRole("button", { name: "Importar archivo de licencia" }));
+  const notice = await screen.findByText("Licencia activada correctamente.");
+  assert.equal(notice.getAttribute("role"), "status");
+  assert.equal(notice.getAttribute("aria-live"), "polite");
+  assert.ok(screen.getByRole("navigation", { name: "Navegación principal" }));
+  assert.equal(screen.queryByRole("heading", { name: "Activá Repuestos Autos" }), null);
+});
+
+test("unlicensed startup defaults to activation and recovery exposes only safe navigation and backup creation", async () => {
+  let restores = 0; let backups = 0;
+  mockIPC((command) => {
+    if (command === "license_status_command") return { kind: "status", code: "license_missing" };
+    if (command === "license_installation_code_command") return { kind: "code", code: "c".repeat(64) };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
+    if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
+    if (command === "choose_backup_destination_command") return { kind: "selected", path: "C:\\\\backup" };
+    if (command === "create_backup_command") { backups++; return { kind: "created", path: "C:\\\\backup\\\\data.db", created_at_unix_seconds: 1, size_bytes: 32, schema_version: 1 }; }
+    if (command === "choose_restore_source_command" || command === "prepare_restore_command" || command === "confirm_restore_command") { restores++; throw new Error("restore IPC must not run"); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document }); render(createElement(App));
+  assert.ok(await screen.findByRole("heading", { name: "Activá Repuestos Autos" }));
+  await user.click(screen.getByRole("button", { name: "Continuar en modo de recuperación" }));
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
+  assert.deepEqual(within(navigation).getAllByRole("button").map((button) => button.textContent), ["Dashboard", "Historial de ventas", "Reportes", "Copia y restauración"]);
+  await user.click(within(navigation).getByRole("button", { name: "Copia y restauración" }));
+  const restore = screen.getByRole("button", { name: "Elegir archivo de respaldo" }) as HTMLButtonElement;
+  assert.equal(restore.disabled, true);
+  assert.ok(screen.getByText("La restauración está disponible con una licencia activa."));
+  await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
+  await waitFor(() => assert.equal(backups, 1));
+  assert.equal(restores, 0);
 });
 
 test("production CSS declares the desktop and compact shell width contracts", async () => {

@@ -27,12 +27,15 @@ uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+license-protocol = { path = "../crates/license-protocol" }
+ed25519-dalek = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Registry"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
 
 [dev-dependencies]
 serde_json = "1"
+base64 = "0.22"

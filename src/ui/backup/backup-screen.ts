@@ -10,7 +10,7 @@ const date = (seconds: number) => { const value = new Date(seconds * 1000); retu
 const backupState = (status: string) => status === "failure" || status === "unavailable" || status === "success";
 const restoreState = (status: string) => ["invalid", "expired", "unavailable", "failure", "recovery", "success"].includes(status);
 
-export function BackupScreen() {
+export function BackupScreen({ canRestore = true }: { canRestore?: boolean } = {}) {
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
   const [dialogOpen, setDialogOpen] = useState(false);
   const dispatchRef = useRef<(action: BackupAction) => void>(dispatch); dispatchRef.current = dispatch;
@@ -34,15 +34,16 @@ export function BackupScreen() {
           h("h3", { id: "backup-summary-heading" }, "Última copia creada"),
           h("dl", null, h("dt", null, "Ruta"), h("dd", null, state.backup.path), h("dt", null, "Fecha"), h("dd", null, date(state.backup.created_at_unix_seconds)), h("dt", null, "Tamaño"), h("dd", null, `${state.backup.size_bytes} bytes`), h("dt", null, "Esquema"), h("dd", null, state.backup.schema_version))) : null),
       h(Panel, { label: "Restauración" } as never,
-        h(Action, { variant: "secondary", pending: state.restore_status === "pending" && !state.summary, pendingLabel: "Preparando restauración…", disabled: pending, onClick: () => void interaction.prepareRestore() }, "Elegir archivo de respaldo"),
+        canRestore ? h(Action, { variant: "secondary", pending: state.restore_status === "pending" && !state.summary, pendingLabel: "Preparando restauración…", disabled: pending, onClick: () => void interaction.prepareRestore() }, "Elegir archivo de respaldo") : h("p", { role: "note" }, "La restauración está disponible con una licencia activa."),
+        canRestore ? null : h(Action, { variant: "secondary", disabled: true }, "Elegir archivo de respaldo"),
         restoreMessage ? h(Feedback, { kind: state.restore_status === "success" ? "success" : state.restore_status === "unavailable" ? "unavailable" : "error" } as never, restoreMessage) : null,
-        state.summary ? h("section", { "aria-labelledby": "restore-summary-heading", "data-ui-restore-candidate": true },
+        canRestore && state.summary ? h("section", { "aria-labelledby": "restore-summary-heading", "data-ui-restore-candidate": true },
           h("h3", { id: "restore-summary-heading" }, "Candidato de restauración"),
           h("p", null, `Tamaño: ${state.summary.size_bytes} bytes · Esquema: ${state.summary.schema_version}`),
           h("p", null, "Esta acción reemplazará los datos locales actuales."),
           h(Action, { variant: "secondary", disabled: state.restore_status !== "prepared", onClick: () => setDialogOpen(true) }, "Revisar restauración")) : null),
     ),
-    h(ConfirmationDialog, { open: dialogOpen && state.summary !== null, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (canConfirmRestore(state)) void interaction.restore(state.summary!.token); } },
-      h(Field, { kind: "checkbox", label: "Entiendo que la restauración reemplaza los datos locales.", control: h("input", { id: "restore-acknowledgement", type: "checkbox", checked: state.confirmed, disabled: state.restore_status === "pending", onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }) } as never)),
+    canRestore ? h(ConfirmationDialog, { open: dialogOpen && state.summary !== null, purpose: "restore", title: "Restaurar datos locales", description: "Esta acción reemplazará los datos locales actuales", pending: state.restore_status === "pending", confirmLabel: "Restaurar datos", onCancel: cancelDialog, onConfirm: () => { if (canConfirmRestore(state)) void interaction.restore(state.summary!.token); } },
+      h(Field, { kind: "checkbox", label: "Entiendo que la restauración reemplaza los datos locales.", control: h("input", { id: "restore-acknowledgement", type: "checkbox", checked: state.confirmed, disabled: state.restore_status === "pending", onChange: (event) => dispatch({ type: "restore_confirmation_changed", confirmed: event.target.checked }) }) } as never)) : null,
   );
 }

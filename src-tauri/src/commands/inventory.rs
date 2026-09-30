@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::application::inventory::{
-    confirm_physical_count, confirm_stock_entry, list_inventory_alerts,
-};
+use crate::application::inventory::{confirm_physical_count, confirm_stock_entry};
 use crate::commands::confirm_sale::CommandError;
 use crate::domain::inventory::{AlertClassification, InventoryError};
 use crate::domain::RequestId;
@@ -114,23 +112,33 @@ pub fn confirm_physical_count_command(
 }
 
 pub fn list_inventory_alerts_command(
-    connection: &mut rusqlite::Connection,
+    connection: &rusqlite::Connection,
 ) -> Result<InventoryCommandResponse, String> {
-    let repository = SqliteInventoryRepository::new(connection);
-    Ok(match list_inventory_alerts(&repository) {
+    let alerts = (|| -> Result<Vec<_>, InventoryError> {
+        let mut statement = connection.prepare(
+            "SELECT p.id, p.name, p.active, b.quantity, p.low_stock_threshold FROM products p JOIN categories c ON c.id = p.category_id JOIN stock_balances b ON b.product_id = p.id WHERE p.active = 1 AND c.active = 1 AND (b.quantity = 0 OR (b.quantity BETWEEN 1 AND p.low_stock_threshold)) ORDER BY CASE b.quantity WHEN 0 THEN 0 ELSE 1 END, lower(p.name), p.id",
+        ).map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+        let rows = statement.query_map([], |row| Ok((
+            row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?, row.get::<_, i64>(4)?,
+        ))).map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+        rows.map(|row| {
+            let (id, name, active, quantity, threshold) = row.map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+            crate::domain::inventory::InventoryAlert::for_product_with_threshold(id, &name, active != 0, quantity, threshold)
+                .ok_or(InventoryError::PERSISTED_DATA_INVALID)
+        }).collect()
+    })();
+    Ok(match alerts {
         Ok(alerts) => InventoryCommandResponse::Alerts(InventoryAlerts {
-            alerts: alerts
-                .into_iter()
-                .map(|alert| InventoryAlert {
-                    product_id: alert.product_id,
-                    product_name: alert.product_name,
-                    quantity: alert.quantity,
-                    classification: match alert.classification {
-                        AlertClassification::OutOfStock => "out_of_stock",
-                        AlertClassification::LowStock => "low_stock",
-                    },
-                })
-                .collect(),
+            alerts: alerts.into_iter().map(|alert| InventoryAlert {
+                product_id: alert.product_id,
+                product_name: alert.product_name,
+                quantity: alert.quantity,
+                classification: match alert.classification {
+                    AlertClassification::OutOfStock => "out_of_stock",
+                    AlertClassification::LowStock => "low_stock",
+                },
+            }).collect(),
         }),
         Err(error) => InventoryCommandResponse::Error(map_error(error)),
     })
