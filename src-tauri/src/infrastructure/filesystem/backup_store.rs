@@ -319,7 +319,8 @@ fn rename_no_replace(_from: &Path, _to: &Path) -> Result<(), StorageError> {
 #[cfg(windows)]
 mod platform {
     use std::{ffi::OsStr, io, os::windows::{ffi::{OsStrExt, OsStringExt}, fs::MetadataExt}, path::Path};
-    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW, GetVolumePathNameW, DRIVE_FIXED, FILE_ATTRIBUTE_REPARSE_POINT};
+    use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW, GetVolumePathNameW, FILE_ATTRIBUTE_REPARSE_POINT};
+    use windows_sys::Win32::System::WindowsProgramming::DRIVE_FIXED;
     use super::*;
 
     pub(super) fn validate_destination(path: &Path) -> io::Result<()> {

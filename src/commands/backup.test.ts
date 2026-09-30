@@ -17,6 +17,23 @@ test("uses opaque native picker tokens for backup and restore", async () => {
   assert.deepEqual(calls, [{ name: "choose_backup_destination_command", payload: {} }, { name: "choose_restore_source_command", payload: {} }, { name: "create_backup_command", payload: { request: { destination_token: "opaque-destination-token" } } }, { name: "prepare_restore_command", payload: { request: { source_token: "opaque-source-token" } } }, { name: "confirm_restore_command", payload: { request: { token: "token", confirmed: true } } }]);
 });
 
+test("decodes picker error envelopes returned as resolved Tauri responses", async () => {
+  const commands = createBackupCommands(async (name) => name === "choose_backup_destination_command"
+    ? { kind: "error", code: "unsupported_destination", message: "native detail" }
+    : { kind: "error", code: "storage_unavailable", message: "native detail" });
+
+  assert.deepEqual(await commands.chooseBackupDestination(), {
+    kind: "error",
+    code: "unsupported_destination",
+    message: "Backup storage is unavailable.",
+  });
+  assert.deepEqual(await commands.chooseRestoreSource(), {
+    kind: "error",
+    code: "storage_unavailable",
+    message: "Backup storage is unavailable.",
+  });
+});
+
 test("keeps cancellation distinct and rejects picker paths or path-bearing backup responses", async () => {
   const cancelled = createBackupCommands(async () => ({ kind: "cancelled" }));
   assert.deepEqual(await cancelled.chooseBackupDestination(), { kind: "cancelled" });

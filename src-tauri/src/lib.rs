@@ -703,18 +703,19 @@ fn import_license_command(state: tauri::State<'_, commands::license::LicenseComm
 #[tauri::command]
 async fn choose_backup_destination_command<R: Runtime>(
     window: tauri::WebviewWindow<R>,
-    commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,
-) -> commands::backup::BackupDestinationSelection {
+) -> Result<commands::backup::BackupDestinationSelection, String> {
+    let app_handle = window.app_handle().clone();
+    drop(window);
+    let picker_app_handle = app_handle.clone();
     let selection = commands::backup::select_callback_path(|complete| {
         #[cfg(test)]
         {
-            let _ = window;
+            let _ = picker_app_handle;
             complete(None);
         }
         #[cfg(not(test))]
         {
-            window
-                .app_handle()
+            picker_app_handle
                 .dialog()
                 .file()
                 .pick_folder(move |path| {
@@ -724,33 +725,35 @@ async fn choose_backup_destination_command<R: Runtime>(
     })
     .await;
     let commands::backup::PathSelection::Selected { path } = selection else {
-        return commands::backup::BackupDestinationSelection::Cancelled;
+        return Ok(commands::backup::BackupDestinationSelection::Cancelled);
     };
+    let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();
     let Ok(mut commands) = commands.lock() else {
-        return commands::backup::BackupDestinationSelection::Error {
+        return Ok(commands::backup::BackupDestinationSelection::Error {
             code: "storage_unavailable",
             message: "Backup storage is unavailable.",
-        };
+        });
     };
-    commands.select_backup_destination(path)
+    Ok(commands.select_backup_destination(path))
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 async fn choose_restore_source_command<R: Runtime>(
     window: tauri::WebviewWindow<R>,
-    commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,
-) -> commands::backup::RestoreSourceSelection {
+) -> Result<commands::backup::RestoreSourceSelection, String> {
+    let app_handle = window.app_handle().clone();
+    drop(window);
+    let picker_app_handle = app_handle.clone();
     let selection = commands::backup::select_callback_path(|complete| {
         #[cfg(test)]
         {
-            let _ = window;
+            let _ = picker_app_handle;
             complete(None);
         }
         #[cfg(not(test))]
         {
-            window
-                .app_handle()
+            picker_app_handle
                 .dialog()
                 .file()
                 .add_filter("SQLite backup", &["sqlite3"])
@@ -761,15 +764,16 @@ async fn choose_restore_source_command<R: Runtime>(
     })
     .await;
     let commands::backup::PathSelection::Selected { path } = selection else {
-        return commands::backup::RestoreSourceSelection::Cancelled;
+        return Ok(commands::backup::RestoreSourceSelection::Cancelled);
     };
+    let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();
     let Ok(mut commands) = commands.lock() else {
-        return commands::backup::RestoreSourceSelection::Error {
+        return Ok(commands::backup::RestoreSourceSelection::Error {
             code: "storage_unavailable",
             message: "Backup storage is unavailable.",
-        };
+        });
     };
-    commands.select_restore_source(path)
+    Ok(commands.select_restore_source(path))
 }
 
 #[cfg(feature = "desktop")]

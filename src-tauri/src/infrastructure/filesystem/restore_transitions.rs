@@ -525,7 +525,7 @@ mod platform {
             }
             VerificationPhase::Recovery { marker, source, canonical } => {
                 let sources = [root.join("restore-rollback.sqlite3"), root.join("pre-restore.sqlite3")];
-                let migration_stage = is_internal_recovery_migration_stage(root, source);
+                let migration_stage = super::is_internal_recovery_migration_stage(root, source);
                 if marker != marker_expected || canonical != canonical_expected || (!sources.iter().any(|path| source == path) && !migration_stage) || (inspect_presence(marker)? && !valid_marker(marker)?) { return Err(io::ErrorKind::Unsupported.into()); }
                 if inspect_presence(marker)? { required.push(marker.to_path_buf()); } required.push(source.to_path_buf()); if inspect_presence(canonical)? { required.push(canonical.to_path_buf()); }
                 if migration_stage { stage_path = Some(source); }
@@ -1382,6 +1382,32 @@ mod tests {
                     Kind::Remove | Kind::Copy | Kind::Rename | Kind::Replace
                 )
             })
+    }
+
+    #[test]
+    fn internal_recovery_migration_stage_requires_a_uuid_named_sqlite_direct_child() {
+        let valid = PathBuf::from(format!(
+            "/app/backup-restore/staging/{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        assert!(is_internal_recovery_migration_stage(Path::new("/app"), &valid));
+
+        for invalid in [
+            PathBuf::from(format!(
+                "/app/backup-restore/staging/nested/{}.sqlite3",
+                uuid::Uuid::new_v4()
+            )),
+            PathBuf::from(format!(
+                "/app/backup-restore/staging/{}.db",
+                uuid::Uuid::new_v4()
+            )),
+            PathBuf::from("/app/backup-restore/staging/not-a-uuid.sqlite3"),
+        ] {
+            assert!(
+                !is_internal_recovery_migration_stage(Path::new("/app"), &invalid),
+                "accepted {invalid:?}"
+            );
+        }
     }
 
     #[test]
