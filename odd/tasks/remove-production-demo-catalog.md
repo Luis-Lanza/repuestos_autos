@@ -16,7 +16,7 @@ Windows fresh-install validation showed `Filtro de aceite` (`FLT-001`) and `Buj√
 ## Tasks
 - [x] T1 Map seeded records and every dependent table/foreign key; define a conservative deletion predicate and migration order. Route: delegated exploration. Delete only exact untouched `FLT-001`/`BUJ-001` rows with initial stock quantities and no sales, movements, attributes, images, audit, or location facts; preserve on any mismatch or dependency.
 - [x] T2 Add a forward migration and migration tests proving clean seed removal plus preservation when dependent customer facts exist. Route: delegated writer. Evidence: schema 23 migration is transactional and guarded by exact seed values plus dependency/search/stock predicates; focused v23 migration tests cover fresh/v22 cleanup, preservation, FK integrity, and idempotent reopen. The complete Rust suite passes, including versioned backup fixtures through v23.
-- [ ] T3 Independently verify migration safety and validate a fresh Windows install starts empty. Route: delegated verifier.
+- [x] T3 Independently verify migration safety and validate a fresh Windows install starts empty. Route: delegated verifier. Evidence: user confirmed the updated Windows reinstall shows an empty Catalog.
 
 ## Acceptance Criteria
 - A fresh database contains no seeded demo categories/products after migration completion.
@@ -32,4 +32,4 @@ Windows fresh-install validation showed `Filtro de aceite` (`FLT-001`) and `Buj√
 - 2026-09-30: Replaced the v22 cleanup-test fixture's current-schema/user-version shortcut with the production migrations 0001‚Äì0022, stopping before v23. The fixture asserts its version and representative v22 columns plus historical stock/search rows before each cleanup scenario upgrades it; focused and full Rust tests and `git diff --check` pass.
 
 ## Next Step
-- Independently review migration safety and validate a fresh Windows install.
+- Include this completed cleanup work unit in the licensing delivery review; no further demo-seed implementation remains.
