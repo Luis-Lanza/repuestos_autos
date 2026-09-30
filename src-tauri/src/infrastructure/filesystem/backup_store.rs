@@ -275,10 +275,42 @@ fn validate_sqlite_snapshot(path: &Path) -> Result<(), StorageError> {
         .map_err(|_| StorageError::StorageUnavailable)
 }
 
+#[cfg(not(windows))]
 fn sync_directory(path: &Path) -> Result<(), StorageError> {
     File::open(path).and_then(|directory| directory.sync_all())
         .map_err(|_| StorageError::StorageUnavailable)
 }
+
+#[cfg(windows)]
+fn sync_directory(path: &Path) -> Result<(), StorageError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FlushFileBuffers, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if wide.contains(&0) { return Err(StorageError::StorageUnavailable); }
+    wide.push(0);
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE { return Err(StorageError::StorageUnavailable); }
+    let flushed = unsafe { FlushFileBuffers(handle) } != 0;
+    let closed = unsafe { CloseHandle(handle) } != 0;
+    if flushed && closed { Ok(()) } else { Err(StorageError::StorageUnavailable) }
+}
+
 
 #[cfg(windows)]
 fn rename_no_replace(from: &Path, to: &Path) -> Result<(), StorageError> {

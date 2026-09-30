@@ -13,6 +13,8 @@ use repuestos_autos::commands::backup::{
     confirm_restore, prepare_restore, BackupCommandState, BackupResponse, ConfirmRestoreRequest,
     PrepareRestoreRequest, ALLOWED_COMMANDS,
 };
+#[cfg(windows)]
+use repuestos_autos::commands::backup::{create_backup, CreateBackupRequest};
 #[cfg(feature = "desktop")]
 use repuestos_autos::commands::backup::{select_callback_path, PathSelection};
 use repuestos_autos::commands::catalog::{
@@ -280,6 +282,34 @@ fn accepts_a_fixed_ntfs_destination_for_publication() {
 
     assert_eq!(BackupStore::validate_destination(&directory), Ok(()));
 
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn fixed_ntfs_backup_syncs_publication_and_snapshot_cleanup_directories() {
+    let directory = temporary_directory("fixed-ntfs-backup-cleanup");
+    let selected_root = directory.join("selected-ntfs-root");
+    fs::create_dir_all(&selected_root).unwrap();
+    assert_eq!(BackupStore::validate_destination(&selected_root), Ok(()));
+
+    let app_data = directory.join("app-data");
+    let state = DatabaseState::open(production_database_config(&app_data)).unwrap();
+    let mut commands = BackupCommandState::new(&app_data);
+    let token = match commands.select_backup_destination(selected_root.clone()) {
+        repuestos_autos::commands::backup::BackupDestinationSelection::Selected { token } => token,
+        selection => panic!("fixed NTFS destination should be accepted: {selection:?}"),
+    };
+
+    let response = create_backup(&state, &mut commands, CreateBackupRequest { destination_token: token });
+
+    let BackupResponse::Created { file_name, cleanup_warning: false, durability_warning: false, .. } = response else {
+        panic!("fixed NTFS publication and cleanup directory flushes should succeed: {response:?}");
+    };
+    assert!(selected_root.join("backup-restore").join(file_name).is_file());
+    let snapshots = app_data.join("backup-restore/snapshots");
+    assert_eq!(fs::read_dir(snapshots).unwrap().count(), 0, "snapshot cleanup must remove the stage and marker");
+    drop(state);
     fs::remove_dir_all(directory).unwrap();
 }
 

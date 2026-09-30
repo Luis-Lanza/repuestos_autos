@@ -705,11 +705,11 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
-  "src-tauri/src/commands/backup.rs": "bb8475664d4aff302a37fbf53fd6fbc57843daeb99ceb612c9495e6b03c47958",
-  "src-tauri/tests/backup_restore.rs": "bdb7edb76e524167f9c3f7f468cd0b50367fa3c746cca1320d508b880ffea663",
-  "src/ui/w9-evidence-audit.test.ts": "a92cc7ab0cd2353812d66a1ec517a4b0d7ce43323c10ae56eef1e314b9e2b4c7",
+  "src-tauri/src/commands/backup.rs": "a77f998f576269fe1e556cf183cfa5e734cc88cda80b5ce7a331dfc66176e879",
+  "src-tauri/tests/backup_restore.rs": "11c9cafe8e560f443af21d01aa1fe6b4a2155654fb6570a54e7cdc0558b64b6b",
+  "src/ui/w9-evidence-audit.test.ts": "60f1bb078d32e926ad2cff4aff2c484d950c35eba5d57e5da54fd8302edf5944",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "bdf866cf29a2577742d8abd0c401672d18b45153e82057352f2b3d7694f85f32",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "0e3fe83196cfff58915d2fd61a126d57528d8b641f473294d433989adeaf200c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "ddd5303d41faf161dda7a11c19914099ed98bbb169f0d74628d81fc048fb7c77",
   "src/commands/backup.ts": "22801231a00ee33709afa0e9ba5d67072775e9d1849edde32afafad693b00166",
@@ -726,22 +726,26 @@ function sha256(value: string | Buffer): string {
 
 const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/Cargo.toml",
+  "src-tauri/src/commands/backup.rs",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
   "src-tauri/src/lib.rs",
   "src-tauri/tests/backup_restore.rs",
   "src/commands/backup.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+  "odd/tasks/windows-desktop-build-fixes.md",
 ]);
 
 const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
-  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "bdf866cf29a2577742d8abd0c401672d18b45153e82057352f2b3d7694f85f32",
+  "src-tauri/src/commands/backup.rs": "a77f998f576269fe1e556cf183cfa5e734cc88cda80b5ce7a331dfc66176e879",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "0e3fe83196cfff58915d2fd61a126d57528d8b641f473294d433989adeaf200c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
-  "src-tauri/tests/backup_restore.rs": "bdb7edb76e524167f9c3f7f468cd0b50367fa3c746cca1320d508b880ffea663",
+  "src-tauri/tests/backup_restore.rs": "11c9cafe8e560f443af21d01aa1fe6b4a2155654fb6570a54e7cdc0558b64b6b",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "a92cc7ab0cd2353812d66a1ec517a4b0d7ce43323c10ae56eef1e314b9e2b4c7",
-  "odd/tasks/windows-desktop-build-fixes.md": "8b6d929f1b41cb6cc2a99af58750714b74d3911b4a0eb97eda651db74c315691",
+  "src/ui/w9-evidence-audit.test.ts": "60f1bb078d32e926ad2cff4aff2c484d950c35eba5d57e5da54fd8302edf5944",
+  "odd/tasks/windows-desktop-build-fixes.md": "c9c50386962492e46297a4b7e4c23205dec830c3718f13e30896cbf167431c11",
 };
 
 const backupIntegrityCandidatePaths = new Set([
@@ -1097,6 +1101,8 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
   }
   assertWindowsDesktopFixDiffAllowlist(diffs);
 
+  assert.match(read("src-tauri/src/commands/backup.rs"), /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
+  assert.match(read("src-tauri/src/infrastructure/filesystem/backup_store.rs"), /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
   const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
   if (candidate) {
     assert.throws(
