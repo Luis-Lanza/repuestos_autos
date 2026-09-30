@@ -54,6 +54,7 @@ Add an offline perpetual, single-PC licensing boundary that activates from a ven
 - 2026-09-29: Vendor provisioned production public verification key `e869bd20891d1bf5c56007619f4d6d49d5d678395742659f6c5f5d1c52703f02` with key ID `24cd3b399059804e5ea6cfc43ff785c364dc1593bf7783e676e8defd4daa995d`; private key remains outside Git.
 
 ## Evidence
+- Work-unit commit: `671c165 feat(licensing): add offline perpetual activation`.
 - Read-only mapping: `docs/DEPLOYMENT_AND_LICENSING.md`, `src-tauri/src/lib.rs`, backup/restore commands, SQLite startup, Tauri command builder, app shell, and Cargo boundaries.
 - Protocol research: Ed25519 verification/signing, Windows registry MachineGuid access, and Tauri non-blocking license-file import patterns.
 
