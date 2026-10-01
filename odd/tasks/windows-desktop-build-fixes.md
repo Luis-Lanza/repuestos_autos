@@ -19,6 +19,12 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - [x] W7 Add bounded Windows debug-only native backup diagnostics without guessing or changing production behavior; use the next Windows run to identify the failing operation before any corrective change.
 - [x] W8 Restore release cleanup-evidence reconciliation behavior on metadata-inspection failure; retain the bounded evidence-recreation attempt and prove it with a regression test.
 - [x] W9 Add minimal debug-only IPC boundary labels for picker selection and create-backup command entry/returned response; fresh APPDATA is empty, so distinguish backend routing from internal failure before widening branch diagnostics.
+- [x] W10 Add targeted debug-only labels to the remaining high-level create-backup failure gates (prune, state, snapshot size/result, publication/cleanup outcome) to identify the exact branch without exposing data.
+
+## W10 evidence
+- Added fixed high-level `create_backup_*` outcome labels for expired and snapshot pruning, destination-token consumption, state/read/snapshot outcomes, size-limit rejection, publication failure, and final cleanup. Destination-token, internal-result, storage-error, and cleanup classes are explicitly bounded; the output contains no paths, tokens, sizes, database values, or request data.
+- Labels compile only under `cfg(all(windows, debug_assertions))`; non-Windows and release behavior, including IPC responses, is unchanged. The W9 audit checks every gate label, debug-only scope, and bounded classifiers.
+- Windows runtime execution is still required to identify which gate is reached in the reported environment.
 
 ## W5 evidence
 - Windows snapshot cleanup opened directories with read-only access and then called `sync_all`; the store publication path used `File::open(...).sync_all()` directly. Both bypass the Windows directory-flush contract requiring a write-capable directory handle and `FlushFileBuffers`.

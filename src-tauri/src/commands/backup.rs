@@ -287,14 +287,21 @@ fn create_backup_with_publisher(
     cleanup: &mut impl StageCleanup,
     mut publish: impl FnMut(&Path, &Path, &str) -> Result<PublishedBackup, StorageError>,
 ) -> BackupResponse {
-    if !commands.prune_expired_using(cleanup) { return BackupResponse::error("storage_unavailable"); }
+    if !commands.prune_expired_using(cleanup) {
+        report_create_backup_gate("expired_prune", "failed", "storage_unavailable");
+        return BackupResponse::error("storage_unavailable");
+    }
     let destination = match commands.consume_destination(&request.destination_token) {
         Ok(destination) => destination,
-        Err(code) => return BackupResponse::error(code),
+        Err(code) => {
+            report_create_backup_gate("destination_token", "failed", destination_token_class(code));
+            return BackupResponse::error(code);
+        }
     };
     let created_at_unix_seconds = now_seconds();
     let snapshot_directory = commands.root.join("backup-restore/snapshots");
     if !prune_artifacts_using(&snapshot_directory, true, MAX_SNAPSHOTS, Duration::from_secs(7 * 24 * 60 * 60), &[], cleanup) {
+        report_create_backup_gate("snapshot_prune", "failed", "storage_unavailable");
         return BackupResponse::error("storage_unavailable");
     }
     let snapshot = snapshot_directory.join(format!(
@@ -311,15 +318,22 @@ fn create_backup_with_publisher(
             "storage_unavailable".to_string()
         })?;
         if pages.checked_mul(page_size).is_none_or(|size| size > MAX_STAGE_BYTES) {
+            report_create_backup_gate("snapshot_size", "rejected", "limit_exceeded");
             return Err("storage_unavailable".into());
         }
-        create_snapshot(connection, &snapshot).map_err(|_| "storage_unavailable".into())
+        create_snapshot(connection, &snapshot).map_err(|_| {
+            report_create_backup_gate("snapshot_result", "failed", "storage_unavailable");
+            "storage_unavailable".into()
+        })
     }) {
         Ok(metadata) => metadata,
         Err(code) => {
+            report_create_backup_gate("state_read_snapshot", "failed", internal_backup_result_class(&code));
             if !remove_stage_with_evidence_using(&snapshot, cleanup) {
+                report_create_backup_gate("final_cleanup", "failed", "unaccounted_failure");
                 return BackupResponse::error("storage_unavailable");
             }
+            report_create_backup_gate("final_cleanup", "completed", "cleaned");
             return BackupResponse::from_internal_code(&code);
         }
     };
@@ -328,7 +342,11 @@ fn create_backup_with_publisher(
         uuid::Uuid::new_v4()
     );
     let published = publish(&snapshot, &destination.join("backup-restore"), &file_name);
+    if let Err(error) = &published {
+        report_create_backup_gate("publication", "failed", storage_error_class(error));
+    }
     let snapshot_cleanup = remove_stage_with_evidence_detailed_using(&snapshot, cleanup);
+    report_create_backup_gate("final_cleanup", cleanup_result_outcome(snapshot_cleanup), cleanup_result_class(snapshot_cleanup));
     match published {
         Ok(published) => match snapshot_cleanup {
             CleanupResult::Cleaned => BackupResponse::Created {
@@ -500,6 +518,53 @@ fn confirm_restore_using(
                 BackupResponse::error("restore_failed")
             }
         }
+    }
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_create_backup_gate(operation: &'static str, outcome: &'static str, class: &'static str) {
+    eprintln!("backup_diagnostic operation=create_backup_{operation} outcome={outcome} class={class}");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_create_backup_gate(_operation: &'static str, _outcome: &'static str, _class: &'static str) {}
+
+fn destination_token_class(code: &str) -> &'static str {
+    match code {
+        "destination_token_invalid" => "destination_token_invalid",
+        "destination_token_expired" => "destination_token_expired",
+        _ => "other",
+    }
+}
+
+fn internal_backup_result_class(code: &str) -> &'static str {
+    match code {
+        "database_unavailable" => "database_unavailable",
+        "storage_unavailable" => "storage_unavailable",
+        _ => "other",
+    }
+}
+
+fn storage_error_class(error: &StorageError) -> &'static str {
+    match error {
+        StorageError::DestinationExists => "destination_exists",
+        StorageError::UnsupportedDestination => "unsupported_destination",
+        StorageError::SelectionCancelled | StorageError::StorageUnavailable => "storage_unavailable",
+    }
+}
+
+fn cleanup_result_outcome(result: CleanupResult) -> &'static str {
+    match result {
+        CleanupResult::Cleaned => "completed",
+        CleanupResult::DurablyEvidencedFailure | CleanupResult::UnaccountedFailure => "failed",
+    }
+}
+
+fn cleanup_result_class(result: CleanupResult) -> &'static str {
+    match result {
+        CleanupResult::Cleaned => "cleaned",
+        CleanupResult::DurablyEvidencedFailure => "durably_evidenced_failure",
+        CleanupResult::UnaccountedFailure => "unaccounted_failure",
     }
 }
 

@@ -705,9 +705,9 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
-  "src-tauri/src/commands/backup.rs": "b0c5117d81b8826a917c9d9e365982dc6bc69418a813b940054750d0f5681b80",
+  "src-tauri/src/commands/backup.rs": "aed6c5e190fc0f3604d4cd38bb94e8b9172253281e7ce552dee671bf2430f414",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
-  "src/ui/w9-evidence-audit.test.ts": "ba800f53ad94dbb00709010462558696f4f8b4843fe2e629cc872194dc10e684",
+  "src/ui/w9-evidence-audit.test.ts": "b8316085b42626f33d70eecda7dae4a0f2b9244f26cf93796df90a6b16b92369",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
@@ -739,15 +739,15 @@ const windowsDesktopFixCandidatePaths = new Set([
 
 const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
-  "src-tauri/src/commands/backup.rs": "b0c5117d81b8826a917c9d9e365982dc6bc69418a813b940054750d0f5681b80",
+  "src-tauri/src/commands/backup.rs": "aed6c5e190fc0f3604d4cd38bb94e8b9172253281e7ce552dee671bf2430f414",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "ba800f53ad94dbb00709010462558696f4f8b4843fe2e629cc872194dc10e684",
-  "odd/tasks/windows-desktop-build-fixes.md": "627e4002fdd2052e542e0cda0d3136cb645ef8a68db4c40b8bf169e87881891e",
+  "src/ui/w9-evidence-audit.test.ts": "b8316085b42626f33d70eecda7dae4a0f2b9244f26cf93796df90a6b16b92369",
+  "odd/tasks/windows-desktop-build-fixes.md": "ad236b84ae310acebbc21893a5efeb59cf3bbc70dfcaeabbc25f359f08198dbe",
 };
 
 const backupIntegrityCandidatePaths = new Set([
@@ -1117,6 +1117,12 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
   for (const operation of ["snapshot_page_count", "snapshot_page_size", "cleanup_evidence_create", "cleanup_artifact_remove", "cleanup_artifact_directory_sync", "cleanup_reconcile_artifact_remove", "cleanup_reconcile_evidence_directory_sync", "publication_temp_create", "publication_finalize"]) {
     assert.match(diagnosticCalls, new RegExp(`report_backup_(?:sqlite|io|unclassified)_failure\\("${operation}"`));
   }
+  const createBackupGateCalls = commandBackup.slice(commandBackup.indexOf("fn create_backup_with_publisher"), commandBackup.indexOf("pub fn prepare_restore"));
+  for (const gate of ["expired_prune", "destination_token", "snapshot_prune", "snapshot_size", "snapshot_result", "state_read_snapshot", "publication", "final_cleanup"]) {
+    assert.match(createBackupGateCalls, new RegExp(`report_create_backup_gate\\("${gate}"`), `missing create-backup diagnostic gate: ${gate}`);
+  }
+  assert.match(commandBackup, /#\[cfg\(all\(windows, debug_assertions\)\)\][\s\S]*fn report_create_backup_gate/);
+  assert.match(commandBackup, /fn destination_token_class[\s\S]*fn internal_backup_result_class[\s\S]*fn storage_error_class[\s\S]*fn cleanup_result_class/);
   assert.match(read("odd/tasks/windows-desktop-build-fixes.md"), /backup_diagnostic operation=/);
   assert.match(lib, /#\[cfg\(all\(windows, debug_assertions\)\)\][\s\S]*backup_diagnostic operation=picker_selection/);
   assert.match(lib, /backup_diagnostic operation=create_backup_command phase=entry/);
