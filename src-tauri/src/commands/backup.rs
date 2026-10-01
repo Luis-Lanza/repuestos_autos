@@ -302,8 +302,14 @@ fn create_backup_with_publisher(
         uuid::Uuid::new_v4()
     ));
     let metadata = match state.with_read(|connection| {
-        let pages: u64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0)).map_err(|_| "storage_unavailable".to_string())?;
-        let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0)).map_err(|_| "storage_unavailable".to_string())?;
+        let pages: u64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0)).map_err(|error| {
+            report_backup_sqlite_failure("snapshot_page_count", &error);
+            "storage_unavailable".to_string()
+        })?;
+        let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0)).map_err(|error| {
+            report_backup_sqlite_failure("snapshot_page_size", &error);
+            "storage_unavailable".to_string()
+        })?;
         if pages.checked_mul(page_size).is_none_or(|size| size > MAX_STAGE_BYTES) {
             return Err("storage_unavailable".into());
         }
@@ -524,6 +530,7 @@ impl StageCleanup for RealStageCleanup {
         match fs::symlink_metadata(path) {
             Ok(metadata) if metadata.file_type().is_file() => fs::remove_file(path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
             _ => Err(std::io::ErrorKind::InvalidData.into()),
         }
     }
@@ -564,26 +571,81 @@ fn remove_stage_with_evidence_detailed_using(path: &Path, cleanup: &mut impl Sta
 
     // Persist the bounded recovery record before deleting anything. If any later operation
     // fails, startup can safely retry without depending on the original stage still existing.
-    if cleanup.create_evidence(&record).is_err()
-        || cleanup.write_evidence(&record).is_err()
-        || cleanup.sync_evidence(&record).is_err()
-        || cleanup.sync_parent(&record).is_err()
-    {
+    if let Err(error) = cleanup.create_evidence(&record) {
+        report_backup_io_failure("cleanup_evidence_create", &error);
         return CleanupResult::UnaccountedFailure;
     }
-    if cleanup.remove(path).is_err() || cleanup.sync_parent(path).is_err() {
+    if let Err(error) = cleanup.write_evidence(&record) {
+        report_backup_io_failure("cleanup_evidence_write", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    if let Err(error) = cleanup.sync_evidence(&record) {
+        report_backup_io_failure("cleanup_evidence_sync", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    if let Err(error) = cleanup.sync_parent(&record) {
+        report_backup_io_failure("cleanup_evidence_directory_sync", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    if let Err(error) = cleanup.remove(path) {
+        report_backup_io_failure("cleanup_artifact_remove", &error);
         return CleanupResult::DurablyEvidencedFailure;
     }
-    if cleanup.remove(&record).is_err() || cleanup.sync_parent(&record).is_err() {
-        // Recreate and durably sync the bounded record before claiming an evidenced failure.
-        let recreated = cleanup.create_evidence(&record).is_ok()
-            && cleanup.write_evidence(&record).is_ok()
-            && cleanup.sync_evidence(&record).is_ok()
-            && cleanup.sync_parent(&record).is_ok();
-        return if recreated { CleanupResult::DurablyEvidencedFailure } else { CleanupResult::UnaccountedFailure };
+    if let Err(error) = cleanup.sync_parent(path) {
+        report_backup_io_failure("cleanup_artifact_directory_sync", &error);
+        return CleanupResult::DurablyEvidencedFailure;
+    }
+    if let Err(error) = cleanup.remove(&record) {
+        report_backup_io_failure("cleanup_evidence_remove", &error);
+        return recreate_cleanup_evidence(&record, cleanup);
+    }
+    if let Err(error) = cleanup.sync_parent(&record) {
+        report_backup_io_failure("cleanup_evidence_directory_sync", &error);
+        return recreate_cleanup_evidence(&record, cleanup);
     }
     CleanupResult::Cleaned
 }
+
+fn recreate_cleanup_evidence(record: &Path, cleanup: &mut impl StageCleanup) -> CleanupResult {
+    if let Err(error) = cleanup.create_evidence(record) {
+        report_backup_io_failure("cleanup_evidence_recreate", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    if let Err(error) = cleanup.write_evidence(record) {
+        report_backup_io_failure("cleanup_evidence_rewrite", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    if let Err(error) = cleanup.sync_evidence(record) {
+        report_backup_io_failure("cleanup_evidence_resync", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    if let Err(error) = cleanup.sync_parent(record) {
+        report_backup_io_failure("cleanup_evidence_directory_resync", &error);
+        return CleanupResult::UnaccountedFailure;
+    }
+    CleanupResult::DurablyEvidencedFailure
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_backup_sqlite_failure(operation: &str, _error: &rusqlite::Error) {
+    // rusqlite does not expose a separate originating Windows system error.
+    eprintln!("backup_diagnostic operation={operation} os_code=none kind=Other");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_backup_sqlite_failure(_operation: &str, _error: &rusqlite::Error) {}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_backup_io_failure(operation: &str, error: &std::io::Error) {
+    eprintln!(
+        "backup_diagnostic operation={operation} os_code={} kind={:?}",
+        error.raw_os_error().map_or_else(|| "none".to_string(), |code| code.to_string()),
+        error.kind(),
+    );
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_backup_io_failure(_operation: &str, _error: &std::io::Error) {}
 
 /// Reconcile durable cleanup records after restart. The artifact is removed and its directory
 /// synced before its evidence is unlinked; failure at either point keeps startup unavailable.
@@ -595,29 +657,53 @@ pub(crate) fn reconcile_cleanup_evidence_using(directory: &Path, cleanup: &mut i
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
-        Err(_) => return false,
+        Err(error) => {
+            report_backup_io_failure("cleanup_reconcile_directory_read", &error);
+            return false;
+        }
     };
     for entry in entries {
-        let Ok(entry) = entry else { return false };
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report_backup_io_failure("cleanup_reconcile_entry_read", &error);
+                return false;
+            }
+        };
         let name = entry.file_name();
         let Some(name) = name.to_str() else { return false };
         let Some(artifact_name) = name.strip_prefix('.').and_then(|name| name.strip_suffix(".cleanup-needed")) else { continue };
         if artifact_name.is_empty() { return false; }
         let artifact = directory.join(artifact_name);
         let record = entry.path();
-        if cleanup.remove(&artifact).is_err() || cleanup.sync_parent(&artifact).is_err() {
+        if let Err(error) = cleanup.remove(&artifact) {
+            report_backup_io_failure("cleanup_reconcile_artifact_remove", &error);
             return false;
         }
-        if !matches!(fs::symlink_metadata(&record), Ok(metadata) if metadata.file_type().is_file())
-            || cleanup.remove(&record).is_err()
-            || cleanup.sync_parent(&record).is_err()
-        {
-            // Try to restore evidence if its removal was not durably recorded.
-            if cleanup.create_evidence(&record).is_ok() {
-                let _ = cleanup.write_evidence(&record)
-                    .and_then(|_| cleanup.sync_evidence(&record))
-                    .and_then(|_| cleanup.sync_parent(&record));
+        if let Err(error) = cleanup.sync_parent(&artifact) {
+            report_backup_io_failure("cleanup_reconcile_artifact_directory_sync", &error);
+            return false;
+        }
+        match fs::symlink_metadata(&record) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Err(error) => {
+                report_backup_io_failure("cleanup_reconcile_evidence_metadata", &error);
+                recreate_cleanup_evidence(&record, cleanup);
+                return false;
             }
+            _ => {
+                recreate_cleanup_evidence(&record, cleanup);
+                return false;
+            }
+        }
+        if let Err(error) = cleanup.remove(&record) {
+            report_backup_io_failure("cleanup_reconcile_evidence_remove", &error);
+            recreate_cleanup_evidence(&record, cleanup);
+            return false;
+        }
+        if let Err(error) = cleanup.sync_parent(&record) {
+            report_backup_io_failure("cleanup_reconcile_evidence_directory_sync", &error);
+            recreate_cleanup_evidence(&record, cleanup);
             return false;
         }
     }
@@ -645,7 +731,11 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
     };
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-    if wide.contains(&0) { return Err(std::io::ErrorKind::InvalidInput.into()); }
+    if wide.contains(&0) {
+        let error = std::io::Error::from(std::io::ErrorKind::InvalidInput);
+        report_backup_io_failure("cleanup_directory_sync_path", &error);
+        return Err(error);
+    }
     wide.push(0);
     let handle = unsafe {
         CreateFileW(
@@ -658,15 +748,26 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
             std::ptr::null_mut(),
         )
     };
-    if handle == INVALID_HANDLE_VALUE { return Err(std::io::Error::last_os_error()); }
-    let result = if unsafe { FlushFileBuffers(handle) } == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    };
+    if handle == INVALID_HANDLE_VALUE {
+        let error = std::io::Error::last_os_error();
+        report_backup_io_failure("cleanup_directory_sync_open", &error);
+        return Err(error);
+    }
+    let flush_result = unsafe { FlushFileBuffers(handle) };
+    let flush_error = (flush_result == 0).then(std::io::Error::last_os_error);
+    if let Some(error) = &flush_error {
+        report_backup_io_failure("cleanup_directory_sync_flush", error);
+    }
     let close_result = unsafe { CloseHandle(handle) };
-    if result.is_ok() && close_result == 0 { return Err(std::io::Error::last_os_error()); }
-    result
+    let close_error = (close_result == 0).then(std::io::Error::last_os_error);
+    if let Some(error) = &close_error {
+        report_backup_io_failure("cleanup_directory_sync_close", error);
+    }
+    match (flush_error, close_error) {
+        (Some(error), _) => Err(error),
+        (None, Some(error)) => Err(error),
+        (None, None) => Ok(()),
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -678,15 +779,28 @@ fn prune_artifacts_using(directory: &Path, snapshots: bool, maximum: usize, maxi
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
-        Err(_) => return false,
+        Err(error) => {
+            report_backup_io_failure("artifact_prune_directory_read", &error);
+            return false;
+        }
     };
     let now = SystemTime::now();
     let mut count = 0usize;
     for entry in entries {
-        let Ok(entry) = entry else { return false };
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report_backup_io_failure("artifact_prune_entry_read", &error);
+                return false;
+            }
+        };
         let path = entry.path();
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_file() => metadata,
+            Err(error) => {
+                report_backup_io_failure("artifact_prune_metadata", &error);
+                return false;
+            }
             _ => return false,
         };
         let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
@@ -1253,6 +1367,68 @@ mod destination_token_tests {
         assert!(reconcile_cleanup_evidence(&root));
         assert!(!stage.exists());
         assert!(!evidence.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    struct RemoveEvidenceDuringArtifactSync {
+        record: PathBuf,
+        calls: Vec<&'static str>,
+    }
+
+    impl StageCleanup for RemoveEvidenceDuringArtifactSync {
+        fn remove(&mut self, path: &Path) -> std::io::Result<()> {
+            self.calls.push("remove");
+            match fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_type().is_file() => fs::remove_file(path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                _ => Err(std::io::ErrorKind::InvalidData.into()),
+            }
+        }
+
+        fn sync_parent(&mut self, path: &Path) -> std::io::Result<()> {
+            self.calls.push("sync_parent");
+            if path != self.record {
+                fs::remove_file(&self.record)?;
+            }
+            sync_parent_directory(path)
+        }
+
+        fn create_evidence(&mut self, path: &Path) -> std::io::Result<()> {
+            self.calls.push("create_evidence");
+            OpenOptions::new().write(true).create_new(true).open(path).map(drop)
+        }
+
+        fn write_evidence(&mut self, path: &Path) -> std::io::Result<()> {
+            self.calls.push("write_evidence");
+            use std::io::Write;
+            OpenOptions::new().write(true).open(path)?.write_all(b"restore-stage-cleanup-required\n")
+        }
+
+        fn sync_evidence(&mut self, path: &Path) -> std::io::Result<()> {
+            self.calls.push("sync_evidence");
+            OpenOptions::new().write(true).open(path)?.sync_all()
+        }
+    }
+
+    #[test]
+    fn startup_reconciliation_recreates_evidence_after_metadata_inspection_failure() {
+        let root = test_directory();
+        let stage = root.join("retry.sqlite3");
+        let evidence = root.join(".retry.sqlite3.cleanup-needed");
+        fs::write(&stage, b"abandoned").unwrap();
+        fs::write(&evidence, b"restore-stage-cleanup-required\n").unwrap();
+        let mut cleanup = RemoveEvidenceDuringArtifactSync {
+            record: evidence.clone(),
+            calls: Vec::new(),
+        };
+
+        assert!(!reconcile_cleanup_evidence_using(&root, &mut cleanup));
+        assert!(!stage.exists());
+        assert_eq!(fs::read(&evidence).unwrap(), b"restore-stage-cleanup-required\n");
+        assert_eq!(
+            cleanup.calls,
+            vec!["remove", "sync_parent", "create_evidence", "write_evidence", "sync_evidence", "sync_parent"],
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

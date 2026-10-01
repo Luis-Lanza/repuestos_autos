@@ -705,13 +705,13 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
-  "src-tauri/src/commands/backup.rs": "a77f998f576269fe1e556cf183cfa5e734cc88cda80b5ce7a331dfc66176e879",
+  "src-tauri/src/commands/backup.rs": "b0c5117d81b8826a917c9d9e365982dc6bc69418a813b940054750d0f5681b80",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
-  "src/ui/w9-evidence-audit.test.ts": "365ab4e20487fe4890370444bfbb89df6a760c5285208d00bb733a4bf3909ad0",
+  "src/ui/w9-evidence-audit.test.ts": "feb1b9f21ba077ccde3462589e2727718d8e48c3401f2939f3fe805aa091f8b4",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "0e3fe83196cfff58915d2fd61a126d57528d8b641f473294d433989adeaf200c",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
-  "src-tauri/src/infrastructure/sqlite/backup.rs": "ddd5303d41faf161dda7a11c19914099ed98bbb169f0d74628d81fc048fb7c77",
+  "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src/commands/backup.ts": "22801231a00ee33709afa0e9ba5d67072775e9d1849edde32afafad693b00166",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
   "src/ui/backup/backup-flow.ts": "3070565d5f770fc9f8482c8951671663c612575390d8176ee7edf6b6b473de2f",
@@ -729,6 +729,7 @@ const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/src/commands/backup.rs",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+  "src-tauri/src/infrastructure/sqlite/backup.rs",
   "src-tauri/src/lib.rs",
   "src-tauri/tests/backup_restore.rs",
   "src/commands/backup.test.ts",
@@ -738,14 +739,15 @@ const windowsDesktopFixCandidatePaths = new Set([
 
 const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
-  "src-tauri/src/commands/backup.rs": "a77f998f576269fe1e556cf183cfa5e734cc88cda80b5ce7a331dfc66176e879",
-  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "0e3fe83196cfff58915d2fd61a126d57528d8b641f473294d433989adeaf200c",
+  "src-tauri/src/commands/backup.rs": "b0c5117d81b8826a917c9d9e365982dc6bc69418a813b940054750d0f5681b80",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
+  "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "365ab4e20487fe4890370444bfbb89df6a760c5285208d00bb733a4bf3909ad0",
-  "odd/tasks/windows-desktop-build-fixes.md": "7711b5cfd113c4e0b72c6053d2b72c91c33cba47874acc38b032683a9f0b11ac",
+  "src/ui/w9-evidence-audit.test.ts": "feb1b9f21ba077ccde3462589e2727718d8e48c3401f2939f3fe805aa091f8b4",
+  "odd/tasks/windows-desktop-build-fixes.md": "5d7c3ef9b32bc7fa840f7f8dbc99fd547bc486b9fd891b0f05e58d01febcf312",
 };
 
 const backupIntegrityCandidatePaths = new Set([
@@ -1101,8 +1103,19 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
   }
   assertWindowsDesktopFixDiffAllowlist(diffs);
 
-  assert.match(read("src-tauri/src/commands/backup.rs"), /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
-  assert.match(read("src-tauri/src/infrastructure/filesystem/backup_store.rs"), /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
+  const commandBackup = read("src-tauri/src/commands/backup.rs");
+  const storeBackup = read("src-tauri/src/infrastructure/filesystem/backup_store.rs");
+  const sqliteBackup = read("src-tauri/src/infrastructure/sqlite/backup.rs");
+  assert.match(commandBackup, /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
+  assert.match(storeBackup, /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
+  for (const source of [commandBackup, storeBackup, sqliteBackup]) {
+    assert.match(source, /#\[cfg\(all\(windows, debug_assertions\)\)\][\s\S]*backup_diagnostic operation=/);
+  }
+  const diagnosticCalls = `${commandBackup}\n${storeBackup}\n${sqliteBackup}`;
+  for (const operation of ["snapshot_page_count", "snapshot_page_size", "cleanup_evidence_create", "cleanup_artifact_remove", "cleanup_artifact_directory_sync", "cleanup_reconcile_artifact_remove", "cleanup_reconcile_evidence_directory_sync", "publication_temp_create", "publication_finalize"]) {
+    assert.match(diagnosticCalls, new RegExp(`report_backup_(?:sqlite|io|unclassified)_failure\\("${operation}"`));
+  }
+  assert.match(read("odd/tasks/windows-desktop-build-fixes.md"), /backup_diagnostic operation=/);
   const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
   if (candidate) {
     assert.throws(

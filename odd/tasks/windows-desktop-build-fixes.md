@@ -16,6 +16,8 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - [x] W4 Open a valid canonical database when only valid retained transition sidecars remain; preserve those artifacts and still fail closed for malformed/unexpected sidecars or a missing/invalid canonical.
 - [x] W5 Diagnose and correct Windows snapshot cleanup/directory durability so backup creation does not return `storage_unavailable` after a safe publication; the fixed-NTFS test passed on the Windows host.
 - [x] W6 Align backup/restore tests with platform-safe destination and markerless fail-closed policy; close SQLite handles before fixture deletion.
+- [x] W7 Add bounded Windows debug-only native backup diagnostics without guessing or changing production behavior; use the next Windows run to identify the failing operation before any corrective change.
+- [x] W8 Restore release cleanup-evidence reconciliation behavior on metadata-inspection failure; retain the bounded evidence-recreation attempt and prove it with a regression test.
 
 ## W5 evidence
 - Windows snapshot cleanup opened directories with read-only access and then called `sync_all`; the store publication path used `File::open(...).sync_all()` directly. Both bypass the Windows directory-flush contract requiring a write-capable directory handle and `FlushFileBuffers`.
@@ -23,6 +25,11 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - Linux local verification passed: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore`, `cargo test --manifest-path src-tauri/Cargo.toml`, `npm test`, and `git diff --check`.
 - Windows evidence: the fixed-NTFS test passed in a 47/51 Windows suite run. W6 addresses the four observed failures without changing production behavior; rerun the full Windows suite with `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore`.
 - Linux W6 verification: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore` passed (42 tests), `cargo test --manifest-path src-tauri/Cargo.toml` passed, and `npm test` passed (392 tests) after the exact W9 hashes were updated. `git diff --check` passed.
+
+## W7 diagnostic handoff
+- Windows development diagnostics are emitted only under `cfg(all(windows, debug_assertions))` as `backup_diagnostic operation=<stable-label> os_code=<number-or-none> kind=<ErrorKind>`; release builds retain the existing IPC errors and produce no diagnostic output.
+- Snapshot creation/metadata, publication, cleanup-evidence create/write/sync/remove, artifact removal, and directory sync boundaries report labels only and never paths, database values, license data, tokens, or user data. SQLite errors that do not expose a Windows OS error report `os_code=none kind=Other`.
+- To identify the remaining failure, run `npm run tauri:dev` on Windows, create a backup through the app, and copy exactly one `backup_diagnostic ...` line from the Tauri terminal. Use that operation and code/kind as evidence before proposing a production fix.
 
 ## Acceptance
 - `npm run tauri:dev` compiles on Windows.

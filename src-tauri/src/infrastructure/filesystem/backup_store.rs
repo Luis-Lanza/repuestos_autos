@@ -73,7 +73,10 @@ impl BackupStore {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 validate_backup_destination(destination)?;
             }
-            Err(_) => return Err(StorageError::StorageUnavailable),
+            Err(error) => {
+                report_backup_io_failure("publication_directory_create", &error);
+                return Err(StorageError::StorageUnavailable);
+            }
         }
         validate_backup_destination(destination)?;
         publish_validated(snapshot, destination, file_name, &mut RealPublicationFs)
@@ -214,16 +217,45 @@ fn publish_with_pre_finalize_validation<F: PublicationFs>(
     let published = destination.join(file_name);
     let part = destination.join(format!(".{file_name}.{}.part", uuid::Uuid::new_v4()));
     let result = (|| {
-        let mut output = fs.create_temp(&part).map_err(map_create_temp_error)?;
+        let mut output = match fs.create_temp(&part) {
+            Ok(output) => output,
+            Err(error) => {
+                report_backup_io_failure("publication_temp_create", &error);
+                return Err(map_create_temp_error(error));
+            }
+        };
         let copied_bytes = match fs.copy(snapshot, &mut output) {
             Ok(bytes) => bytes,
-            Err(_) => { drop(output); return Err(StorageError::StorageUnavailable); }
+            Err(error) => {
+                report_backup_io_failure("publication_copy", &error);
+                drop(output);
+                return Err(StorageError::StorageUnavailable);
+            }
         };
-        fs.flush(&mut output).map_err(|_| StorageError::StorageUnavailable)?;
-        fs.sync_file(&output).map_err(|_| StorageError::StorageUnavailable)?;
+        if let Err(error) = fs.flush(&mut output) {
+            report_backup_io_failure("publication_flush", &error);
+            return Err(StorageError::StorageUnavailable);
+        }
+        if let Err(error) = fs.sync_file(&output) {
+            report_backup_io_failure("publication_file_sync", &error);
+            return Err(StorageError::StorageUnavailable);
+        }
         drop(output);
-        let checksum = fs.checksum(snapshot, true).map_err(|_| StorageError::StorageUnavailable)?;
-        if checksum != fs.checksum(&part, false).map_err(|_| StorageError::StorageUnavailable)? {
+        let checksum = match fs.checksum(snapshot, true) {
+            Ok(checksum) => checksum,
+            Err(error) => {
+                report_backup_io_failure("publication_source_checksum", &error);
+                return Err(StorageError::StorageUnavailable);
+            }
+        };
+        let published_checksum = match fs.checksum(&part, false) {
+            Ok(checksum) => checksum,
+            Err(error) => {
+                report_backup_io_failure("publication_temp_checksum", &error);
+                return Err(StorageError::StorageUnavailable);
+            }
+        };
+        if checksum != published_checksum {
             return Err(StorageError::StorageUnavailable);
         }
         fs.validate_sqlite(&part)?;
@@ -237,21 +269,55 @@ fn publish_with_pre_finalize_validation<F: PublicationFs>(
             durability_warning = true;
         }
         // Finalization is confirmed; directory sync failure is a warning, not a failed creation.
-        durability_warning |= fs.sync_directory(destination).is_err();
+        if fs.sync_directory(destination).is_err() {
+            report_backup_unclassified_failure("publication_directory_sync");
+            durability_warning = true;
+        }
         Ok(PublishedBackup { path: published.clone(), size_bytes: copied_bytes, sha256: checksum, durability_warning })
     })();
     if result.is_err() && fs.exists_no_follow(&part) {
-        if fs.remove_temp(&part).is_err() {
+        if let Err(error) = fs.remove_temp(&part) {
+            report_backup_io_failure("publication_temp_remove", &error);
             let evidence = destination.join(format!(".{file_name}.cleanup-needed"));
-            if fs.create_cleanup_record(&evidence).is_ok() {
-                let _ = fs.sync_directory(destination);
+            if let Err(error) = fs.create_cleanup_record(&evidence) {
+                report_backup_io_failure("publication_cleanup_evidence_create", &error);
+            } else if fs.sync_directory(destination).is_err() {
+                report_backup_unclassified_failure("publication_cleanup_directory_sync");
             }
-        } else {
-            let _ = fs.sync_directory(destination);
+        } else if fs.sync_directory(destination).is_err() {
+            report_backup_unclassified_failure("publication_temp_directory_sync");
         }
     }
     result
 }
+
+#[cfg(all(windows, debug_assertions))]
+fn report_backup_io_failure(operation: &str, error: &io::Error) {
+    eprintln!(
+        "backup_diagnostic operation={operation} os_code={} kind={:?}",
+        error.raw_os_error().map_or_else(|| "none".to_string(), |code| code.to_string()),
+        error.kind(),
+    );
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_backup_io_failure(_operation: &str, _error: &io::Error) {}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_backup_unclassified_failure(operation: &str) {
+    eprintln!("backup_diagnostic operation={operation} os_code=none kind=Other");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_backup_unclassified_failure(_operation: &str) {}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_backup_sqlite_failure(operation: &str, _error: &rusqlite::Error) {
+    eprintln!("backup_diagnostic operation={operation} os_code=none kind=Other");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_backup_sqlite_failure(_operation: &str, _error: &rusqlite::Error) {}
 
 fn map_create_temp_error(error: io::Error) -> StorageError {
     if error.kind() == io::ErrorKind::AlreadyExists { StorageError::DestinationExists }
@@ -265,14 +331,23 @@ fn valid_published_file<F: PublicationFs>(fs: &mut F, path: &Path, expected_sha2
 }
 
 pub fn validate_backup_destination(path: &Path) -> Result<(), StorageError> {
-    platform::validate_destination(path).map_err(|_| StorageError::UnsupportedDestination)
+    platform::validate_destination(path).map_err(|error| {
+        report_backup_io_failure("destination_validate", &error);
+        StorageError::UnsupportedDestination
+    })
 }
 
 fn validate_sqlite_snapshot(path: &Path) -> Result<(), StorageError> {
     let connection = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|_| StorageError::StorageUnavailable)?;
+        .map_err(|error| {
+            report_backup_sqlite_failure("publication_sqlite_open", &error);
+            StorageError::StorageUnavailable
+        })?;
     crate::infrastructure::sqlite::validate_restored_database(&connection)
-        .map_err(|_| StorageError::StorageUnavailable)
+        .map_err(|_| {
+            report_backup_unclassified_failure("publication_sqlite_validate");
+            StorageError::StorageUnavailable
+        })
 }
 
 #[cfg(not(windows))]
@@ -292,7 +367,10 @@ fn sync_directory(path: &Path) -> Result<(), StorageError> {
     };
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
-    if wide.contains(&0) { return Err(StorageError::StorageUnavailable); }
+    if wide.contains(&0) {
+        report_backup_io_failure("directory_sync_path", &io::Error::from(io::ErrorKind::InvalidInput));
+        return Err(StorageError::StorageUnavailable);
+    }
     wide.push(0);
     let handle = unsafe {
         CreateFileW(
@@ -305,10 +383,22 @@ fn sync_directory(path: &Path) -> Result<(), StorageError> {
             std::ptr::null_mut(),
         )
     };
-    if handle == INVALID_HANDLE_VALUE { return Err(StorageError::StorageUnavailable); }
-    let flushed = unsafe { FlushFileBuffers(handle) } != 0;
-    let closed = unsafe { CloseHandle(handle) } != 0;
-    if flushed && closed { Ok(()) } else { Err(StorageError::StorageUnavailable) }
+    if handle == INVALID_HANDLE_VALUE {
+        let error = io::Error::last_os_error();
+        report_backup_io_failure("directory_sync_open", &error);
+        return Err(StorageError::StorageUnavailable);
+    }
+    let flush_result = unsafe { FlushFileBuffers(handle) };
+    let flush_error = (flush_result == 0).then(io::Error::last_os_error);
+    if let Some(error) = &flush_error {
+        report_backup_io_failure("directory_sync_flush", error);
+    }
+    let close_result = unsafe { CloseHandle(handle) };
+    let close_error = (close_result == 0).then(io::Error::last_os_error);
+    if let Some(error) = &close_error {
+        report_backup_io_failure("directory_sync_close", error);
+    }
+    if flush_error.is_none() && close_error.is_none() { Ok(()) } else { Err(StorageError::StorageUnavailable) }
 }
 
 
@@ -320,6 +410,7 @@ fn rename_no_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
     let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
     if unsafe { MoveFileW(from.as_ptr(), to.as_ptr()) } == 0 {
         let error = io::Error::last_os_error();
+        report_backup_io_failure("publication_finalize", &error);
         return Err(if error.kind() == io::ErrorKind::AlreadyExists { StorageError::DestinationExists } else { StorageError::StorageUnavailable });
     }
     Ok(())
@@ -339,6 +430,7 @@ fn rename_no_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
         Ok(())
     } else {
         let error = io::Error::last_os_error();
+        report_backup_io_failure("publication_finalize", &error);
         Err(if error.kind() == io::ErrorKind::AlreadyExists { StorageError::DestinationExists } else { StorageError::StorageUnavailable })
     }
 }
