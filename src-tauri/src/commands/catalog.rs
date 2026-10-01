@@ -242,6 +242,42 @@ pub enum ProductImageThumbnailResponse {
     Error(CatalogMaintenanceError),
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SalesProductThumbnailRequest {
+    pub product_id: i64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SalesProductThumbnailResponse {
+    Success { product_id: i64, mime_type: &'static str, encoding: &'static str, bytes: String },
+    Unavailable,
+    Error { code: &'static str, message: &'static str },
+}
+
+pub fn sales_product_image_thumbnail(
+    connection: &rusqlite::Connection,
+    request: SalesProductThumbnailRequest,
+) -> SalesProductThumbnailResponse {
+    if request.product_id <= 0 {
+        return SalesProductThumbnailResponse::Unavailable;
+    }
+    match catalog::read_sales_product_image_thumbnail(connection, request.product_id) {
+        Ok(Some(thumbnail)) => SalesProductThumbnailResponse::Success {
+            product_id: request.product_id,
+            mime_type: thumbnail.mime_type(),
+            encoding: "base64",
+            bytes: encode_base64(thumbnail.bytes()),
+        },
+        Ok(None) | Err(catalog::ProductImagePersistenceError::MissingProduct) => SalesProductThumbnailResponse::Unavailable,
+        Err(_) => SalesProductThumbnailResponse::Error {
+            code: "persistence_failure",
+            message: "The product image could not be loaded.",
+        },
+    }
+}
+
 pub fn parse_product_image_request(request: ProductImageRequest) -> Result<ProductImageRequest, ()> {
     if request.product_id <= 0 || request.expected_revision < 0 { Err(()) } else { Ok(request) }
 }
@@ -414,6 +450,10 @@ pub fn unlock_catalog(session: &CatalogAccessSession, request: CatalogSecretRequ
     session.unlock(&request.password).map_or_else(access_error, |_| CatalogAccessResponse::Success)
 }
 
+pub fn lock_catalog(session: &CatalogAccessSession) -> CatalogAccessResponse {
+    session.lock().map_or_else(access_error, |_| CatalogAccessResponse::Success)
+}
+
 pub fn change_catalog_password(session: &CatalogAccessSession, request: CatalogPasswordChangeRequest) -> CatalogAccessResponse {
     session.change_password(&request.current_password, &request.new_password).map_or_else(access_error, |_| CatalogAccessResponse::Success)
 }
@@ -436,6 +476,23 @@ fn access_error(error: CatalogAccessError) -> CatalogAccessResponse {
         CatalogAccessError::Storage | CatalogAccessError::Corrupt => ("access_unavailable", "No se pudo acceder a la configuración local del catálogo."),
     };
     CatalogAccessResponse::Error { code, message }
+}
+
+pub fn browse_sale_products(
+    connection: &rusqlite::Connection,
+    request: BrowseProductsRequest,
+) -> Result<catalog::SaleBrowsePage, String> {
+    if request.category_id.is_some_and(|id| id <= 0) || request.page < 1 || request.page_size < 1 || request.page_size > 50 {
+        return Err("validation_error".into());
+    }
+    catalog::browse_active_sale_products(connection, &BrowseProductsInput {
+        query: request.query,
+        category_id: request.category_id,
+        stock_filter: ProductStockFilter::Available,
+        activity_filter: ProductActivityFilter::Active,
+        page: request.page,
+        page_size: request.page_size,
+    }).map_err(|_| "persistence_failure".into())
 }
 
 pub fn browse_products(

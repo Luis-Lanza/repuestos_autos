@@ -43,6 +43,11 @@ fn setup_displays_recovery_once_and_persists_only_distinct_argon2id_hashes_after
     let restarted = session(&root);
     assert_eq!(restarted.status(), CatalogAccessStatus::Locked);
     assert!(restarted.unlock("private-password").is_ok());
+    assert_eq!(restarted.status(), CatalogAccessStatus::Unlocked);
+    restarted.lock().unwrap();
+    assert_eq!(restarted.status(), CatalogAccessStatus::Locked);
+    assert!(!restarted.is_authorized());
+    assert!(restarted.unlock("private-password").is_ok());
     assert!(restarted.unlock("wrong-password").is_err());
     drop(restarted);
     fs::remove_dir_all(root).unwrap();

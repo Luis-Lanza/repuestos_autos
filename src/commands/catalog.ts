@@ -5,14 +5,18 @@ export const CATALOG_INTENT = { ARCHIVE: "archive", REACTIVATE: "reactivate" } a
 export const ATTRIBUTE_FIELD_TYPE = { TEXT: "text", NUMBER: "number", OPTION: "option" } as const;
 const RESPONSE_KIND = { SUCCESS: "success", ERROR: "error" } as const;
 const ERROR_CODE = { CATALOG_ACCESS: "catalog_access_required", VALIDATION: "validation_error", LIFECYCLE: "lifecycle_blocked", STALE: "stale_catalog_record", STALE_SCHEMA: "stale_category_schema", PERSISTENCE: "persistence_failure", UNAVAILABLE: "catalog_unavailable", IMAGE_UNAVAILABLE: "image_unavailable", INVALID_PURCHASE: "invalid_purchase_price", INVALID_SALE: "invalid_sale_price", INVALID_MINIMUM: "invalid_minimum_sale_price", MINIMUM_ABOVE_SALE: "minimum_sale_price_exceeds_sale_price" } as const;
-export interface ProductSearchResult { product_id: number; sku: string; name: string; category_name: string; available_quantity: number; purchase_price_centavos: number | null; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; revision: number; }
+export interface ProductSearchResult { product_id: number; revision?: number; sku: string; name: string; category_name: string; available_quantity: number; purchase_price_centavos: number | null; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; }
 export interface ProductBrowseAttribute { definition_id: number; label: string; value: string; }
-export interface ProductBrowseResult extends ProductSearchResult { category_id: number; primary_location_code: string | null; attribute_values: ProductBrowseAttribute[]; }
+export interface ProductBrowseResult extends ProductSearchResult { revision: number; category_id: number; primary_location_code: string | null; attribute_values: ProductBrowseAttribute[]; }
 export interface ProductBrowseCategory { category_id: number; name: string; }
 export type ProductStockState = "all" | "low_stock" | "out_of_stock" | "available" | "alerts";
 export type ProductActivityState = "active" | "archived" | "all";
 export interface ProductBrowseInput { query?: string; category_id?: number | null; stock_state?: ProductStockState; activity?: ProductActivityState; page?: number; page_size?: number; }
 export interface ProductBrowsePage { products: ProductBrowseResult[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
+export interface SalesBrowseProduct { product_id: number; category_id: number; sku: string; name: string; category_name: string; available_quantity: number; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; attribute_values: ProductBrowseAttribute[]; }
+export interface SalesBrowsePage { products: SalesBrowseProduct[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
+export type ProductBrowserProduct = ProductBrowseResult | SalesBrowseProduct;
+export type ProductBrowserPage = ProductBrowsePage | SalesBrowsePage;
 export interface CatalogMaintenanceRecord { entity_id: number; target: (typeof CATALOG_TARGET)[keyof typeof CATALOG_TARGET]; label: string; activity: "active" | "archived"; revision: number; active_product_count?: number; }
 export interface CatalogCategoryMaintenanceRecord extends CatalogMaintenanceRecord { target: typeof CATALOG_TARGET.CATEGORY; active_product_count: number; }
 export interface MaintainCatalogInput { target: CatalogMaintenanceRecord["target"]; entity_id: number; intent: (typeof CATALOG_INTENT)[keyof typeof CATALOG_INTENT]; expected_revision: number; }
@@ -25,6 +29,7 @@ export interface CatalogDetailInput { target: CatalogMaintenanceRecord["target"]
 export interface ProductImageInput { product_id: number; expected_revision: number; }
 export type ProductImageMutationResponse = { kind: "success"; product_id: number; revision: number } | { kind: "cancelled" } | CatalogMaintenanceError;
 export type ProductImageThumbnailResponse = { kind: "success"; product_id: number; revision: number; src: string } | CatalogMaintenanceError;
+export type SalesProductThumbnailResponse = { kind: "success"; product_id: number; src: string } | { kind: "unavailable" } | { kind: "error"; code: "persistence_failure"; message: string };
 export interface CategoryEditInput { target: typeof CATALOG_TARGET.CATEGORY; entity_id: number; expected_revision: number; name: string; }
 export interface ProductEditInput { target: typeof CATALOG_TARGET.PRODUCT; entity_id: number; expected_revision: number; expected_category_revision: number; sku: string; name: string; purchase_price_centavos: number; sale_price_centavos: number; minimum_sale_price_centavos: number; low_stock_threshold?: number; attribute_values: CatalogAttributeValue[]; }
 export interface CategorySchemaFieldInput { definition_id: number | null; label: string; field_type: CatalogAttributeDefinition["field_type"]; required: boolean; options: string[]; }
@@ -50,8 +55,8 @@ const searchProduct = (value: unknown, includePurchaseCost = false): ProductSear
   const minimum = Object.hasOwn(value, "minimum_sale_price_centavos") ? value.minimum_sale_price_centavos : sale;
   const purchase = value.purchase_price_centavos;
   const validPrices = (!hasSale || positiveSafeInteger(value.sale_price_centavos)) && (!hasLegacyList || positiveSafeInteger(value.list_price_centavos)) && (!Object.hasOwn(value, "catalog_unit_price_centavos") || positiveSafeInteger(value.catalog_unit_price_centavos)) && (purchase === undefined || purchase === null || positiveSafeInteger(purchase));
-  return positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && typeof value.category_name === "string" && nonNegativeSafeInteger(value.available_quantity) && positiveSafeInteger(sale) && positiveSafeInteger(minimum) && nonNegativeSafeInteger(value.revision) && validPrices && minimum <= sale
-    ? { product_id: value.product_id, sku: value.sku, name: value.name, category_name: value.category_name, available_quantity: value.available_quantity, purchase_price_centavos: includePurchaseCost && purchase !== undefined ? purchase as number | null : null, sale_price_centavos: sale, list_price_centavos: sale, catalog_unit_price_centavos: sale, minimum_sale_price_centavos: minimum, revision: value.revision }
+  return (!Object.hasOwn(value, "revision") || nonNegativeSafeInteger(value.revision)) && positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && typeof value.category_name === "string" && nonNegativeSafeInteger(value.available_quantity) && positiveSafeInteger(sale) && positiveSafeInteger(minimum) && validPrices && minimum <= sale
+    ? { product_id: value.product_id, ...(nonNegativeSafeInteger(value.revision) ? { revision: value.revision } : {}), sku: value.sku, name: value.name, category_name: value.category_name, available_quantity: value.available_quantity, purchase_price_centavos: includePurchaseCost && purchase !== undefined ? purchase as number | null : null, sale_price_centavos: sale, list_price_centavos: sale, catalog_unit_price_centavos: sale, minimum_sale_price_centavos: minimum }
     : null;
 };
 const searchResults = (value: unknown): ProductSearchResult[] | null => {
@@ -62,12 +67,19 @@ const searchResults = (value: unknown): ProductSearchResult[] | null => {
 const browseAttribute = (value: unknown): ProductBrowseAttribute | null => responseRecord(value) && hasOnlyKeys(value, ["definition_id", "label", "value"]) && positiveSafeInteger(value.definition_id) && typeof value.label === "string" && typeof value.value === "string"
   ? { definition_id: value.definition_id, label: value.label, value: value.value }
   : null;
+const MAX_SALES_BROWSE_ATTRIBUTES = 32;
+const MAX_SALES_ATTRIBUTE_LABEL_CHARS = 128;
+const MAX_SALES_ATTRIBUTE_VALUE_CHARS = 256;
+const salesBrowseAttribute = (value: unknown): ProductBrowseAttribute | null => {
+  const attribute = browseAttribute(value);
+  return attribute && Array.from(attribute.label).length <= MAX_SALES_ATTRIBUTE_LABEL_CHARS && Array.from(attribute.value).length <= MAX_SALES_ATTRIBUTE_VALUE_CHARS ? attribute : null;
+};
 const browseProduct = (value: unknown): ProductBrowseResult | null => {
   const product = searchProduct(value, true);
-  if (!product || !responseRecord(value) || !positiveSafeInteger(value.category_id) || (value.primary_location_code !== undefined && value.primary_location_code !== null && typeof value.primary_location_code !== "string") || !Array.isArray(value.attribute_values)) return null;
+  if (!product || !responseRecord(value) || !nonNegativeSafeInteger(value.revision) || !positiveSafeInteger(value.category_id) || (value.primary_location_code !== undefined && value.primary_location_code !== null && typeof value.primary_location_code !== "string") || !Array.isArray(value.attribute_values)) return null;
   const attributeValues = value.attribute_values.map(browseAttribute);
   return attributeValues.every((item): item is ProductBrowseAttribute => item !== null)
-    ? { ...product, category_id: value.category_id, primary_location_code: typeof value.primary_location_code === "string" && value.primary_location_code.trim() ? value.primary_location_code : null, attribute_values: attributeValues }
+    ? { ...product, revision: value.revision, category_id: value.category_id, primary_location_code: typeof value.primary_location_code === "string" && value.primary_location_code.trim() ? value.primary_location_code : null, attribute_values: attributeValues }
     : null;
 };
 const browsePage = (value: unknown): ProductBrowsePage | null => {
@@ -124,6 +136,25 @@ const imageThumbnail = (value: unknown): ProductImageThumbnailResponse => {
 };
 
 export function createSearchProductsCommand(command: Invoke) { return async (query: string): Promise<ProductSearchResult[]> => { try { const value = searchResults(await command("search_products_command", { request: { query } })); if (!value) throw new Error("invalid search response"); return value; } catch { throw new Error("The product search could not be completed."); } }; }
+export function createSalesBrowseProductsCommand(command: Invoke) {
+  return async (input: ProductBrowseInput = {}): Promise<SalesBrowsePage> => {
+    const request = { query: input.query?.trim() || null, category_id: input.category_id ?? null, stock_state: "all", activity: "active", page: input.page ?? 1, page_size: input.page_size ?? 20 };
+    try {
+      const value = await command("browse_sale_products_command", { request });
+      if (!responseRecord(value) || !Array.isArray(value.products) || !Array.isArray(value.categories)) throw new Error("invalid sales browse response");
+      const products = value.products.map((item): SalesBrowseProduct | null => {
+        if (!responseRecord(item) || !hasOnlyKeys(item, ["product_id", "category_id", "sku", "name", "category_name", "available_quantity", "sale_price_centavos", "minimum_sale_price_centavos", "attribute_values"]) || !positiveSafeInteger(item.product_id) || !positiveSafeInteger(item.category_id) || typeof item.sku !== "string" || typeof item.name !== "string" || typeof item.category_name !== "string" || !nonNegativeSafeInteger(item.available_quantity) || !positiveSafeInteger(item.sale_price_centavos) || !positiveSafeInteger(item.minimum_sale_price_centavos) || item.minimum_sale_price_centavos > item.sale_price_centavos || !Array.isArray(item.attribute_values) || item.attribute_values.length > MAX_SALES_BROWSE_ATTRIBUTES) return null;
+        const attributes = item.attribute_values.map(salesBrowseAttribute);
+        if (!attributes.every((attribute): attribute is ProductBrowseAttribute => attribute !== null)) return null;
+        return { product_id: item.product_id, category_id: item.category_id, sku: item.sku, name: item.name, category_name: item.category_name, available_quantity: item.available_quantity, sale_price_centavos: item.sale_price_centavos, list_price_centavos: item.sale_price_centavos, catalog_unit_price_centavos: item.sale_price_centavos, minimum_sale_price_centavos: item.minimum_sale_price_centavos, attribute_values: attributes };
+      });
+      const categories = value.categories.map((item): ProductBrowseCategory | null => responseRecord(item) && hasOnlyKeys(item, ["category_id", "name"]) && positiveSafeInteger(item.category_id) && typeof item.name === "string" ? { category_id: item.category_id, name: item.name } : null);
+      if (!safeInteger(value.page) || value.page < 1 || !safeInteger(value.page_size) || value.page_size < 1 || value.page_size > 50 || !nonNegativeSafeInteger(value.total) || !nonNegativeSafeInteger(value.total_pages) || !products.every((item) => item !== null) || !categories.every((item) => item !== null)) throw new Error("invalid sales browse response");
+      return { products: products as SalesBrowseProduct[], categories: categories as ProductBrowseCategory[], page: value.page, page_size: value.page_size, total: value.total, total_pages: value.total_pages };
+    } catch { throw new Error("The product catalog could not be loaded."); }
+  };
+}
+
 export function createBrowseProductsCommand(command: Invoke) {
   return async (input: ProductBrowseInput = {}): Promise<ProductBrowsePage> => {
     const request = { query: input.query?.trim() || null, category_id: input.category_id ?? null, stock_state: input.stock_state ?? "all", activity: input.activity ?? "active", page: input.page ?? 1, page_size: input.page_size ?? 20 };
@@ -136,12 +167,22 @@ export function createBrowseProductsCommand(command: Invoke) {
     }
   };
 }
+const salesThumbnail = (value: unknown): SalesProductThumbnailResponse => {
+  if (responseRecord(value) && value.kind === "unavailable" && hasOnlyKeys(value, ["kind"])) return { kind: "unavailable" };
+  if (responseRecord(value) && value.kind === "success" && hasOnlyKeys(value, ["kind", "product_id", "mime_type", "encoding", "bytes"]) && positiveSafeInteger(value.product_id) && value.mime_type === "image/jpeg" && value.encoding === "base64" && typeof value.bytes === "string" && value.bytes.length <= 4 * Math.ceil(PRODUCT_IMAGE_MAX_BYTES / 3) && canonicalBase64(value.bytes) && value.bytes.startsWith("/9j/")) {
+    const decodedLength = value.bytes.length / 4 * 3 - (value.bytes.endsWith("==") ? 2 : value.bytes.endsWith("=") ? 1 : 0);
+    if (decodedLength > 0 && decodedLength <= PRODUCT_IMAGE_MAX_BYTES) return { kind: "success", product_id: value.product_id, src: `data:image/jpeg;base64,${value.bytes}` };
+  }
+  if (responseRecord(value) && value.kind === "error" && hasOnlyKeys(value, ["kind", "code", "message"]) && value.code === "persistence_failure" && typeof value.message === "string") return { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." };
+  return { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." };
+};
 export function createCatalogProductImageCommands(command: Invoke) {
   const updateFailure = "The product image could not be updated.";
   return {
     choose: (input: ProductImageInput): Promise<ProductImageMutationResponse> => command("choose_product_image_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision } }).then((value) => imageMutation(value, updateFailure)).catch(() => failure(updateFailure)),
     remove: (input: ProductImageInput): Promise<ProductImageMutationResponse> => command("remove_product_image_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision } }).then((value) => imageMutation(value, updateFailure)).catch(() => failure(updateFailure)),
     thumbnail: (input: ProductImageInput): Promise<ProductImageThumbnailResponse> => command("catalog_product_image_thumbnail_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision } }).then(imageThumbnail).catch(() => failure("The product image could not be loaded.")),
+    salesThumbnail: (product_id: number): Promise<SalesProductThumbnailResponse> => command("sales_product_image_thumbnail_command", { request: { product_id } }).then(salesThumbnail).catch(() => ({ kind: "error", code: "persistence_failure", message: "The product image could not be loaded." })),
   };
 }
 
@@ -159,6 +200,7 @@ export function createCatalogMaintenanceCommands(command: Invoke) {
 }
 export const searchProducts = createSearchProductsCommand(invoke as Invoke);
 export const browseProducts = createBrowseProductsCommand(invoke as Invoke);
+export const browseSalesProducts = createSalesBrowseProductsCommand(invoke as Invoke);
 export const catalogMaintenanceCommands = createCatalogMaintenanceCommands(invoke as Invoke);
 export const catalogProductImageCommands = createCatalogProductImageCommands(invoke as Invoke);
 
@@ -227,6 +269,7 @@ export function createCatalogAccessCommands(command: Invoke) {
     beginSetup: (password: string) => call("catalog_access_begin_setup_command", { request: { password } }),
     finishSetup: () => call("catalog_access_finish_setup_command", { request: { confirmed: true } }),
     unlock: (password: string) => call("catalog_access_unlock_command", { request: { password } }),
+    lock: () => call("catalog_access_lock_command"),
     changePassword: (current_password: string, new_password: string) => call("catalog_access_change_password_command", { request: { current_password, new_password } }),
     beginRecovery: (recovery_code: string, new_password: string) => call("catalog_access_begin_recovery_command", { request: { recovery_code, new_password } }),
     finishRecovery: () => call("catalog_access_finish_recovery_command", { request: { confirmed: true } }),

@@ -75,6 +75,12 @@ impl CatalogAccessSession {
         Ok(())
     }
 
+    pub fn lock(&self) -> Result<(), CatalogAccessError> {
+        let mut inner = self.inner.lock().map_err(|_| CatalogAccessError::Storage)?;
+        inner.unlocked = false;
+        Ok(())
+    }
+
     pub fn unlock(&self, password: &str) -> Result<(), CatalogAccessError> {
         let mut inner = self.inner.lock().map_err(|_| CatalogAccessError::Storage)?;
         if inner.unavailable { return Err(CatalogAccessError::Storage); }

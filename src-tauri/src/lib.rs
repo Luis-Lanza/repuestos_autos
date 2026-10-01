@@ -711,11 +711,13 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         catalog_access_begin_setup_command,
         catalog_access_finish_setup_command,
         catalog_access_unlock_command,
+        catalog_access_lock_command,
         catalog_access_change_password_command,
         catalog_access_begin_recovery_command,
         catalog_access_finish_recovery_command,
         search_products_command,
         browse_products_command,
+        browse_sale_products_command,
         dashboard_command,
         confirm_sale_command,
         create_sale_return_command,
@@ -736,6 +738,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         import_license_command,
         remove_product_image_command,
         catalog_product_image_thumbnail_command,
+        sales_product_image_thumbnail_command,
         location_schema_command,
         save_location_schema_command,
         list_product_locations_command,
@@ -963,6 +966,13 @@ fn catalog_access_unlock_command(access: tauri::State<'_, application::catalog::
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn catalog_access_lock_command(access: tauri::State<'_, application::catalog::access::CatalogAccessSession>, license: tauri::State<'_, commands::license::LicenseCommandState>) -> commands::catalog::CatalogAccessResponse {
+    if license.authorize_business_operation().is_err() { return catalog_access_license_error(); }
+    commands::catalog::lock_catalog(&access)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn catalog_access_change_password_command(access: tauri::State<'_, application::catalog::access::CatalogAccessSession>, license: tauri::State<'_, commands::license::LicenseCommandState>, request: commands::catalog::CatalogPasswordChangeRequest) -> commands::catalog::CatalogAccessResponse {
     if !catalog_access_authorized(&license, &access) { return catalog_access_license_error(); }
     commands::catalog::change_catalog_password(&access, request)
@@ -1075,6 +1085,18 @@ fn catalog_product_image_thumbnail_command(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn sales_product_image_thumbnail_command(
+    state: tauri::State<AppState>,
+    request: commands::catalog::SalesProductThumbnailRequest,
+) -> commands::catalog::SalesProductThumbnailResponse {
+    state.with_read(|connection| Ok(commands::catalog::sales_product_image_thumbnail(connection, request)))
+        .unwrap_or(commands::catalog::SalesProductThumbnailResponse::Error {
+            code: "persistence_failure", message: "The product image could not be loaded.",
+        })
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn create_backup_command(
     state: tauri::State<AppState>,
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
@@ -1148,6 +1170,12 @@ fn browse_products_command(
 ) -> Result<commands::catalog::ProductBrowseResponse, String> {
     if !catalog_access_authorized(&license, &access) { return Ok(commands::catalog::ProductBrowseResponse::Error(commands::catalog::CatalogBrowseError { code: "catalog_access_required", message: "Desbloqueá el catálogo para continuar." })); }
     state.with_read(|connection| Ok(commands::catalog::browse_products(connection, request)))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn browse_sale_products_command(state: tauri::State<AppState>, request: commands::catalog::BrowseProductsRequest) -> Result<application::catalog::SaleBrowsePage, String> {
+    state.with_read(|connection| commands::catalog::browse_sale_products(connection, request))
 }
 
 #[cfg(feature = "desktop")]
@@ -1774,7 +1802,7 @@ mod command_surface_tests {
         let (_app, window) = test_window_with_authority(true);
         let response = get_ipc_response(&window, request_with("confirm_sale_command", serde_json::json!({
             "request_id":"550e8400-e29b-41d4-a716-446655440094",
-            "lines":[{"product_id":1,"quantity":1,"captured_unit_price_centavos":2500,"captured_revision":0}],
+            "lines":[{"product_id":1,"quantity":1,"captured_unit_price_centavos":2500}],
             "payment":{"amount_tendered_centavos":null,"qr_applied_centavos":2500}
         }))).unwrap();
         assert_eq!(response.deserialize::<serde_json::Value>().unwrap()["kind"], "success");
@@ -1795,6 +1823,69 @@ mod command_surface_tests {
     }
 
     #[test]
+    fn explicit_catalog_lock_clears_the_session_and_maintenance_stays_gated() {
+        let (app, window) = test_window();
+        let access = app.state::<application::catalog::access::CatalogAccessSession>();
+        assert!(access.is_authorized());
+        let response = get_ipc_response(&window, request("catalog_access_lock_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(response["kind"], "success");
+        assert!(!access.is_authorized());
+        let status = get_ipc_response(&window, request("catalog_access_status_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(status["status"], "locked");
+        let listing = get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(listing["code"], "catalog_access_required");
+        access.set_test_authorized(true);
+        assert!(access.is_authorized(), "an authorized unlock can start a new session");
+    }
+
+    #[test]
+    fn sales_browse_and_category_filters_work_while_catalog_is_locked_without_sensitive_facts() {
+        let (app, window) = test_window();
+        app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(false);
+        app.state::<AppState>().with_write(|connection| {
+            connection.execute("UPDATE products SET purchase_price_centavos = 7777 WHERE id = 1", []).map_err(|_| "test_setup_failed")?;
+            connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required, active) VALUES (9001, 1, 'Material', 'text', 0, 1), (9002, 1, 'Retired grade', 'text', 0, 0)", []).map_err(|_| "test_setup_failed")?;
+            connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9001, 'Acero', 'Acero'), (1, 9002, 'Sensitive retired', 'Sensitive retired')", []).map_err(|_| "test_setup_failed")?;
+            Ok(())
+        }).unwrap();
+        let response = get_ipc_response(&window, request_with("browse_sale_products_command", serde_json::json!({"query":"filtro","category_id":1,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(response["products"].as_array().unwrap().len(), 1);
+        assert_eq!(response["products"][0]["category_id"], 1);
+        assert_eq!(response["categories"][0]["category_id"], 1);
+        assert_eq!(response["products"][0]["attribute_values"], serde_json::json!([{"definition_id":9001,"label":"Material","value":"Acero"}]));
+        assert!(!response.to_string().contains("7777"));
+        assert!(!response.to_string().contains("Sensitive retired"));
+        for forbidden in ["purchase_price_centavos", "primary_location_code", "active_product_count", "low_stock_threshold", "revision", "active"] {
+            assert!(!response.to_string().contains(forbidden), "unexpected sensitive field {forbidden}: {response}");
+        }
+        let listing = get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(listing["code"], "catalog_access_required");
+        let all = get_ipc_response(&window, request_with("browse_sale_products_command", serde_json::json!({"query":null,"category_id":null,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert!(all["products"].as_array().unwrap().len() >= 1);
+        assert!(all["categories"].as_array().unwrap().iter().any(|category| category["category_id"] == 1));
+        let admin_thumbnail = get_ipc_response(&window, request_with("catalog_product_image_thumbnail_command", serde_json::json!({"product_id":1,"expected_revision":0}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(admin_thumbnail["code"], "catalog_access_required");
+        app.state::<AppState>().with_write(|connection| {
+            let mut bytes = Vec::new();
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([20, 40, 60])))
+                .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
+                .map_err(|_| "test_setup_failed")?;
+            let image = application::catalog::ProductImage::new("image/jpeg", bytes).map_err(|_| "test_setup_failed")?;
+            application::catalog::replace_product_image(connection, 1, 0, &image).map_err(|_| "test_setup_failed")?;
+            Ok(())
+        }).unwrap();
+        let sales_thumbnail = get_ipc_response(&window, request_with("sales_product_image_thumbnail_command", serde_json::json!({"product_id":1}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(sales_thumbnail["kind"], "success");
+        assert_eq!(sales_thumbnail["product_id"], 1);
+        assert_eq!(sales_thumbnail["mime_type"], "image/jpeg");
+        assert_eq!(sales_thumbnail["encoding"], "base64");
+        assert!(sales_thumbnail["bytes"].as_str().is_some_and(|bytes| !bytes.is_empty()));
+        for forbidden in ["revision", "purchase_price_centavos", "category_name", "sku", "path"] {
+            assert!(!sales_thumbnail.to_string().contains(forbidden));
+        }
+    }
+
+    #[test]
     fn sale_search_and_inventory_read_surfaces_stay_available_while_catalog_is_locked_without_cost() {
         let (app, window) = test_window();
         app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(false);
@@ -1810,7 +1901,8 @@ mod command_surface_tests {
         assert_eq!(product["sku"], "FLT-001");
         assert_eq!(product["sale_price_centavos"], 2500);
         assert!(product.get("purchase_price_centavos").is_none());
-        assert!(product.get("minimum_sale_price_centavos").is_none());
+        assert!(product.get("minimum_sale_price_centavos").is_some());
+        assert!(product.get("revision").is_none());
         assert!(product.get("attribute_values").is_none());
         assert!(product.get("category_id").is_none());
 

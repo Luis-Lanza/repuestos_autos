@@ -7,12 +7,8 @@ export interface ConfirmSaleLineRequest {
   product_id: number;
   quantity: number;
   captured_unit_price_centavos: number;
-  captured_revision: number;
-  /** Explicit negotiated-price route. Omitted only for legacy callers. */
+  /** Explicit negotiated-price route; the backend validates current product state transactionally. */
   final_unit_price_centavos?: number;
-  /** Legacy stale-price acknowledgement, retained only for compatibility. */
-  acknowledged_price_centavos?: number;
-  acknowledged_revision?: number;
 }
 
 export interface ConfirmSalePaymentInput { amount_tendered_centavos: number | null; qr_applied_centavos: number | null; }
@@ -31,7 +27,7 @@ export interface QrPayment { method: typeof PAYMENT_METHOD.QR; amount_applied_ce
 export interface PersistedSaleSummary { sale_id: number; request_id: string; status: "confirmed"; confirmed_at: string; outcome: "confirmed"; lines: PersistedSaleLine[]; payments: Array<CashPayment | QrPayment>; total_centavos: number; }
 export type ConfirmSaleResponse =
   | ({ kind: typeof CONFIRM_SALE_RESPONSE_KIND.SUCCESS } & PersistedSaleSummary)
-  | { kind: "stale_catalog_record"; product_id: number; current_unit_price_centavos: number; current_revision: number }
+  | { kind: "stale_catalog_record"; product_id: number; current_unit_price_centavos: number }
   | { kind: "minimum_price_violation"; product_id: number; current_minimum_unit_price_centavos: number }
   | { kind: typeof CONFIRM_SALE_RESPONSE_KIND.ERROR; code: string; message: string };
 
@@ -68,7 +64,7 @@ const saleError = (value: unknown): ConfirmSaleResponse | null => record(value) 
 const saleResponse = (value: unknown): ConfirmSaleResponse | null => {
   if (!record(value)) return null;
   if (value.kind === CONFIRM_SALE_RESPONSE_KIND.ERROR) return saleError(value);
-  if (value.kind === "stale_catalog_record" && positiveSafeInteger(value.product_id) && positiveSafeInteger(value.current_unit_price_centavos) && nonNegativeSafeInteger(value.current_revision)) return { kind: "stale_catalog_record", product_id: value.product_id, current_unit_price_centavos: value.current_unit_price_centavos, current_revision: value.current_revision };
+  if (value.kind === "stale_catalog_record" && Object.keys(value).every((key) => ["kind", "product_id", "current_unit_price_centavos"].includes(key)) && positiveSafeInteger(value.product_id) && positiveSafeInteger(value.current_unit_price_centavos)) return { kind: "stale_catalog_record", product_id: value.product_id, current_unit_price_centavos: value.current_unit_price_centavos };
   if (value.kind === "minimum_price_violation" && positiveSafeInteger(value.product_id) && positiveSafeInteger(value.current_minimum_unit_price_centavos)) return { kind: "minimum_price_violation", product_id: value.product_id, current_minimum_unit_price_centavos: value.current_minimum_unit_price_centavos };
   if (value.kind === CONFIRM_SALE_RESPONSE_KIND.SUCCESS && positiveSafeInteger(value.sale_id) && typeof value.request_id === "string" && value.status === "confirmed" && typeof value.confirmed_at === "string" && value.outcome === "confirmed" && positiveSafeInteger(value.total_centavos)) {
     const lines = decodedArray(value.lines, saleLine); const payments = decodedArray(value.payments, payment);
@@ -83,11 +79,8 @@ function assertRequestId(requestId: string): void { if (!CANONICAL_UUID_V4.test(
 function assertIntegerRequest(request: ConfirmSaleRequest): void {
   assertRequestId(request.request_id);
   for (const line of request.lines) {
-    assertPositiveSafeInteger(line.product_id, "Product ID"); assertPositiveSafeInteger(line.quantity, "Quantity"); assertPositiveSafeInteger(line.captured_unit_price_centavos, "Captured price"); assertNonNegativeSafeInteger(line.captured_revision, "Captured revision");
+    assertPositiveSafeInteger(line.product_id, "Product ID"); assertPositiveSafeInteger(line.quantity, "Quantity"); assertPositiveSafeInteger(line.captured_unit_price_centavos, "Captured price");
     if (line.final_unit_price_centavos !== undefined) assertPositiveSafeInteger(line.final_unit_price_centavos, "Final price");
-    if ((line.acknowledged_price_centavos === undefined) !== (line.acknowledged_revision === undefined)) throw new Error("Price acknowledgement must include its revision.");
-    if (line.acknowledged_price_centavos !== undefined) assertPositiveSafeInteger(line.acknowledged_price_centavos, "Acknowledged price");
-    if (line.acknowledged_revision !== undefined) assertNonNegativeSafeInteger(line.acknowledged_revision, "Acknowledged revision");
   }
   if (request.payment.amount_tendered_centavos !== null) assertNonNegativeSafeInteger(request.payment.amount_tendered_centavos, "Tendered cash");
   if (request.payment.qr_applied_centavos !== null) assertNonNegativeSafeInteger(request.payment.qr_applied_centavos, "QR amount");
@@ -98,7 +91,7 @@ export function createConfirmSaleCommand(command: Invoke) {
     try {
       const value = await command("confirm_sale_command", { request: {
         request_id: request.request_id,
-        lines: request.lines.map(({ product_id, quantity, captured_unit_price_centavos, captured_revision, final_unit_price_centavos, acknowledged_price_centavos, acknowledged_revision }) => ({ product_id, quantity, captured_unit_price_centavos, captured_revision, ...(final_unit_price_centavos === undefined ? {} : { final_unit_price_centavos }), ...(acknowledged_price_centavos === undefined ? {} : { acknowledged_price_centavos, acknowledged_revision }) })),
+        lines: request.lines.map(({ product_id, quantity, captured_unit_price_centavos, final_unit_price_centavos }) => ({ product_id, quantity, captured_unit_price_centavos, ...(final_unit_price_centavos === undefined ? {} : { final_unit_price_centavos }) })),
         payment: { amount_tendered_centavos: request.payment.amount_tendered_centavos, qr_applied_centavos: request.payment.qr_applied_centavos },
       } });
       return saleResponse(value) ?? genericSaleError();

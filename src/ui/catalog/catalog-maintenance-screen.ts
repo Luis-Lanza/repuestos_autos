@@ -117,6 +117,9 @@ export async function reloadCatalogRecords(commands: CatalogLoadCommands, dispat
 export function CatalogMaintenanceScreen() {
   const [state, dispatch] = useReducer(createCatalogMaintenanceFlow, initialCatalogMaintenanceState);
   const [accessStatus, setAccessStatus] = useState<CatalogAccessStatus | "loading">("loading");
+  const [lockPending, setLockPending] = useState(false);
+  const [lockFeedback, setLockFeedback] = useState<string | null>(null);
+  const lockPendingRef = useRef(false);
   const [form, setForm] = useState<CatalogEditForm | null>(null);
   const [productLocations, setProductLocations] = useState<ProductLocationRecord[]>([]);
   const [productLocationsStatus, setProductLocationsStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -253,6 +256,22 @@ export function CatalogMaintenanceScreen() {
     }
   }, [state.field_errors]);
 
+  const lockCatalog = async () => {
+    if (lockPendingRef.current) return;
+    lockPendingRef.current = true;
+    setLockPending(true);
+    setLockFeedback(null);
+    const response = await catalogAccessCommands.lock();
+    lockPendingRef.current = false;
+    setLockPending(false);
+    if (response.kind === "success") {
+      attempt.current += 1; browseAttempt.current += 1; browseThumbnailAttempt.current += 1; detailThumbnailAttempt.current += 1;
+      mutationLocked.current = true; imageMutationLocked.current = true;
+      setForm(null); setProductLocations([]); setImageThumbnail(null); setBrowseThumbnails({});
+      dispatch({ type: "selection_cleared" });
+      setAccessStatus("locked");
+    } else setLockFeedback(accessErrorMessage(response));
+  };
   const reload = async () => {
     const selected = state.selected;
     const selectionAttempt = attempt.current;
@@ -464,6 +483,8 @@ export function CatalogMaintenanceScreen() {
     { "aria-labelledby": "catalog-maintenance-heading", "data-ui-catalog": true },
     createElement("h1", { id: "catalog-maintenance-heading", ref: catalogMainHeading, tabIndex: -1 }, "Catálogo"),
     createElement("p", null, "Editá metadatos desde el detalle de categorías y productos."),
+    createElement(Action, { variant: "secondary", disabled: lockPending, "aria-busy": lockPending, onClick: () => void lockCatalog() }, lockPending ? "Bloqueando…" : "Bloquear catálogo"),
+    lockFeedback ? createElement(Feedback, { kind: "error" } as never, lockFeedback) : null,
     createElement(CatalogPasswordChange),
     createElement("nav", { "aria-label": "Vistas del catálogo", "data-ui-catalog-navigation": true },
       createElement(Action, { variant: catalogSubview === "products" ? "secondary" : "tertiary", "aria-current": catalogSubview === "products" ? "page" : undefined, onClick: () => setCatalogSubview("products") }, "Productos"),

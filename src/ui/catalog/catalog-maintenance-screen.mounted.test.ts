@@ -37,6 +37,28 @@ async function openCategoryEditor() {
   return screen.findByRole("button", { name: "Editar Filtros" });
 }
 
+test("explicitly locks the Catalog session and returns to the password gate", async () => {
+  const calls: string[] = [];
+  mockIPC((command) => { calls.push(command); if (command === "catalog_access_lock_command") return { kind: "success" }; return baseIPC(command); });
+  render(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.click(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  await screen.findByRole("heading", { name: "Acceso al catálogo" });
+  assert.equal(calls.filter((command) => command === "catalog_access_lock_command").length, 1);
+  assert.ok(screen.getByLabelText("Contraseña"));
+});
+
+test("keeps the administrative session visible and reports an accessible error when locking fails", async () => {
+  mockIPC((command) => command === "catalog_access_lock_command" ? { kind: "error", code: "access_unavailable", message: "private detail" } : baseIPC(command));
+  render(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.click(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  assert.ok(await screen.findByRole("alert"));
+  assert.ok(screen.getByRole("button", { name: "Bloquear catálogo" }));
+  assert.equal(screen.queryByRole("heading", { name: "Acceso al catálogo" }), null);
+  assert.doesNotMatch(screen.getByRole("alert").textContent ?? "", /private detail/);
+});
+
 test("opens Category Management and returns to the preserved product browse context", async () => {
   mockIPC((command) => baseIPC(command));
   render(createElement(CatalogMaintenanceScreen));

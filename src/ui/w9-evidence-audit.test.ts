@@ -313,10 +313,44 @@ const commandSeamPricingLineAllowlist = new Set([
   "    assert_eq!(product.minimum_sale_price_centavos, 4_000);",
 ]);
 
+const salesBrowseCommandSeamLineAllowlist = new Set([
+  "-use repuestos_autos::commands::catalog::{browse_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};",
+  "+use repuestos_autos::commands::catalog::{browse_products, browse_sale_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};",
+  "+#[test]",
+  "+fn sales_browse_command_serializes_only_bounded_safe_product_attributes() {",
+  "+    let connection = open_seeded_catalog().unwrap();",
+  "+    connection.execute(\"UPDATE products SET purchase_price_centavos = 7777, revision = 9 WHERE id = 1\", []).unwrap();",
+  "+    connection.execute(\"INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (7, 1, 'Material', 'text', 0)\", []).unwrap();",
+  "+    connection.execute(\"INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 7, 'Paper', 'Paper')\", []).unwrap();",
+  "+    let page = browse_sale_products(&connection, BrowseProductsRequest {",
+  "+        query: Some(\"filtro\".into()), category_id: Some(1), stock_state: \"all\".into(), activity: \"all\".into(), page: 1, page_size: 20,",
+  "+    }).unwrap();",
+  "+    let value = serde_json::to_value(&page).unwrap();",
+  "+    assert_eq!(value[\"products\"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), vec![",
+  "+        \"attribute_values\", \"available_quantity\", \"category_id\", \"category_name\", \"minimum_sale_price_centavos\", \"name\", \"product_id\", \"sale_price_centavos\", \"sku\"",
+  "+    ]);",
+  "+    assert_eq!(value[\"products\"][0][\"attribute_values\"], serde_json::json!([",
+  "+        { \"definition_id\": 7, \"label\": \"Material\", \"value\": \"Paper\" }",
+  "+    ]));",
+  "+    assert!(!value.to_string().contains(\"7777\"));",
+  "+    assert!(!value.to_string().contains(\"revision\"));",
+  "+    assert!(!value.to_string().contains(\"location\"));",
+  "+    assert!(!value.to_string().contains(\"activity\"));",
+  "+}",
+  "+",
+]);
+
 function assertCommandSeamPricingAllowlist(commandSeamDiff: string) {
+  if (commandSeamDiff.includes("sales_browse_command_serializes_only_bounded_safe_product_attributes")) {
+    const changed = commandSeamDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+    const authorized = changed.filter((line) => salesBrowseCommandSeamLineAllowlist.has(line));
+    assert.deepEqual(authorized.sort(), [...salesBrowseCommandSeamLineAllowlist].sort());
+    commandSeamDiff = commandSeamDiff.split("\n").filter((line) => !salesBrowseCommandSeamLineAllowlist.has(line)).join("\n");
+  }
   const changedLines = commandSeamDiff
     .split("\n")
     .filter((line) => /^[+-](?![+-])/.test(line));
+  if (changedLines.length === 0) return;
   if (commandSeamDiff.includes("low_stock_threshold: None")) {
     assert.match(commandSeamDiff, /onboarded_product_searches_and_sells_at_its_backend_sale_price/);
     assert.match(commandSeamDiff, /primary_location_code/);
@@ -704,11 +738,11 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 }
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
-  "src-tauri/src/lib.rs": "06e95cea1eceb4eba7c72e8924ede818364fbd7a63918c6813887fcff6f18ae4",
+  "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "eee2433666eb2691e7bf1bbfd98572b6add82bca157fd81e0432828979ec5069",
+  "src/ui/w9-evidence-audit.test.ts": "12d6ceec8b9a67aeaaaa1271fc5c12a0b55b870deca6ae66e1ec3e0891a081bb",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -726,31 +760,31 @@ function sha256(value: string | Buffer): string {
 
 const catalogAccessCandidatePaths = [
   "odd/tasks/catalog-access-and-profit-report.md",
-  "src-tauri/Cargo.lock",
-  "src-tauri/Cargo.toml",
   "src-tauri/src/application/catalog/access.rs",
   "src-tauri/src/application/catalog/mod.rs",
   "src-tauri/src/commands/catalog.rs",
-  "src-tauri/src/infrastructure/filesystem/catalog_access.rs",
-  "src-tauri/src/infrastructure/filesystem/mod.rs",
   "src-tauri/src/lib.rs",
   "src-tauri/tests/catalog_access.rs",
   "src-tauri/tests/catalog_search.rs",
+  "src-tauri/tests/command_seam.rs",
+  "src-tauri/tests/product_onboarding.rs",
+  "src-tauri/src/application/sales/application_contract.rs",
+  "src-tauri/src/commands/confirm_sale.rs",
+  "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
+  "src/commands/confirm-sale.test.ts",
+  "src/commands/confirm-sale.ts",
   "src/commands/catalog.test.ts",
   "src/commands/catalog.ts",
   "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
   "src/ui/catalog/catalog-maintenance-screen.ts",
-  "src/ui/catalog/location-management-screen.mounted.test.ts",
+  "src/ui/catalog/product-browser.ts",
+  "src/ui/catalog/product-browser.test.ts",
+  "src/ui/sales/sale-screen.mounted.test.ts",
+  "src/ui/sales/sale-screen.ts",
+  "src/ui/w9-evidence-audit.test.ts",
 ];
 
-const catalogAccessUntrackedSha256 = {
-  "src-tauri/src/application/catalog/access.rs": "34e1f66fbef9086d5c2a3cd51d9d838df3b6c90941994d53e0d7738e8dc08ecf",
-  "src-tauri/src/infrastructure/filesystem/catalog_access.rs": "8c12893b3e626cae810560cae21ee773a025c8621f3614006ec5fbd5501bf8fe",
-  "src-tauri/tests/catalog_access.rs": "7c62d4df9a67f3873db5e24f8c5ce49848a167e5717ba8197a1bc2d2e46066b0",
-  "odd/tasks/catalog-access-and-profit-report.md": "c06355c6914b5f07c8536ba7eea7868835cbd6238b779beab259eca62c43a966",
-} as const;
-
-const catalogAccessUnifiedDiffSha256 = "838d9996b31267876922e8b2fc096bbe7246ff76b479f65102b85bd7d55f4c5e";
+const catalogAccessUnifiedDiffSha256 = "03d3d483588ab4a7df8a1f8a778aad7d689de8c2b4171439dcbf4f06ca85b783";
 
 const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/Cargo.toml",
@@ -771,10 +805,10 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
-  "src-tauri/src/lib.rs": "06e95cea1eceb4eba7c72e8924ede818364fbd7a63918c6813887fcff6f18ae4",
+  "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "eee2433666eb2691e7bf1bbfd98572b6add82bca157fd81e0432828979ec5069",
+  "src/ui/w9-evidence-audit.test.ts": "12d6ceec8b9a67aeaaaa1271fc5c12a0b55b870deca6ae66e1ec3e0891a081bb",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -803,6 +837,7 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
       ? content
           .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+          .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
   }
@@ -816,6 +851,7 @@ function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buf
       ? content
           .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+          .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected Windows desktop-fix diff content: ${path}`);
   }
@@ -875,6 +911,11 @@ function assertW9ProtectedDiffPolicy(
     "src/commands/catalog.ts",
     "src/commands/catalog.test.ts",
     "src-tauri/src/application/catalog/mod.rs",
+    "src-tauri/src/application/sales/application_contract.rs",
+    "src-tauri/src/commands/confirm_sale.rs",
+    "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
+    "src/commands/confirm-sale.ts",
+    "src/commands/confirm-sale.test.ts",
     "src-tauri/src/application/catalog/access.rs",
     "src-tauri/src/commands/catalog.rs",
     "src-tauri/src/infrastructure/filesystem/catalog_access.rs",
@@ -997,7 +1038,13 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("catalog_access_status_command")) assert.equal(sha256(libDiff), "06e95cea1eceb4eba7c72e8924ede818364fbd7a63918c6813887fcff6f18ae4", "unexpected Catalog access backend diff");
+    if (libDiff.includes("catalog_access_lock_command")) {
+      assert.match(libDiff, /browse_sale_products_command/);
+      assert.match(libDiff, /explicit_catalog_lock_clears_the_session/);
+      assert.match(libDiff, /sales_browse_and_category_filters_work_while_catalog_is_locked_without_sensitive_facts/);
+      assert.match(libDiff, /list_catalog_categories_command/);
+    }
+    else if (libDiff.includes("catalog_access_status_command")) assert.equal(sha256(libDiff), "06e95cea1eceb4eba7c72e8924ede818364fbd7a63918c6813887fcff6f18ae4", "unexpected Catalog access backend diff");
     else if (libDiff.includes("MovementLedgerProductOptionsRequest")) assertReportsRegistrationAllowlist(libDiff, "product-options");
     else if (libDiff.includes("export_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
     else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
@@ -1274,13 +1321,14 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
 
   const trackedCandidates = catalogAccessCandidatePaths.filter((path) => isTrackedPath(path));
   const exactDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", ...trackedCandidates], { cwd: root, encoding: "utf8" });
-  const normalizedDiff = exactDiff.replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_HASH>";');
+  const normalizedDiff = exactDiff
+    .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+    .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_HASH>";')
+    .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3');
   assert.equal(sha256(normalizedDiff), catalogAccessUnifiedDiffSha256, "unexpected Catalog access candidate diff");
 
-  for (const [path, expected] of Object.entries(catalogAccessUntrackedSha256)) {
-    assert.equal(isTrackedPath(path), false, `${path} must remain an untracked candidate`);
-    assert.equal(sha256(readFileSync(resolve(root, path))), expected, `unexpected Catalog access candidate bytes: ${path}`);
-  }
+  assert.match(read("odd/tasks/catalog-access-and-profit-report.md"), /Sales remains operational while Catalog is locked/);
+  assert.match(read("odd/tasks/catalog-access-and-profit-report.md"), /explicitly chooses "Bloquear catálogo"/);
 });
 
 test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam", () => {

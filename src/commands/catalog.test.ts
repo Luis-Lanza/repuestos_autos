@@ -1,16 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogAccessCommands, createCatalogMaintenanceCommands, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogAccessCommands, createCatalogMaintenanceCommands, createSalesBrowseProductsCommand, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands } from "./catalog.ts";
 
-const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
-const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+const searchProduct = { product_id: 1, revision: 2, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500 };
+const browsePage = { kind: "success", products: [{ ...searchProduct, revision: 2, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("decodes the paged browse contract and sends optional filters in its request envelope", async () => {
   const calls: unknown[] = [];
   const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return { ...browsePage, products: [{ ...browsePage.products[0], original_image_base64: "/9j/secret", source_path: "/private/image.jpg" }] }; });
   assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
   assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "low_stock", activity: "active", page: 2, page_size: 20 } } }]);
+});
+
+test("decodes locked-Sales browse with bounded attributes and no Catalog or revision fields", async () => {
+  const calls: unknown[] = [];
+  const browse = createSalesBrowseProductsCommand(async (command, payload) => {
+    calls.push({ command, payload });
+    return { products: [{ product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+  });
+  const result = await browse({ query: " filter ", category_id: 9 });
+  assert.deepEqual(calls, [
+    { command: "browse_sale_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
+  ]);
+  assert.deepEqual(result.products[0], { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2000, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] });
+  assert.deepEqual(result.categories, [{ category_id: 9, name: "Engine" }]);
+});
+
+test("rejects unsafe Sales browse projections rather than falling back to Catalog browse", async () => {
+  const safeFacts = { product_id: 1, category_id: 1, sku: "A", name: "A", category_name: "A", available_quantity: 1, sale_price_centavos: 1, minimum_sale_price_centavos: 1, attribute_values: [] };
+  for (const product of [{ product_id: 1 }, { ...safeFacts, revision: 0 }, { ...safeFacts, purchase_price_centavos: 1 }, { ...safeFacts, primary_location_code: "A1" }, { ...safeFacts, activity: "active" }]) {
+    const browse = createSalesBrowseProductsCommand(async () => ({ products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 }));
+    await assert.rejects(browse(), /product catalog/);
+  }
+});
+
+test("rejects oversized or metadata-bearing Sales attribute projections", async () => {
+  const product = { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] };
+  for (const attribute_values of [
+    [{ definition_id: 4, label: "Material", value: "Paper", revision: 1 }],
+    [{ definition_id: 4, label: "L".repeat(129), value: "Paper" }],
+    [{ definition_id: 4, label: "Material", value: "V".repeat(257) }],
+    Array.from({ length: 33 }, (_, definition_id) => ({ definition_id: definition_id + 1, label: "Field", value: "Value" })),
+  ]) {
+    const browse = createSalesBrowseProductsCommand(async () => ({ products: [{ ...product, attribute_values }], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 }));
+    await assert.rejects(browse(), /product catalog/);
+  }
 });
 
 test("decodes ordered compact browse attributes including empty values without projection drift", async () => {

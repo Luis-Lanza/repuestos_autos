@@ -1,5 +1,5 @@
 import { createElement, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
-import { browseProducts, catalogProductImageCommands, type ProductBrowseResult } from "../../commands/catalog.ts";
+import { browseSalesProducts, catalogProductImageCommands, type SalesBrowseProduct } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sale.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
@@ -15,7 +15,7 @@ const failureByCode: Record<string, string> = {
   invalid_request: "Revisá los datos de la venta e intentá nuevamente.", invalid_quantity: "Revisá que las cantidades sean números enteros mayores que cero.", invalid_payment: "Revisá los montos de pago e intentá nuevamente.", inactive_product: "Uno de los productos ya no está activo.", missing_product: "Uno de los productos ya no está disponible.", insufficient_stock: "No hay stock suficiente para completar la venta.", request_conflict: "El ID de solicitud ya fue usado con datos de venta diferentes. Revisá la venta antes de intentar nuevamente.", minimum_price_violation: "El precio de venta está por debajo del mínimo actual.", invalid_final_price: POSITIVE_FINAL_PRICE, persistence_failure: "No se pudo confirmar la venta. Intentá nuevamente.",
 };
 const requestId = () => crypto.randomUUID();
-const thumbnailCacheKey = (productId: number, revision: number) => `${productId}:${revision}`;
+const thumbnailCacheKey = (productId: number) => String(productId);
 function finalPriceError(line: DraftLine): string | undefined {
   let price: number | null;
   try { price = parseOptionalBs(line.final_price_input); } catch { return INVALID_FINAL_PRICE; }
@@ -33,7 +33,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   const [paymentErrors, setPaymentErrors] = useState<Partial<Record<"amount_tendered_centavos" | "qr_applied_centavos", string>>>({});
   const [persistedDetails, setPersistedDetails] = useState<PersistedSummaryDetails | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [checkoutDetail, setCheckoutDetail] = useState<ProductBrowseResult | null>(null);
+  const [checkoutDetail, setCheckoutDetail] = useState<SalesBrowseProduct | null>(null);
   const checkoutDetailTriggerRef = useRef<HTMLElement | null>(null);
   const cashRef = useRef<HTMLInputElement>(null), qrRef = useRef<HTMLInputElement>(null), draftRef = useRef<HTMLElement>(null), checkoutInitialFocusRef = useRef<HTMLInputElement>(null), checkoutTriggerRef = useRef<HTMLButtonElement>(null), headingRef = useRef<HTMLHeadingElement>(null);
   const searchSequence = useRef(0), confirmationSequence = useRef(0), browseThumbnailAttempt = useRef(0), browserRef = useRef(browser), confirming = useRef(false), mounted = useRef(true), focusSearchOnDraftMount = useRef(false);
@@ -41,11 +41,11 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
   useEffect(() => () => { mounted.current = false; searchSequence.current += 1; confirmationSequence.current += 1; browseThumbnailAttempt.current += 1; }, []);
   const browseThumbnails: Record<number, string> = {};
   for (const product of browser.result?.products ?? []) {
-    const thumbnail = thumbnailCache.current.get(thumbnailCacheKey(product.product_id, product.revision));
+    const thumbnail = thumbnailCache.current.get(thumbnailCacheKey(product.product_id));
     if (thumbnail) browseThumbnails[product.product_id] = thumbnail;
   }
   const checkoutDetailThumbnails = checkoutDetail
-    ? { [checkoutDetail.product_id]: thumbnailCache.current.get(thumbnailCacheKey(checkoutDetail.product_id, checkoutDetail.revision)) ?? "" }
+    ? { [checkoutDetail.product_id]: thumbnailCache.current.get(thumbnailCacheKey(checkoutDetail.product_id)) ?? "" }
     : {};
   useEffect(() => {
     const result = browser.result;
@@ -53,10 +53,10 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     const current = ++browseThumbnailAttempt.current;
     const requestId = browser.request_id;
     void Promise.all(result.products.map(async (product) => {
-      const key = thumbnailCacheKey(product.product_id, product.revision);
+      const key = thumbnailCacheKey(product.product_id);
       if (thumbnailCache.current.has(key)) return null;
-      const response = await catalogProductImageCommands.thumbnail({ product_id: product.product_id, expected_revision: product.revision });
-      return response.kind === "success" && response.product_id === product.product_id && response.revision === product.revision ? [key, product.product_id, response.src] as const : null;
+      const response = await catalogProductImageCommands.salesThumbnail(product.product_id);
+      return response.kind === "success" && response.product_id === product.product_id ? [key, product.product_id, response.src] as const : null;
     })).then((thumbnails) => {
       if (!mounted.current || current !== browseThumbnailAttempt.current || browserRef.current.request_id !== requestId) return;
       for (const item of thumbnails) if (item) thumbnailCache.current.set(item[0], item[2]);
@@ -84,7 +84,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     searchSequence.current = attempt;
     browserDispatch({ type: "browse_started", query, category_id, stock_state: "all", activity: "active", page, request_id: attempt });
     try {
-      const result = await browseProducts({ query, category_id, stock_state: "all", activity: "active", page, page_size: 20 });
+      const result = await browseSalesProducts({ query, category_id, stock_state: "all", activity: "active", page, page_size: 20 });
       if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchSequence.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local." }); }
   }
@@ -125,7 +125,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     dispatch({ type: "confirmation_started", request_id: currentRequestId });
     const request: ConfirmSaleRequest = {
       request_id: currentRequestId,
-      lines: state.lines.map((line) => ({ product_id: line.product_id, quantity: line.quantity, captured_unit_price_centavos: line.captured_unit_price_centavos, captured_revision: line.captured_revision, final_unit_price_centavos: finalPriceCentavos(line)! })),
+      lines: state.lines.map((line) => ({ product_id: line.product_id, quantity: line.quantity, captured_unit_price_centavos: line.captured_unit_price_centavos, final_unit_price_centavos: finalPriceCentavos(line)! })),
       payment: { amount_tendered_centavos: cash, qr_applied_centavos: qr },
     };
     try {
@@ -159,10 +159,6 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       createElement("div", { "data-ui-sale-product": true },
         createElement("strong", null, line.product_name), createElement("span", { "data-ui-sku": true }, line.sku)),
       createElement("div", { "data-ui-sale-price-facts": true },
-        createElement("span", { "data-ui-sales-purchase-price-reference": true },
-          createElement("span", { "aria-hidden": true }, `Compra: ${line.purchase_price_centavos == null ? "No registrado" : formatBs(line.purchase_price_centavos)}`),
-          createElement("span", { className: "sale-price-fact-accessible" }, `Precio de compra (referencia): ${line.purchase_price_centavos == null ? "No registrado" : formatBs(line.purchase_price_centavos)}`)),
-        createElement("span", { "aria-hidden": true }, " · "),
         createElement("span", { "data-ui-sales-list-price": true },
           createElement("span", { "aria-hidden": true }, `Venta: ${formatBs(line.sale_price_centavos)}`),
           createElement("span", { className: "sale-price-fact-accessible" }, `Precio de venta: ${formatBs(line.sale_price_centavos)}`)),
@@ -213,7 +209,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     createElement("div", { "data-ui-sale-layout": true },
       createElement(Panel, { label: "Catálogo de repuestos" } as never,
         createElement("p", { "data-ui-panel-subtitle": true }, "Búsqueda y despacho inmediato de repuestos en mostrador"),
-        createElement(ProductBrowser, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: addProduct, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
+        createElement(ProductBrowser, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { if (!("revision" in product)) addProduct(product); }, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Resumen de venta" } as never,
         createElement("div", { "data-ui-sale-summary": true },
           createElement("div", { "data-ui-sale-summary-heading": true },

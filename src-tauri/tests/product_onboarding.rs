@@ -312,7 +312,7 @@ fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
             lines: vec![RequestedLine {
                 product_id: product.product_id,
                 quantity: 2,
-                captured_unit_price_centavos: 3_500,
+                captured_unit_price_centavos: 4_500,
                 captured_revision: 0,
                 final_unit_price_centavos: None,
                 acknowledged_price_centavos: None,
@@ -320,7 +320,7 @@ fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
             }],
             payment: PaymentInputRequest {
                 amount_tendered_centavos: None,
-                qr_applied_centavos: Some(7_000),
+                qr_applied_centavos: Some(9_000),
             },
         },
     )
@@ -328,5 +328,6 @@ fn onboarded_product_is_searchable_and_can_complete_fixed_price_checkout() {
     let ConfirmSaleResponse::Success(summary) = response else {
         panic!("expected confirmed sale");
     };
-    assert_eq!(summary.total_centavos, 7_000);
+    assert_eq!(summary.lines[0].unit_price_centavos, 4_500);
+    assert_eq!(summary.total_centavos, 9_000);
 }

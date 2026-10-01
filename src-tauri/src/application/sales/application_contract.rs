@@ -12,6 +12,7 @@ pub struct ApplicationRequestedLine {
     pub product_id: i64,
     pub quantity: Quantity,
     pub captured_unit_price: MoneyCentavos,
+    /// Server-owned legacy identity component; never accepted from client checkout input.
     pub captured_revision: i64,
     /// Explicit negotiated-price route; `None` preserves the legacy behavior.
     pub final_unit_price: Option<MoneyCentavos>,
@@ -37,7 +38,7 @@ impl SaleIdentity {
     pub fn from_request(request: &ApplicationConfirmSaleRequest) -> Self {
         let mut payload = Vec::new();
         let explicit_final_price = request.lines.iter().any(|line| line.final_unit_price.is_some());
-            append_field(&mut payload, if explicit_final_price { b"confirm_sale/v2" } else { b"confirm_sale/v1" });
+        append_field(&mut payload, if explicit_final_price { b"confirm_sale/v2" } else { b"confirm_sale/v1" });
         append_field(&mut payload, request.lines.len().to_string().as_bytes());
         for line in &request.lines {
             append_number(&mut payload, line.product_id);
@@ -47,10 +48,7 @@ impl SaleIdentity {
             if explicit_final_price {
                 append_nullable_number(&mut payload, line.final_unit_price.map(MoneyCentavos::value));
             }
-            append_nullable_number(
-                &mut payload,
-                line.acknowledged_price.map(MoneyCentavos::value),
-            );
+            append_nullable_number(&mut payload, line.acknowledged_price.map(MoneyCentavos::value));
             append_nullable_number(&mut payload, line.acknowledged_revision);
         }
         append_nullable_number(
@@ -278,21 +276,10 @@ fn confirm_sale_payload_version(payload: &[u8]) -> Option<i64> {
     }
     for _ in 0..line_count {
         for _ in 0..4 {
-            if next_field(payload, &mut offset)
-                .and_then(parse_i64)
-                .is_none()
-            {
-                return None;
-            }
+            if next_field(payload, &mut offset).and_then(parse_i64).is_none() { return None; }
         }
-        if version == 2 && !next_positive_nullable_number(payload, &mut offset) {
-            return None;
-        }
-        if !next_nullable_number(payload, &mut offset)
-            || !next_nullable_number(payload, &mut offset)
-        {
-            return None;
-        }
+        if version == 2 && !next_positive_nullable_number(payload, &mut offset) { return None; }
+        if !next_nullable_number(payload, &mut offset) || !next_nullable_number(payload, &mut offset) { return None; }
     }
     (next_nullable_number(payload, &mut offset)
         && next_nullable_number(payload, &mut offset)
