@@ -396,7 +396,8 @@ test("loads product detail before editing and confirms archive with adjacent fee
   });
   render(createElement(CatalogMaintenanceScreen));
   const products = await screen.findByRole("region", { name: "Productos" });
-  await userEvent.click(within(products).getByRole("button", { name: "Editar" }));
+  const editButton = await within(products).findByRole("button", { name: "Editar" });
+  await userEvent.click(editButton);
   const dialog = await screen.findByRole("dialog", { name: /Editar Filtro Premium/ });
   assert.equal((within(dialog).getByRole("textbox", { name: "SKU" }) as HTMLInputElement).value, "FIL-PRE-014");
   const archive = within(dialog).getByRole("button", { name: "Archivar" });

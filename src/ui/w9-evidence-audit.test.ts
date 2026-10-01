@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -580,6 +581,84 @@ function assertReportsRegistrationAllowlist(libDiff: string, contract: "export" 
   assert.deepEqual(unexpectedLines, [], "unexpected Reports command registration drift");
 }
 
+function assertBackupRecoveryStartupAllowlist(libDiff: string) {
+  const changedLines = libDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /retained_recovery_evidence_is_valid/);
+  assert.match(libDiff, /has_ambiguous_temporary_artifacts/);
+  const allowedStartupHunks = new Set([51, 53, 66, 178, 204, 210, 218, 224, 242, 280, 288, 304, 311, 360, 377]);
+  const allowedBackupRecoveryHunks = new Set([...allowedStartupHunks, 58, 192, 210, 243, 261, 385, 698, 706, 710, 717, 725, 729, 734, 742, 746, 754, 762, 766, 863, 866, 871, 874, 875, 878, 1516, 1524, 1528, 1547, 1555, 1559, 1689, 1697, 1701, 1705, 1709]);
+  const hunks = libDiff.split(/(?=^@@ )/m);
+  const changedHunks = hunks.filter((hunk) => /^[+-](?![+-])/m.test(hunk));
+  const unexpectedHunks = changedHunks.filter((hunk) => {
+    const header = hunk.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    return !header || !allowedBackupRecoveryHunks.has(Number(header[1]));
+  });
+  assert.deepEqual(unexpectedHunks, [], "unexpected backup recovery/lib command-seam hunk drift");
+  const startupLines = hunks.flatMap((hunk) => {
+    const header = hunk.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (!header || !allowedStartupHunks.has(Number(header[1]))) return [];
+    return hunk.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  });
+  assert.ok(startupLines.length > 0, "expected bounded backup recovery startup hunks");
+  assert.ok(changedLines.length >= startupLines.length, "recovery audit must not omit unrelated lib.rs changes");
+  const registrationLines = changedLines.filter((line) => ticket11RegistrationLineAllowlist.has(line.slice(1).trim()));
+  const registrationDiff = [
+    "+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {",
+    "+choose_backup_destination_command,",
+    "+choose_restore_source_command,",
+    "+create_backup_command,",
+    "+prepare_restore_command,",
+    "+confirm_restore_command",
+    ...registrationLines,
+    "+command_builder(builder.plugin(tauri_plugin_dialog::init()))",
+  ].join("\n");
+  assertTicket11RegistrationAllowlist(registrationDiff);
+}
+
+const windowsPickerCommandDiffLineAllowlist = new Set([
+  "commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,",
+  "let _ = window;",
+  "window",
+  ".app_handle()",
+  ") -> commands::backup::BackupDestinationSelection {",
+  ") -> commands::backup::RestoreSourceSelection {",
+  "return commands::backup::BackupDestinationSelection::Cancelled;",
+  "return commands::backup::BackupDestinationSelection::Error {",
+  "};",
+  "commands.select_backup_destination(path)",
+  "return commands::backup::RestoreSourceSelection::Cancelled;",
+  "return commands::backup::RestoreSourceSelection::Error {",
+  "commands.select_restore_source(path)",
+  ") -> Result<commands::backup::BackupDestinationSelection, String> {",
+  "let app_handle = window.app_handle().clone();",
+  "drop(window);",
+  "let picker_app_handle = app_handle.clone();",
+  "let _ = picker_app_handle;",
+  "picker_app_handle",
+  "return Ok(commands::backup::BackupDestinationSelection::Cancelled);",
+  "let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();",
+  "return Ok(commands::backup::BackupDestinationSelection::Error {",
+  "});",
+  "Ok(commands.select_backup_destination(path))",
+  ") -> Result<commands::backup::RestoreSourceSelection, String> {",
+  "return Ok(commands::backup::RestoreSourceSelection::Cancelled);",
+  "let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();",
+  "return Ok(commands::backup::RestoreSourceSelection::Error {",
+  "Ok(commands.select_restore_source(path))",
+]);
+
+function assertWindowsPickerCommandDiffAllowlist(libDiff: string) {
+  const changedLines = libDiff
+    .split("\n")
+    .filter((line) => /^[+-](?![+-])/.test(line));
+  assert.match(libDiff, /Result<commands::backup::BackupDestinationSelection, String>/);
+  assert.match(libDiff, /Result<commands::backup::RestoreSourceSelection, String>/);
+  assert.ok(
+    changedLines.every((line) => windowsPickerCommandDiffLineAllowlist.has(line.slice(1).trim())),
+    "unexpected Windows picker-command diff drift",
+  );
+}
+
 function assertTicket11RegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -624,8 +703,107 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
   ], "unexpected Reports capability diff");
 }
 
+const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
+  "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
+  "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
+  "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
+  "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
+  "src/ui/w9-evidence-audit.test.ts": "b9228cd809a8d9ebdafda70f0aa780635286f0ecb4f7f010fafa157064cc5657",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
+  "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
+  "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
+  "src/commands/backup.ts": "22801231a00ee33709afa0e9ba5d67072775e9d1849edde32afafad693b00166",
+  "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
+  "src/ui/backup/backup-flow.ts": "3070565d5f770fc9f8482c8951671663c612575390d8176ee7edf6b6b473de2f",
+  "src/ui/backup/backup-flow.test.ts": "cfcf08a4834f1aac93b4eb89a9cdf1d21dbe5c337fc49eda465096adb655fe46",
+  "src/ui/backup/backup-screen.ts": "b7a1fa63d38aec6719db217ee5fd0ad3f2495decfa29a4f96fc35f04234be809",
+  "src/ui/backup/backup-screen.mounted.test.ts": "a8edf1386a28fdab5096581b3e5d41705e50214ada534825f44aa13bd17a3daf",
+};
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+const windowsDesktopFixCandidatePaths = new Set([
+  "src-tauri/Cargo.toml",
+  "src-tauri/src/commands/backup.rs",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+  "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+  "src-tauri/src/infrastructure/sqlite/backup.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/backup_restore.rs",
+  "src/commands/backup.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+  "odd/tasks/windows-desktop-build-fixes.md",
+]);
+
+const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
+  "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
+  "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
+  "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
+  "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
+  "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
+  "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
+  "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
+  "src/ui/w9-evidence-audit.test.ts": "b9228cd809a8d9ebdafda70f0aa780635286f0ecb4f7f010fafa157064cc5657",
+  "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
+};
+
+const backupIntegrityCandidatePaths = new Set([
+  "src-tauri/src/lib.rs",
+  "src-tauri/src/commands/backup.rs",
+  "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+  "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+  "src-tauri/src/infrastructure/sqlite/backup.rs",
+  "src-tauri/tests/backup_restore.rs",
+  "src/commands/backup.ts",
+  "src/commands/backup.test.ts",
+  "src/ui/backup/backup-flow.ts",
+  "src/ui/backup/backup-flow.test.ts",
+  "src/ui/backup/backup-screen.ts",
+  "src/ui/backup/backup-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+  "odd/tasks/backup-restore-integrity-hardening.md",
+]);
+
+function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffer>) {
+  for (const [path, content] of Object.entries(diffs)) {
+    const expected = backupIntegrityDiffSha256Allowlist[path];
+    assert.ok(expected, `backup-integrity diff is not allowlisted: ${path}`);
+    const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
+      ? content
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+      : content;
+    assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
+  }
+}
+
+function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buffer>) {
+  for (const [path, content] of Object.entries(diffs)) {
+    const expected = windowsDesktopFixDiffSha256Allowlist[path];
+    assert.ok(expected, `Windows desktop-fix diff is not allowlisted: ${path}`);
+    const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
+      ? content
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+      : content;
+    assert.equal(sha256(normalized), expected, `unexpected Windows desktop-fix diff content: ${path}`);
+  }
+}
+
 function changedPathsFromGitOutput(trackedChanges: string, untrackedFiles: string): string[] {
   return [...new Set(`${trackedChanges}\n${untrackedFiles}`.split("\n").map((path) => path.trim()).filter(Boolean))].sort();
+}
+
+function isTrackedPath(path: string): boolean {
+  const trackedPaths = execFileSync(
+    "git",
+    ["ls-files", "--cached", "-z", "--", `:(literal)${path}`],
+    { cwd: root },
+  );
+  return trackedPaths.length > 0;
 }
 
 const preExistingUnrelatedOddTaskBaseline = new Set([
@@ -655,6 +833,17 @@ function assertW9ProtectedDiffPolicy(
     "package.json",
     "package-lock.json",
     "src-tauri/src/lib.rs",
+    "src-tauri/src/commands/backup.rs",
+    "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+    "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+    "src-tauri/src/infrastructure/sqlite/backup.rs",
+    "src/commands/backup.ts",
+    "src/commands/backup.test.ts",
+    "src/ui/backup/backup-flow.ts",
+    "src/ui/backup/backup-flow.test.ts",
+    "src/ui/backup/backup-screen.ts",
+    "src/ui/backup/backup-screen.mounted.test.ts",
+    "odd/tasks/backup-restore-integrity-hardening.md",
     "src/commands/catalog.ts",
     "src/commands/catalog.test.ts",
     "src-tauri/src/application/catalog/mod.rs",
@@ -681,6 +870,10 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/src/domain/inventory.rs",
     "src-tauri/Cargo.lock",
     "src-tauri/Cargo.toml",
+    "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+    "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+    "src/commands/backup.test.ts",
+    "odd/tasks/windows-desktop-build-fixes.md",
     "src-tauri/src/application/catalog/repository.rs",
     "src-tauri/tests/backup_restore.rs",
     "src-tauri/tests/command_seam.rs",
@@ -776,6 +969,9 @@ function assertW9ProtectedDiffPolicy(
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("Result<commands::backup::BackupDestinationSelection, String>")) assertWindowsPickerCommandDiffAllowlist(libDiff);
+    else if (libDiff.includes("backup_diagnostic operation=picker_selection")) assert.equal(sha256(libDiff), "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e", "unexpected Windows backup-diagnostic diff");
+    else if (libDiff.includes("retained_recovery_evidence_is_valid") || libDiff.includes("has_recovery_evidence")) assertBackupRecoveryStartupAllowlist(libDiff);
     else assertTicket11RegistrationAllowlist(libDiff);
   }
 }
@@ -849,6 +1045,187 @@ test("W9 audits Spanish presentation, money, whole units, and non-color state cu
   assert.match(css, /data-ui-badge/);
   assert.match(css, /font-variant-numeric: tabular-nums/);
   assert.match(read("openspec/changes/archive/2026-09-14-define-frontend-ui-ux-visual-system/design.md"), /contrast[\s\S]*validate/i);
+});
+
+test("W9 enforces the named backup-integrity candidate policy and its backend/frontend evidence", () => {
+  const backupPaths = [
+    "src-tauri/src/commands/backup.rs",
+    "src-tauri/src/infrastructure/filesystem/backup_store.rs",
+    "src-tauri/src/infrastructure/filesystem/restore_transitions.rs",
+    "src-tauri/src/infrastructure/sqlite/backup.rs",
+    "src/commands/backup.ts",
+    "src/commands/backup.test.ts",
+    "src/ui/backup/backup-flow.ts",
+    "src/ui/backup/backup-flow.test.ts",
+    "src/ui/backup/backup-screen.ts",
+    "src/ui/backup/backup-screen.mounted.test.ts",
+    "src/ui/w9-evidence-audit.test.ts",
+    "odd/tasks/backup-restore-integrity-hardening.md",
+  ];
+  assert.doesNotThrow(() => assertW9ProtectedDiffPolicy(
+    backupPaths,
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ));
+  assert.throws(() => assertW9ProtectedDiffPolicy(
+    [...backupPaths, "src-tauri/src/commands/unrelated.rs"],
+    currentPackage,
+    baselinePackage,
+    currentLock,
+    baselineLock,
+    "",
+  ), /unexpected protected-path drift/);
+
+  const backend = read("src-tauri/src/commands/backup.rs");
+  assert.match(backend, /CleanupResult::DurablyEvidencedFailure => BackupResponse::Created/);
+  assert.match(backend, /CleanupResult::UnaccountedFailure => BackupResponse::error\("storage_unavailable"\)/);
+  assert.match(backend, /if !reconcile_cleanup_evidence_using\(&snapshot_directory, cleanup\)[\s\S]*?\|\| !prune_artifacts_using\(&snapshot_directory/);
+  for (const regression of [
+    "create_backup_reconciles_stale_snapshot_evidence_before_pruning",
+    "create_backup_reconciliation_failure_retains_snapshot_evidence_and_blocks",
+    "create_backup_accepts_an_ordinary_empty_snapshot_directory",
+  ]) assert.match(backend, new RegExp(`fn ${regression}\\(`));
+  assert.doesNotMatch(backend, /let _ = remove_stage_with_evidence_using/);
+  assert.match(backend, /published_backup_with_snapshot_cleanup_failure_returns_created_warning_and_evidence/);
+  assert.match(backend, /restore-stage-cleanup-required\\n/);
+  const frontend = read("src/commands/backup.ts");
+  assert.match(frontend, /cleanup_warning: boolean/);
+  assert.match(read("src/ui/backup/backup-flow.ts"), /cleanup_warning \? "La copia fue creada/);
+  assert.match(read("odd/tasks/backup-restore-integrity-hardening.md"), /T9 Close Linux cleanup-accounting gaps/);
+});
+
+test("W9 binds every changed Windows desktop-fix file and task byte to exact hashes", () => {
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  const changedCandidates = changedPaths.filter((path) => windowsDesktopFixCandidatePaths.has(path));
+  const diffs: Record<string, string | Buffer> = {};
+  for (const path of changedCandidates) {
+    diffs[path] = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path));
+  }
+  assertWindowsDesktopFixDiffAllowlist(diffs);
+
+  const commandBackup = read("src-tauri/src/commands/backup.rs");
+  const storeBackup = read("src-tauri/src/infrastructure/filesystem/backup_store.rs");
+  const sqliteBackup = read("src-tauri/src/infrastructure/sqlite/backup.rs");
+  const lib = read("src-tauri/src/lib.rs");
+  assert.match(commandBackup, /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
+  assert.match(storeBackup, /CreateFileW[\s\S]*GENERIC_WRITE[\s\S]*FILE_FLAG_BACKUP_SEMANTICS[\s\S]*FlushFileBuffers/);
+  for (const source of [commandBackup, storeBackup, sqliteBackup]) {
+    assert.match(source, /#\[cfg\(all\(windows, debug_assertions\)\)\][\s\S]*backup_diagnostic operation=/);
+  }
+  const diagnosticCalls = `${commandBackup}\n${storeBackup}\n${sqliteBackup}`;
+  for (const operation of ["snapshot_page_count", "snapshot_page_size", "cleanup_evidence_create", "cleanup_artifact_remove", "cleanup_artifact_directory_sync", "cleanup_reconcile_artifact_remove", "cleanup_reconcile_evidence_directory_sync", "publication_temp_create", "publication_finalize"]) {
+    assert.match(diagnosticCalls, new RegExp(`report_backup_(?:sqlite|io|unclassified)_failure\\("${operation}"`));
+  }
+  const createBackupGateCalls = commandBackup.slice(commandBackup.indexOf("fn create_backup_with_publisher"), commandBackup.indexOf("pub fn prepare_restore"));
+  for (const gate of ["expired_prune", "destination_token", "snapshot_prune", "snapshot_size", "snapshot_result", "state_read_snapshot", "publication", "final_cleanup"]) {
+    assert.match(createBackupGateCalls, new RegExp(`report_create_backup_gate\\("${gate}"`), `missing create-backup diagnostic gate: ${gate}`);
+  }
+  assert.match(commandBackup, /#\[cfg\(all\(windows, debug_assertions\)\)\][\s\S]*fn report_create_backup_gate/);
+  assert.match(commandBackup, /fn destination_token_class[\s\S]*fn internal_backup_result_class[\s\S]*fn storage_error_class[\s\S]*fn cleanup_result_class/);
+  assert.match(read("odd/tasks/windows-desktop-build-fixes.md"), /backup_diagnostic operation=/);
+  assert.match(lib, /#\[cfg\(all\(windows, debug_assertions\)\)\][\s\S]*backup_diagnostic operation=picker_selection/);
+  assert.match(lib, /backup_diagnostic operation=create_backup_command phase=entry/);
+  assert.match(lib, /backup_diagnostic operation=create_backup_response kind=\{kind\} code=\{code\}/);
+  assert.match(lib, /fn backup_diagnostic_classification_uses_only_bounded_kinds_and_codes/);
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  if (candidate) {
+    assert.throws(
+      () => assertWindowsDesktopFixDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\\n+arbitrary Windows-fix drift` }),
+      /unexpected Windows desktop-fix diff content/,
+    );
+  }
+  assert.throws(
+    () => assertWindowsDesktopFixDiffAllowlist({ "src-tauri/Cargo.toml": "+unallowlisted Windows-fix drift" }),
+    /unexpected Windows desktop-fix diff content/,
+  );
+});
+
+test("W9 binds every changed backup-integrity file to its exact unified-zero diff", () => {
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  const changedCandidates = changedPaths.filter((path) => backupIntegrityCandidatePaths.has(path));
+  const diffs: Record<string, string | Buffer> = {};
+  for (const path of changedCandidates) {
+    diffs[path] = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path));
+  }
+  assertBackupIntegrityDiffAllowlist(diffs);
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  if (candidate) {
+    assert.throws(
+      () => assertBackupIntegrityDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\n+arbitrary candidate drift` }),
+      /unexpected backup-integrity diff content/,
+    );
+  }
+  assert.throws(
+    () => assertBackupIntegrityDiffAllowlist({ "src-tauri/src/commands/backup.rs": "+unallowlisted candidate" }),
+    /unexpected backup-integrity diff content/,
+  );
+});
+
+test("W9 preserves the committed backup-integrity task evidence", () => {
+  const path = "odd/tasks/backup-restore-integrity-hardening.md";
+  assert.equal(isTrackedPath(path), true);
+  const contents = Buffer.from(readFromHead(path));
+  assert.doesNotThrow(() => assertBackupIntegrityDiffAllowlist({ [path]: contents }));
+  assert.match(contents.toString("utf8"), /T9 Close Linux cleanup-accounting gaps/);
+});
+
+test("W9 allows only the bounded owned-Result Windows picker-command diff", () => {
+  const allowedDiff = [
+    "-    commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,",
+    "-) -> commands::backup::BackupDestinationSelection {",
+    "+) -> Result<commands::backup::BackupDestinationSelection, String> {",
+    "+    let app_handle = window.app_handle().clone();",
+    "+    drop(window);",
+    "+    let picker_app_handle = app_handle.clone();",
+    "-            let _ = window;",
+    "+            let _ = picker_app_handle;",
+    "-                .app_handle()",
+    "+            picker_app_handle",
+    "-        return commands::backup::BackupDestinationSelection::Cancelled;",
+    "+        return Ok(commands::backup::BackupDestinationSelection::Cancelled);",
+    "+    let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();",
+    "-        return commands::backup::BackupDestinationSelection::Error {",
+    "+        return Ok(commands::backup::BackupDestinationSelection::Error {",
+    "-        };",
+    "+        });",
+    "-    commands.select_backup_destination(path)",
+    "+    Ok(commands.select_backup_destination(path))",
+    "-    commands: tauri::State<'_, Mutex<commands::backup::BackupCommandState>>,",
+    "-) -> commands::backup::RestoreSourceSelection {",
+    "+) -> Result<commands::backup::RestoreSourceSelection, String> {",
+    "+    let app_handle = window.app_handle().clone();",
+    "+    drop(window);",
+    "+    let picker_app_handle = app_handle.clone();",
+    "-            let _ = window;",
+    "+            let _ = picker_app_handle;",
+    "-                .app_handle()",
+    "+            picker_app_handle",
+    "-        return commands::backup::RestoreSourceSelection::Cancelled;",
+    "+        return Ok(commands::backup::RestoreSourceSelection::Cancelled);",
+    "+    let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();",
+    "-        return commands::backup::RestoreSourceSelection::Error {",
+    "+        return Ok(commands::backup::RestoreSourceSelection::Error {",
+    "-        };",
+    "+        });",
+    "-    commands.select_restore_source(path)",
+    "+    Ok(commands.select_restore_source(path))",
+  ].join("\n");
+  assert.doesNotThrow(() => assertWindowsPickerCommandDiffAllowlist(allowedDiff));
+  assert.throws(
+    () => assertWindowsPickerCommandDiffAllowlist(`${allowedDiff}\n+    native_runtime_drift();`),
+    /unexpected Windows picker-command diff drift/,
+  );
 });
 
 test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam", () => {
