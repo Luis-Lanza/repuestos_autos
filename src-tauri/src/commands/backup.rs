@@ -300,7 +300,9 @@ fn create_backup_with_publisher(
     };
     let created_at_unix_seconds = now_seconds();
     let snapshot_directory = commands.root.join("backup-restore/snapshots");
-    if !prune_artifacts_using(&snapshot_directory, true, MAX_SNAPSHOTS, Duration::from_secs(7 * 24 * 60 * 60), &[], cleanup) {
+    if !reconcile_cleanup_evidence_using(&snapshot_directory, cleanup)
+        || !prune_artifacts_using(&snapshot_directory, true, MAX_SNAPSHOTS, Duration::from_secs(7 * 24 * 60 * 60), &[], cleanup)
+    {
         report_create_backup_gate("snapshot_prune", "failed", "storage_unavailable");
         return BackupResponse::error("storage_unavailable");
     }
@@ -1324,6 +1326,105 @@ mod destination_token_tests {
         assert!(matches!(response, BackupResponse::Error { code: "storage_unavailable", .. }));
         let evidence = fs::read_dir(root.join("backup-restore/snapshots")).unwrap().map(Result::unwrap).find(|entry| entry.file_name().to_string_lossy().ends_with(".cleanup-needed")).unwrap().path();
         assert_eq!(fs::read(evidence).unwrap(), b"restore-stage-cleanup-required\n");
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_backup_reconciles_stale_snapshot_evidence_before_pruning() {
+        let root = test_directory();
+        let snapshot_dir = root.join("backup-restore/snapshots");
+        fs::create_dir_all(&snapshot_dir).unwrap();
+        let stale = snapshot_dir.join(format!("1-{}.sqlite3", uuid::Uuid::new_v4()));
+        let evidence = stale.with_file_name(format!(".{}.cleanup-needed", stale.file_name().unwrap().to_string_lossy()));
+        fs::write(&stale, b"abandoned snapshot").unwrap();
+        fs::write(&evidence, b"restore-stage-cleanup-required\n").unwrap();
+        let mut commands = BackupCommandState::new(&root);
+        let destination = root.join("selected");
+        let destination_token = commands.issue_test_destination(destination.clone(), Instant::now() + Duration::from_secs(30));
+        let state = DatabaseState::open(crate::infrastructure::sqlite::production_database_config(&root)).unwrap();
+        let mut cleanup = RecordingCleanup::default();
+
+        let response = create_backup_with_publisher(
+            &state,
+            &mut commands,
+            CreateBackupRequest { destination_token },
+            &mut cleanup,
+            |snapshot, published_to, file_name| {
+                assert!(!stale.exists());
+                assert!(!evidence.exists());
+                assert!(snapshot.is_file());
+                fs::create_dir_all(published_to).unwrap();
+                fs::copy(snapshot, published_to.join(file_name)).unwrap();
+                Ok(PublishedBackup { path: published_to.join(file_name), size_bytes: fs::metadata(snapshot).unwrap().len(), sha256: "verified".into(), durability_warning: false })
+            },
+        );
+
+        assert!(matches!(response, BackupResponse::Created { .. }));
+        assert!(!stale.exists());
+        assert!(!evidence.exists());
+        assert!(cleanup.calls.starts_with(&["remove", "sync_parent", "remove", "sync_parent"]));
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_backup_reconciliation_failure_retains_snapshot_evidence_and_blocks() {
+        let root = test_directory();
+        let snapshot_dir = root.join("backup-restore/snapshots");
+        fs::create_dir_all(&snapshot_dir).unwrap();
+        let stale = snapshot_dir.join(format!("1-{}.sqlite3", uuid::Uuid::new_v4()));
+        let evidence = stale.with_file_name(format!(".{}.cleanup-needed", stale.file_name().unwrap().to_string_lossy()));
+        fs::write(&stale, b"abandoned snapshot").unwrap();
+        fs::write(&evidence, b"restore-stage-cleanup-required\n").unwrap();
+        let mut commands = BackupCommandState::new(&root);
+        let destination_token = commands.issue_test_destination(root.join("selected"), Instant::now() + Duration::from_secs(30));
+        let state = DatabaseState::open(crate::infrastructure::sqlite::production_database_config(&root)).unwrap();
+        let mut cleanup = RecordingCleanup { fail: Some("remove"), ..Default::default() };
+
+        let response = create_backup_with_publisher(
+            &state,
+            &mut commands,
+            CreateBackupRequest { destination_token },
+            &mut cleanup,
+            |_, _, _| panic!("publication must not run when cleanup evidence cannot be reconciled"),
+        );
+
+        assert!(matches!(response, BackupResponse::Error { code: "storage_unavailable", .. }));
+        assert!(stale.exists());
+        assert_eq!(fs::read(&evidence).unwrap(), b"restore-stage-cleanup-required\n");
+        assert_eq!(cleanup.calls, vec!["remove"]);
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_backup_accepts_an_ordinary_empty_snapshot_directory() {
+        let root = test_directory();
+        let snapshot_dir = root.join("backup-restore/snapshots");
+        fs::create_dir_all(&snapshot_dir).unwrap();
+        let mut commands = BackupCommandState::new(&root);
+        let destination = root.join("selected");
+        let destination_token = commands.issue_test_destination(destination.clone(), Instant::now() + Duration::from_secs(30));
+        let state = DatabaseState::open(crate::infrastructure::sqlite::production_database_config(&root)).unwrap();
+        let mut cleanup = RecordingCleanup::default();
+
+        let response = create_backup_with_publisher(
+            &state,
+            &mut commands,
+            CreateBackupRequest { destination_token },
+            &mut cleanup,
+            |snapshot, published_to, file_name| {
+                assert!(snapshot.is_file());
+                fs::create_dir_all(published_to).unwrap();
+                fs::copy(snapshot, published_to.join(file_name)).unwrap();
+                Ok(PublishedBackup { path: published_to.join(file_name), size_bytes: fs::metadata(snapshot).unwrap().len(), sha256: "verified".into(), durability_warning: false })
+            },
+        );
+
+        assert!(matches!(response, BackupResponse::Created { .. }));
+        assert_eq!(cleanup.calls.first(), Some(&"create_evidence"));
+        assert_eq!(fs::read_dir(&snapshot_dir).unwrap().count(), 0);
         drop(state);
         fs::remove_dir_all(root).unwrap();
     }

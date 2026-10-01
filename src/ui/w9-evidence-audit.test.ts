@@ -705,10 +705,10 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
-  "src-tauri/src/commands/backup.rs": "aed6c5e190fc0f3604d4cd38bb94e8b9172253281e7ce552dee671bf2430f414",
+  "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
-  "src/ui/w9-evidence-audit.test.ts": "b8316085b42626f33d70eecda7dae4a0f2b9244f26cf93796df90a6b16b92369",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
+  "src/ui/w9-evidence-audit.test.ts": "b9228cd809a8d9ebdafda70f0aa780635286f0ecb4f7f010fafa157064cc5657",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -739,15 +739,15 @@ const windowsDesktopFixCandidatePaths = new Set([
 
 const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
-  "src-tauri/src/commands/backup.rs": "aed6c5e190fc0f3604d4cd38bb94e8b9172253281e7ce552dee671bf2430f414",
+  "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "b8316085b42626f33d70eecda7dae4a0f2b9244f26cf93796df90a6b16b92369",
-  "odd/tasks/windows-desktop-build-fixes.md": "ad236b84ae310acebbc21893a5efeb59cf3bbc70dfcaeabbc25f359f08198dbe",
+  "src/ui/w9-evidence-audit.test.ts": "b9228cd809a8d9ebdafda70f0aa780635286f0ecb4f7f010fafa157064cc5657",
+  "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
 const backupIntegrityCandidatePaths = new Set([
@@ -1082,6 +1082,12 @@ test("W9 enforces the named backup-integrity candidate policy and its backend/fr
   const backend = read("src-tauri/src/commands/backup.rs");
   assert.match(backend, /CleanupResult::DurablyEvidencedFailure => BackupResponse::Created/);
   assert.match(backend, /CleanupResult::UnaccountedFailure => BackupResponse::error\("storage_unavailable"\)/);
+  assert.match(backend, /if !reconcile_cleanup_evidence_using\(&snapshot_directory, cleanup\)[\s\S]*?\|\| !prune_artifacts_using\(&snapshot_directory/);
+  for (const regression of [
+    "create_backup_reconciles_stale_snapshot_evidence_before_pruning",
+    "create_backup_reconciliation_failure_retains_snapshot_evidence_and_blocks",
+    "create_backup_accepts_an_ordinary_empty_snapshot_directory",
+  ]) assert.match(backend, new RegExp(`fn ${regression}\\(`));
   assert.doesNotMatch(backend, /let _ = remove_stage_with_evidence_using/);
   assert.match(backend, /published_backup_with_snapshot_cleanup_failure_returns_created_warning_and_evidence/);
   assert.match(backend, /restore-stage-cleanup-required\\n/);

@@ -20,6 +20,12 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - [x] W8 Restore release cleanup-evidence reconciliation behavior on metadata-inspection failure; retain the bounded evidence-recreation attempt and prove it with a regression test.
 - [x] W9 Add minimal debug-only IPC boundary labels for picker selection and create-backup command entry/returned response; fresh APPDATA is empty, so distinguish backend routing from internal failure before widening branch diagnostics.
 - [x] W10 Add targeted debug-only labels to the remaining high-level create-backup failure gates (prune, state, snapshot size/result, publication/cleanup outcome) to identify the exact branch without exposing data.
+- [x] W11 Reconcile durable snapshot cleanup evidence before snapshot pruning so an older `.cleanup-needed` record does not permanently block new backups.
+
+## W11 evidence
+- `create_backup_with_publisher` now runs the existing bounded cleanup-evidence reconciler on `backup-restore/snapshots` before artifact pruning. Reconciliation or pruning failure returns `storage_unavailable`; the existing reconciliation protocol preserves evidence when removal, directory sync, or evidence reconciliation fails.
+- Deterministic backend regressions prove a stale snapshot/evidence pair is reclaimed before a new snapshot is published, failed reconciliation retains evidence and prevents publication, and an empty snapshots directory remains accepted. W9 audits the ordering and the named cases.
+- No cleanup policy, restore behavior, exposed path, or evidence handling was weakened.
 
 ## W10 evidence
 - Added fixed high-level `create_backup_*` outcome labels for expired and snapshot pruning, destination-token consumption, state/read/snapshot outcomes, size-limit rejection, publication failure, and final cleanup. Destination-token, internal-result, storage-error, and cleanup classes are explicitly bounded; the output contains no paths, tokens, sizes, database values, or request data.
