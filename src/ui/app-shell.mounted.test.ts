@@ -89,6 +89,7 @@ test("opens Reports directly to the Movement Ledger and keeps sidebar focus and 
     if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "gross_profit_report_command") return { kind: "success", report: { amount_centavos: 0, missing_cost_line_count: 0 } };
     if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
     if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
     throw new Error(`Unexpected command: ${command}`);
@@ -98,6 +99,8 @@ test("opens Reports directly to the Movement Ledger and keeps sidebar focus and 
   const reports = within(navigation).getByRole("button", { name: "Reportes" });
   await user.click(reports);
   assert.ok(await screen.findByRole("heading", { level: 1, name: "Registro de movimientos" }));
+  assert.ok(await screen.findByRole("region", { name: "Ganancia bruta" }));
+  assert.equal(document.querySelectorAll("main").length, 1);
   assert.equal(reports.getAttribute("aria-current"), "page");
   assert.equal(document.activeElement, reports);
   assert.equal(screen.queryByText(/Próximamente|Otros informes/), null);
@@ -135,6 +138,7 @@ test("App keeps one shell mounted while safe navigation changes content, active 
     if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "gross_profit_report_command") return { kind: "success", report: { amount_centavos: 0, missing_cost_line_count: 0 } };
     if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
     if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
     if (command === "choose_backup_destination_command") return { kind: "cancelled" };

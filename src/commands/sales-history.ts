@@ -20,7 +20,17 @@ type Invoke = (command: string, payload: Record<string, unknown>) => Promise<unk
 const record = (value: unknown): RecordValue | undefined => typeof value === "object" && value !== null ? value as RecordValue : undefined;
 const failure = (): SalesHistoryError => ({ kind: KIND.ERROR, code: ERROR_CODE.PERSISTENCE_FAILURE, message: "Sales history could not be loaded." });
 const localMidnight: LocalMidnight = (year, month, day) => new Date(year, month, day);
-const validDate = (value: string): [number, number, number] => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(new Date(`${value}T12:00:00`).getTime()) ? [Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10))] : (() => { throw new Error("Dates must use YYYY-MM-DD."); })();
+const validDate = (value: string): [number, number, number] => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Dates must use YYYY-MM-DD.");
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const roundtrip = new Date(Date.UTC(year, month - 1, day));
+  if (roundtrip.getUTCFullYear() !== year || roundtrip.getUTCMonth() !== month - 1 || roundtrip.getUTCDate() !== day) {
+    throw new Error("Dates must use YYYY-MM-DD.");
+  }
+  return [year, month - 1, day];
+};
 export function localDateRangeToUtc(from: string, to: string, makeLocalMidnight: LocalMidnight = localMidnight) { const [fromYear, fromMonth, fromDay] = validDate(from); const [toYear, toMonth, toDay] = validDate(to); return { from_utc: makeLocalMidnight(fromYear, fromMonth, fromDay).toISOString(), to_exclusive_utc: makeLocalMidnight(toYear, toMonth, toDay + 1).toISOString() }; }
 const safeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
 const positiveSafeInteger = (value: unknown): value is number => safeInteger(value) && value > 0;

@@ -2,6 +2,8 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime, UtcOffset};
 
 const SQLITE_TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
     time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+const GROSS_PROFIT_UTC_FORMAT: &[time::format_description::FormatItem<'static>] =
+    time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReportingError {
@@ -18,8 +20,20 @@ pub struct DashboardRange {
 
 impl DashboardRange {
     pub fn parse(from_utc: &str, to_exclusive_utc: &str) -> Result<Self, ReportingError> {
-        let from = parse_utc(from_utc)?;
-        let to = parse_utc(to_exclusive_utc)?;
+        Self::parse_with(from_utc, to_exclusive_utc, parse_utc)
+    }
+
+    pub fn parse_gross_profit(from_utc: &str, to_exclusive_utc: &str) -> Result<Self, ReportingError> {
+        Self::parse_with(from_utc, to_exclusive_utc, parse_canonical_gross_profit_utc)
+    }
+
+    fn parse_with(
+        from_utc: &str,
+        to_exclusive_utc: &str,
+        parse_bound: fn(&str) -> Result<OffsetDateTime, ReportingError>,
+    ) -> Result<Self, ReportingError> {
+        let from = parse_bound(from_utc)?;
+        let to = parse_bound(to_exclusive_utc)?;
         if from >= to {
             return Err(ReportingError::InvalidRange);
         }
@@ -38,6 +52,20 @@ fn parse_utc(value: &str) -> Result<OffsetDateTime, ReportingError> {
     OffsetDateTime::parse(value, &Rfc3339)
         .map(|value| value.to_offset(UtcOffset::UTC))
         .map_err(|_| ReportingError::InvalidRange)
+}
+
+fn parse_canonical_gross_profit_utc(value: &str) -> Result<OffsetDateTime, ReportingError> {
+    if !value.ends_with(".000Z") {
+        return Err(ReportingError::InvalidRange);
+    }
+    let parsed = parse_utc(value)?;
+    let canonical = parsed
+        .format(GROSS_PROFIT_UTC_FORMAT)
+        .map_err(|_| ReportingError::InvalidRange)?;
+    if canonical != value {
+        return Err(ReportingError::InvalidRange);
+    }
+    Ok(parsed)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -105,6 +133,21 @@ pub trait DashboardReader {
     fn read(&self, today: &DashboardRange, month: &DashboardRange) -> Result<DashboardReport, ReportingError>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct GrossProfitReport {
+    pub amount_centavos: i64,
+    pub missing_cost_line_count: i64,
+    pub activity_count: i64,
+}
+
+pub trait GrossProfitReader {
+    fn read_gross_profit(&self, range: &DashboardRange) -> Result<GrossProfitReport, ReportingError>;
+}
+
+pub fn load_gross_profit<R: GrossProfitReader>(reader: &R, range: DashboardRange) -> Result<GrossProfitReport, ReportingError> {
+    reader.read_gross_profit(&range)
+}
+
 pub fn load_dashboard<R: DashboardReader>(reader: &R, today: DashboardRange, month: DashboardRange) -> Result<DashboardReport, ReportingError> {
     reader.read(&today, &month)
 }
@@ -117,6 +160,19 @@ mod tests {
     fn accepts_utc_ranges_and_normalizes_offsets_to_half_open_sqlite_bounds() {
         let range = DashboardRange::parse("2024-03-01T00:00:00-05:00", "2024-03-02T00:00:00-05:00").unwrap();
         assert_eq!(range.bounds(), ("2024-03-01 05:00:00", "2024-03-02 05:00:00"));
+    }
+
+    #[test]
+    fn gross_profit_bounds_require_canonical_millisecond_utc_timestamps() {
+        assert!(DashboardRange::parse_gross_profit("2024-03-10T05:00:00.000Z", "2024-03-11T04:00:00.000Z").is_ok());
+        for invalid in [
+            "2024-03-10T05:00:00Z",
+            "2024-03-10T05:00:00.001Z",
+            "2024-03-10T05:00:00.000000Z",
+            "2024-03-10T05:00:00.000+00:00",
+        ] {
+            assert_eq!(DashboardRange::parse_gross_profit(invalid, "2024-03-11T04:00:00.000Z"), Err(ReportingError::InvalidRange));
+        }
     }
 
     #[test]

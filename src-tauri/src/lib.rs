@@ -720,6 +720,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         browse_inventory_products_command,
         browse_sale_products_command,
         dashboard_command,
+        gross_profit_report_command,
         confirm_sale_command,
         create_sale_return_command,
         cancel_sale_command,
@@ -1143,6 +1144,18 @@ fn confirm_restore_command(
         return commands::backup::BackupResponse::error("storage_unavailable");
     };
     commands::backup::confirm_restore(&state, &mut commands, request)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn gross_profit_report_command(
+    state: tauri::State<AppState>,
+    request: commands::gross_profit::GrossProfitRequest,
+) -> commands::gross_profit::GrossProfitResponse {
+    state.with_read(|connection| Ok(commands::gross_profit::gross_profit(connection, request)))
+        .unwrap_or_else(|_| commands::gross_profit::GrossProfitResponse::Error(commands::gross_profit::GrossProfitError {
+            code: "persistence_failure", message: "The gross-profit report could not be loaded.",
+        }))
 }
 
 #[cfg(feature = "desktop")]

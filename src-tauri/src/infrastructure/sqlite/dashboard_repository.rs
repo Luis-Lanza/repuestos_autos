@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use crate::application::reporting::{
     DashboardMetrics, DashboardPayment, DashboardPeriod, DashboardProduct, DashboardRange,
     DashboardReader, DashboardRecentSale, DashboardReport, DashboardStockAlert,
-    RealizedGrossProfit, ReportingError,
+    GrossProfitReader, GrossProfitReport, RealizedGrossProfit, ReportingError,
 };
 
 pub const DASHBOARD_TOP_PRODUCTS_LIMIT: i64 = 5;
@@ -79,7 +79,7 @@ impl<'connection> SqliteDashboardReader<'connection> {
                 .checked_sub(returned_quantity)
                 .ok_or(ReportingError::PersistedDataInvalid)?;
             if let Some(unit_cost) = unit_cost {
-                if unit_cost < 0 {
+                if unit_cost < 1 {
                     return Err(ReportingError::PersistedDataInvalid);
                 }
                 let line_profit = unit_price
@@ -98,6 +98,68 @@ impl<'connection> SqliteDashboardReader<'connection> {
         Ok(RealizedGrossProfit {
             amount_centavos: total,
             missing_cost_line_count,
+        })
+    }
+
+    fn gross_profit(connection: &Connection, range: &DashboardRange) -> Result<GrossProfitReport, ReportingError> {
+        let (from, to) = range.bounds();
+        let mut statement = connection.prepare(
+            "SELECT l.quantity, l.negotiated_unit_price_centavos, l.unit_cost_snapshot_centavos,
+                    CASE WHEN s.confirmed_at >= ?1 AND s.confirmed_at < ?2 THEN 1 ELSE 0 END,
+                    COALESCE((SELECT SUM(rl.quantity)
+                              FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.return_id
+                              WHERE rl.sale_line_id = l.id AND r.occurred_at >= ?1 AND r.occurred_at < ?2), 0)
+             FROM sale_lines l JOIN sales s ON s.id = l.sale_id
+             WHERE s.status = 'confirmed'
+               AND NOT EXISTS (SELECT 1 FROM sale_cancellations c WHERE c.sale_id = s.id)
+               AND ((s.confirmed_at >= ?1 AND s.confirmed_at < ?2)
+                    OR EXISTS (SELECT 1 FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.return_id
+                               WHERE rl.sale_line_id = l.id AND r.occurred_at >= ?1 AND r.occurred_at < ?2))"
+        ).map_err(|_| ReportingError::Persistence)?;
+        let rows = statement.query_map(params![from, to], |row| Ok((
+            row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<i64>>(2)?,
+            row.get::<_, i64>(3)?, row.get::<_, i64>(4)?,
+        ))).map_err(|_| ReportingError::Persistence)?;
+        let mut amount_centavos = 0_i64;
+        let mut missing_cost_line_count = 0_i64;
+        for row in rows {
+            let (quantity, unit_price, unit_cost, sale_in_range, returned_in_range) = row.map_err(|_| ReportingError::Persistence)?;
+            if quantity <= 0 || unit_price < 0 || returned_in_range < 0 || returned_in_range > quantity || !(0..=1).contains(&sale_in_range) {
+                return Err(ReportingError::PersistedDataInvalid);
+            }
+            let Some(unit_cost) = unit_cost else {
+                missing_cost_line_count = missing_cost_line_count.checked_add(1).ok_or(ReportingError::PersistedDataInvalid)?;
+                continue;
+            };
+            if unit_cost < 1 { return Err(ReportingError::PersistedDataInvalid); }
+            let sold_quantity = if sale_in_range == 1 { quantity } else { 0 };
+            let net_quantity = sold_quantity.checked_sub(returned_in_range).ok_or(ReportingError::PersistedDataInvalid)?;
+            let line_amount = unit_price.checked_sub(unit_cost)
+                .and_then(|margin| margin.checked_mul(net_quantity))
+                .ok_or(ReportingError::PersistedDataInvalid)?;
+            amount_centavos = amount_centavos.checked_add(line_amount).ok_or(ReportingError::PersistedDataInvalid)?;
+        }
+        let activity_count = connection.query_row(
+            "SELECT COUNT(*) FROM (
+                SELECT 'sale' AS activity_kind, s.id AS activity_id
+                FROM sales s
+                WHERE s.status = 'confirmed' AND s.confirmed_at >= ?1 AND s.confirmed_at < ?2
+                  AND NOT EXISTS (SELECT 1 FROM sale_cancellations c WHERE c.sale_id = s.id)
+                UNION
+                SELECT 'return' AS activity_kind, r.id AS activity_id
+                FROM sale_returns r
+                JOIN sales s ON s.id = r.sale_id
+                WHERE s.status = 'confirmed'
+                  AND NOT EXISTS (SELECT 1 FROM sale_cancellations c WHERE c.sale_id = s.id)
+                  AND r.occurred_at >= ?1 AND r.occurred_at < ?2
+            )",
+            params![from, to],
+            |row| row.get::<_, i64>(0),
+        ).map_err(|_| ReportingError::Persistence)?;
+        Ok(GrossProfitReport {
+            amount_centavos,
+            missing_cost_line_count,
+            activity_count: non_negative(activity_count)?,
         })
     }
 
@@ -204,6 +266,15 @@ impl<'connection> SqliteDashboardReader<'connection> {
             if classification != "out_of_stock" && classification != "low_stock" { return Err(ReportingError::PersistedDataInvalid); }
             Ok(DashboardStockAlert { product_id: positive(product_id)?, sku, product_name, quantity: non_negative(quantity)?, classification })
         }).collect()
+    }
+}
+
+impl GrossProfitReader for SqliteDashboardReader<'_> {
+    fn read_gross_profit(&self, range: &DashboardRange) -> Result<GrossProfitReport, ReportingError> {
+        let snapshot = self.0.unchecked_transaction().map_err(|_| ReportingError::Persistence)?;
+        let report = Self::gross_profit(&snapshot, range)?;
+        snapshot.commit().map_err(|_| ReportingError::Persistence)?;
+        Ok(report)
     }
 }
 

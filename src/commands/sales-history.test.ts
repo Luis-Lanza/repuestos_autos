@@ -103,6 +103,15 @@ const currentContract = {
 };
 void currentContract;
 
+test("rejects calendar-rollover dates while retaining valid local date handling", () => {
+  assert.throws(() => localDateRangeToUtc("2024-02-30", "2024-03-01"), /YYYY-MM-DD/);
+  assert.throws(() => localDateRangeToUtc("2024-04-01", "2024-13-01"), /YYYY-MM-DD/);
+  assert.deepEqual(localDateRangeToUtc("2024-02-29", "2024-02-29"), {
+    from_utc: new Date(2024, 1, 29).toISOString(),
+    to_exclusive_utc: new Date(2024, 2, 1).toISOString(),
+  });
+});
+
 test("converts each local date boundary independently across DST", () => {
   const localMidnight = (year: number, month: number, day: number) =>
     new Date(

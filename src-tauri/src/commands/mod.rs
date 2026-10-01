@@ -2,6 +2,7 @@ pub mod backup;
 pub mod catalog;
 pub mod confirm_sale;
 pub mod dashboard;
+pub mod gross_profit;
 pub mod inventory;
 pub mod license;
 pub mod movement_ledger;

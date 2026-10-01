@@ -263,6 +263,28 @@ function assertCatalogRegistrationAllowlist(libDiff: string) {
   );
 }
 
+const grossProfitCommandRegistrationLines = [
+  "gross_profit_report_command,",
+  "",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn gross_profit_report_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::gross_profit::GrossProfitRequest,",
+  ") -> commands::gross_profit::GrossProfitResponse {",
+  "state.with_read(|connection| Ok(commands::gross_profit::gross_profit(connection, request)))",
+  ".unwrap_or_else(|_| commands::gross_profit::GrossProfitResponse::Error(commands::gross_profit::GrossProfitError {",
+  "code: \"persistence_failure\", message: \"The gross-profit report could not be loaded.\",",
+  "}))",
+  "}",
+];
+
+function assertGrossProfitCommandRegistrationDiff(libDiff: string) {
+  const changedLines = libDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  assert.deepEqual(changedLines.map((line) => line.slice(1).trim()).sort(), [...grossProfitCommandRegistrationLines].sort(), "unexpected gross-profit command registration drift");
+  assert.match(libDiff, /gross_profit_report_command/);
+}
+
 function assertDashboardRegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -742,7 +764,7 @@ const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "4214390324ff80d16311d0fb7ad7622f7374ce88c00e2d489d4489a82ef0faf7",
+  "src/ui/w9-evidence-audit.test.ts": "e2a760db0cb2c01f1eb5a99f9c084b556c0c26fa3e060fdf43cef34dc7f4aa1d",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -774,6 +796,51 @@ const catalogAccessCandidatePaths = [
 ];
 
 const catalogAccessUnifiedDiffSha256 = "65df10d3e6bae980fd1b9b5df3606cd9756d15be528ba10e597e9ab0af78689d";
+
+const grossProfitReportCandidatePaths = [
+  "odd/tasks/catalog-access-and-profit-report.md",
+  "src-tauri/src/application/reporting/mod.rs",
+  "src-tauri/src/commands/mod.rs",
+  "src-tauri/src/commands/gross_profit.rs",
+  "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/gross_profit_report.rs",
+  "src/commands/gross-profit.ts",
+  "src/commands/gross-profit.test.ts",
+  "src/commands/sales-history.ts",
+  "src/commands/sales-history.test.ts",
+  "src/ui/app.ts",
+  "src/ui/app-shell.mounted.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+const grossProfitReportTaskBytesSha256 = "8485f4af59abeebdfc02b875593695e251adcb0cc0fc7cdad10df566afc39848";
+const grossProfitReportCandidateDiffSha256 = "b7e94178ef05299dddfa5bd001206794afd4440564d802a519b156354b0826b3";
+
+function grossProfitReportCandidateDiff() {
+  return grossProfitReportCandidatePaths.map((path) => {
+    const value = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path), "utf8");
+    const normalized = path === "src/ui/w9-evidence-audit.test.ts"
+      ? value
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_W9_HASH>$3')
+      : value;
+    return `${path}\0${normalized}`;
+  }).join("\0");
+}
+
+function assertGrossProfitReportCandidate(changedPaths: string[]) {
+  const expected = [...grossProfitReportCandidatePaths].sort();
+  assert.deepEqual(changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path)), expected);
+  assert.equal(sha256(read("odd/tasks/catalog-access-and-profit-report.md")), grossProfitReportTaskBytesSha256, "unexpected T3 task document bytes");
+  assert.equal(sha256(grossProfitReportCandidateDiff()), grossProfitReportCandidateDiffSha256, "unexpected T3 candidate diff or file bytes");
+}
 
 const catalogResponsiveTableCandidatePaths = [
   "odd/tasks/catalog-access-and-profit-report.md",
@@ -807,7 +874,7 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "4214390324ff80d16311d0fb7ad7622f7374ce88c00e2d489d4489a82ef0faf7",
+  "src/ui/w9-evidence-audit.test.ts": "e2a760db0cb2c01f1eb5a99f9c084b556c0c26fa3e060fdf43cef34dc7f4aa1d",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -830,6 +897,10 @@ const backupIntegrityCandidatePaths = new Set([
 
 function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffer>) {
   for (const [path, content] of Object.entries(diffs)) {
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("gross_profit_report_command")) {
+      assertGrossProfitCommandRegistrationDiff(content);
+      continue;
+    }
     if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("onboarding_location_schema_command")) continue;
     const expected = backupIntegrityDiffSha256Allowlist[path];
     assert.ok(expected, `backup-integrity diff is not allowlisted: ${path}`);
@@ -839,6 +910,8 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
           .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
           .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
   }
@@ -846,6 +919,10 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
 
 function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buffer>) {
   for (const [path, content] of Object.entries(diffs)) {
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("gross_profit_report_command")) {
+      assertGrossProfitCommandRegistrationDiff(content);
+      continue;
+    }
     if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("onboarding_location_schema_command")) continue;
     const expected = windowsDesktopFixDiffSha256Allowlist[path];
     assert.ok(expected, `Windows desktop-fix diff is not allowlisted: ${path}`);
@@ -855,6 +932,8 @@ function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buf
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
           .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
           .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected Windows desktop-fix diff content: ${path}`);
   }
@@ -937,6 +1016,14 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
     "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
     "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/src/commands/gross_profit.rs",
+    "src-tauri/tests/gross_profit_report.rs",
+    "src/commands/gross-profit.ts",
+    "src/commands/gross-profit.test.ts",
+    "src/commands/sales-history.ts",
+    "src/commands/sales-history.test.ts",
+    "src/ui/reports/gross-profit-report-screen.ts",
+    "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
     "src-tauri/tests/dashboard_reporting.rs",
     "src-tauri/tests/sale_cost_snapshot.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
@@ -1057,6 +1144,7 @@ function assertW9ProtectedDiffPolicy(
     else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
     else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("gross_profit_report_command")) assertGrossProfitCommandRegistrationDiff(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
     else if (libDiff.includes("Result<commands::backup::BackupDestinationSelection, String>")) assertWindowsPickerCommandDiffAllowlist(libDiff);
@@ -1318,12 +1406,25 @@ test("W9 allows only the bounded owned-Result Windows picker-command diff", () =
   );
 });
 
+test("W9 binds the exact T3 gross-profit candidate paths, diff, and task bytes", () => {
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
+  if (t3Sources.length > 0) assertGrossProfitReportCandidate(changedPaths);
+});
+
 test("W9 binds the exact Catalog access candidate diff and untracked task bytes", () => {
   const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
   const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
   const candidatePathSet = new Set(catalogAccessCandidatePaths);
   const changedCandidates = changedPaths.filter((path) => candidatePathSet.has(path));
+  const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
+  if (t3Sources.length > 0) {
+    assertGrossProfitReportCandidate(changedPaths);
+    return;
+  }
   const catalogAccessSources = changedCandidates.filter((path) => path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
   if (catalogAccessSources.length === 0) {
     const responsiveCandidates = changedPaths.filter((path) => catalogResponsiveTableCandidatePaths.includes(path));
