@@ -706,8 +706,8 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
   "src-tauri/src/commands/backup.rs": "a77f998f576269fe1e556cf183cfa5e734cc88cda80b5ce7a331dfc66176e879",
-  "src-tauri/tests/backup_restore.rs": "11c9cafe8e560f443af21d01aa1fe6b4a2155654fb6570a54e7cdc0558b64b6b",
-  "src/ui/w9-evidence-audit.test.ts": "60f1bb078d32e926ad2cff4aff2c484d950c35eba5d57e5da54fd8302edf5944",
+  "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
+  "src/ui/w9-evidence-audit.test.ts": "365ab4e20487fe4890370444bfbb89df6a760c5285208d00bb733a4bf3909ad0",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "0e3fe83196cfff58915d2fd61a126d57528d8b641f473294d433989adeaf200c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
@@ -742,10 +742,10 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "0e3fe83196cfff58915d2fd61a126d57528d8b641f473294d433989adeaf200c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/lib.rs": "1f7e3227aef07dcd753dca2086befab520288a5d955fc61e0e45d58c6debb010",
-  "src-tauri/tests/backup_restore.rs": "11c9cafe8e560f443af21d01aa1fe6b4a2155654fb6570a54e7cdc0558b64b6b",
+  "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "60f1bb078d32e926ad2cff4aff2c484d950c35eba5d57e5da54fd8302edf5944",
-  "odd/tasks/windows-desktop-build-fixes.md": "c9c50386962492e46297a4b7e4c23205dec830c3718f13e30896cbf167431c11",
+  "src/ui/w9-evidence-audit.test.ts": "365ab4e20487fe4890370444bfbb89df6a760c5285208d00bb733a4bf3909ad0",
+  "odd/tasks/windows-desktop-build-fixes.md": "7711b5cfd113c4e0b72c6053d2b72c91c33cba47874acc38b032683a9f0b11ac",
 };
 
 const backupIntegrityCandidatePaths = new Set([

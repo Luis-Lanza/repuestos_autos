@@ -14,13 +14,15 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - [x] W2 Make desktop picker commands return owned, bounded IPC `Result` responses; retain path-free contracts.
 - [x] W3 Windows-native desktop compilation/runtime startup passed on the user host; it exposed a recovery-policy regression, not a compilation failure.
 - [x] W4 Open a valid canonical database when only valid retained transition sidecars remain; preserve those artifacts and still fail closed for malformed/unexpected sidecars or a missing/invalid canonical.
-- [ ] W5 Diagnose and correct Windows snapshot cleanup/directory durability so backup creation does not return `storage_unavailable` after a safe publication; implementation is locally verified, but fixed-NTFS Windows runtime confirmation remains pending.
+- [x] W5 Diagnose and correct Windows snapshot cleanup/directory durability so backup creation does not return `storage_unavailable` after a safe publication; the fixed-NTFS test passed on the Windows host.
+- [x] W6 Align backup/restore tests with platform-safe destination and markerless fail-closed policy; close SQLite handles before fixture deletion.
 
 ## W5 evidence
 - Windows snapshot cleanup opened directories with read-only access and then called `sync_all`; the store publication path used `File::open(...).sync_all()` directly. Both bypass the Windows directory-flush contract requiring a write-capable directory handle and `FlushFileBuffers`.
 - Both Windows paths now open the directory with `GENERIC_WRITE`, backup-semantics and open-reparse-point flags, share access for readers/writers/deletion, and call `FlushFileBuffers`; failed or unaccounted cleanup continues to return bounded `storage_unavailable`.
 - Linux local verification passed: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore`, `cargo test --manifest-path src-tauri/Cargo.toml`, `npm test`, and `git diff --check`.
-- Pending Windows confirmation: run `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore fixed_ntfs_backup_syncs_publication_and_snapshot_cleanup_directories -- --exact --nocapture` on fixed NTFS and observe a `Created` response with both warnings false, the published file present, and no snapshot or `.cleanup-needed` entries.
+- Windows evidence: the fixed-NTFS test passed in a 47/51 Windows suite run. W6 addresses the four observed failures without changing production behavior; rerun the full Windows suite with `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore`.
+- Linux W6 verification: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_restore` passed (42 tests), `cargo test --manifest-path src-tauri/Cargo.toml` passed, and `npm test` passed (392 tests) after the exact W9 hashes were updated. `git diff --check` passed.
 
 ## Acceptance
 - `npm run tauri:dev` compiles on Windows.

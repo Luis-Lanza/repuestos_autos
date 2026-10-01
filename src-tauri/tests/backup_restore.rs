@@ -268,7 +268,7 @@ fn rejects_a_selected_root_that_disappears_before_publication_without_recreating
 
     assert_eq!(
         store.publish_snapshot(&snapshot, &destination, "backup-20260827T204000Z.sqlite3"),
-        Err(StorageError::StorageUnavailable)
+        Err(StorageError::UnsupportedDestination)
     );
     assert!(!selected_root.exists());
     fs::remove_dir_all(directory).unwrap();
@@ -704,6 +704,7 @@ fn stages_v17_backup_to_current_schema_without_fabricating_historical_purchase_p
         ).unwrap(),
         None,
     );
+    drop(restored);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1390,6 +1391,7 @@ fn startup_rejects_partial_current_version_canonical_without_replacing_it_with_e
     }
     #[cfg(windows)]
     assert_eq!(category_count(&recovered, "rollback-fallback"), 1);
+    drop(recovered);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1594,7 +1596,7 @@ fn prepared_recovery_prefers_protective_source_when_both_fallbacks_validate() {
 
 #[cfg(windows)]
 #[test]
-fn markerless_recovery_selects_rollback_before_protective_without_creating_empty_database() {
+fn markerless_recovery_with_missing_or_invalid_canonical_fails_closed() {
     for (name, canonical_setup) in [("missing", false), ("invalid", true)] {
         let directory = temporary_directory(&format!("markerless-{name}"));
         fs::create_dir_all(&directory).unwrap();
@@ -1604,12 +1606,18 @@ fn markerless_recovery_selects_rollback_before_protective_without_creating_empty
         }
         database_with_category(&directory.join("restore-rollback.sqlite3"), "rollback");
         database_with_category(&directory.join("pre-restore.sqlite3"), "protective");
+        fs::write(directory.join("restore-state.json.previous-0"), br#"{"state":"prepared"}"#).unwrap();
+        let rollback_before = fs::read(directory.join("restore-rollback.sqlite3")).unwrap();
+        let protective_before = fs::read(directory.join("pre-restore.sqlite3")).unwrap();
+        let canonical_before = canonical_setup.then(|| fs::read(config.path()).unwrap());
 
         let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
 
-        assert_eq!(category_count(&recovered, "rollback"), 1, "{name}");
-        assert_eq!(category_count(&recovered, "protective"), 0, "{name}");
-        assert!(config.path().exists(), "{name}");
+        assert_eq!(recovered.with_read(|_| Ok(())).unwrap_err(), "database_unavailable", "{name}");
+        assert_eq!(fs::read(directory.join("restore-rollback.sqlite3")).unwrap(), rollback_before, "{name}");
+        assert_eq!(fs::read(directory.join("pre-restore.sqlite3")).unwrap(), protective_before, "{name}");
+        assert_eq!(fs::read(config.path()).ok(), canonical_before, "{name}");
+        drop(recovered);
         fs::remove_dir_all(directory).unwrap();
     }
 }
