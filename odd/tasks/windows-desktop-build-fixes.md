@@ -18,6 +18,7 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - [x] W6 Align backup/restore tests with platform-safe destination and markerless fail-closed policy; close SQLite handles before fixture deletion.
 - [x] W7 Add bounded Windows debug-only native backup diagnostics without guessing or changing production behavior; use the next Windows run to identify the failing operation before any corrective change.
 - [x] W8 Restore release cleanup-evidence reconciliation behavior on metadata-inspection failure; retain the bounded evidence-recreation attempt and prove it with a regression test.
+- [x] W9 Add minimal debug-only IPC boundary labels for picker selection and create-backup command entry/returned response; fresh APPDATA is empty, so distinguish backend routing from internal failure before widening branch diagnostics.
 
 ## W5 evidence
 - Windows snapshot cleanup opened directories with read-only access and then called `sync_all`; the store publication path used `File::open(...).sync_all()` directly. Both bypass the Windows directory-flush contract requiring a write-capable directory handle and `FlushFileBuffers`.
@@ -30,6 +31,11 @@ Windows `npm run tauri:dev` on commit `d055e75` failed before launch:
 - Windows development diagnostics are emitted only under `cfg(all(windows, debug_assertions))` as `backup_diagnostic operation=<stable-label> os_code=<number-or-none> kind=<ErrorKind>`; release builds retain the existing IPC errors and produce no diagnostic output.
 - Snapshot creation/metadata, publication, cleanup-evidence create/write/sync/remove, artifact removal, and directory sync boundaries report labels only and never paths, database values, license data, tokens, or user data. SQLite errors that do not expose a Windows OS error report `os_code=none kind=Other`.
 - To identify the remaining failure, run `npm run tauri:dev` on Windows, create a backup through the app, and copy exactly one `backup_diagnostic ...` line from the Tauri terminal. Use that operation and code/kind as evidence before proposing a production fix.
+
+## W9 evidence
+- Added terminal-only picker selection outcome diagnostics (`cancelled`, `selected`, or `error` with an allowlisted code) and create-backup entry/final response diagnostics (`kind` plus allowlisted code), compiled to output only under `cfg(all(windows, debug_assertions))`.
+- Diagnostics contain fixed operation/outcome/kind labels and bounded codes only; paths, tokens, requests, and response payload values are not formatted. IPC responses are unchanged.
+- Rust unit coverage verifies response-kind mapping and unknown-code bounding. Windows runtime capture is still required to distinguish the observed routing/failure; no wider branch instrumentation was added.
 
 ## Acceptance
 - `npm run tauri:dev` compiles on Windows.

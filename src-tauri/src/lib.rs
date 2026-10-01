@@ -440,6 +440,17 @@ mod database_state_tests {
     use super::*;
 
     #[test]
+    fn backup_diagnostic_classification_uses_only_bounded_kinds_and_codes() {
+        assert_eq!(bounded_backup_diagnostic_code("storage_unavailable"), "storage_unavailable");
+        assert_eq!(bounded_backup_diagnostic_code("unsupported_destination"), "unsupported_destination");
+        assert_eq!(bounded_backup_diagnostic_code("user-controlled-value"), "other");
+
+        assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::Restored), ("restored", "none"));
+        assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::error("destination_exists")), ("error", "destination_exists"));
+        assert_eq!(backup_response_diagnostic(&commands::backup::BackupResponse::error("unlisted-code")), ("error", "other"));
+    }
+
+    #[test]
     fn fallback_recovery_after_live_moved_crash_reclaims_stage_and_retains_sources() {
         let directory = std::env::temp_dir().join(format!("r-a-recovery-stage-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(directory.join("backup-restore/staging")).unwrap();
@@ -633,6 +644,54 @@ mod database_state_tests {
 #[cfg(feature = "desktop")]
 type AppState = DatabaseState;
 
+fn bounded_backup_diagnostic_code(code: &str) -> &'static str {
+    match code {
+        "storage_unavailable" => "storage_unavailable",
+        "unsupported_destination" => "unsupported_destination",
+        "destination_exists" => "destination_exists",
+        "destination_token_invalid" => "destination_token_invalid",
+        "destination_token_expired" => "destination_token_expired",
+        "database_unavailable" => "database_unavailable",
+        _ => "other",
+    }
+}
+
+fn backup_response_diagnostic(response: &commands::backup::BackupResponse) -> (&'static str, &'static str) {
+    match response {
+        commands::backup::BackupResponse::Created { .. } => ("created", "none"),
+        commands::backup::BackupResponse::Prepared { .. } => ("prepared", "none"),
+        commands::backup::BackupResponse::Restored => ("restored", "none"),
+        commands::backup::BackupResponse::Error { code, .. } => {
+            ("error", bounded_backup_diagnostic_code(code))
+        }
+    }
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_backup_picker_selection(outcome: &str, code: &str) {
+    eprintln!("backup_diagnostic operation=picker_selection outcome={outcome} code={code}");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_backup_picker_selection(_outcome: &str, _code: &str) {}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_create_backup_entry() {
+    eprintln!("backup_diagnostic operation=create_backup_command phase=entry");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_create_backup_entry() {}
+
+#[cfg(all(windows, debug_assertions))]
+fn report_create_backup_response(response: &commands::backup::BackupResponse) {
+    let (kind, code) = backup_response_diagnostic(response);
+    eprintln!("backup_diagnostic operation=create_backup_response kind={kind} code={code}");
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn report_create_backup_response(_response: &commands::backup::BackupResponse) {}
+
 #[cfg(feature = "desktop")]
 fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
@@ -782,16 +841,30 @@ async fn choose_backup_destination_command<R: Runtime>(
     })
     .await;
     let commands::backup::PathSelection::Selected { path } = selection else {
+        report_backup_picker_selection("cancelled", "none");
         return Ok(commands::backup::BackupDestinationSelection::Cancelled);
     };
     let commands = app_handle.state::<Mutex<commands::backup::BackupCommandState>>();
     let Ok(mut commands) = commands.lock() else {
+        report_backup_picker_selection("error", "storage_unavailable");
         return Ok(commands::backup::BackupDestinationSelection::Error {
             code: "storage_unavailable",
             message: "Backup storage is unavailable.",
         });
     };
-    Ok(commands.select_backup_destination(path))
+    let selection = commands.select_backup_destination(path);
+    match &selection {
+        commands::backup::BackupDestinationSelection::Selected { .. } => {
+            report_backup_picker_selection("selected", "none");
+        }
+        commands::backup::BackupDestinationSelection::Cancelled => {
+            report_backup_picker_selection("cancelled", "none");
+        }
+        commands::backup::BackupDestinationSelection::Error { code, .. } => {
+            report_backup_picker_selection("error", bounded_backup_diagnostic_code(code));
+        }
+    }
+    Ok(selection)
 }
 
 #[cfg(feature = "desktop")]
@@ -929,10 +1002,13 @@ fn create_backup_command(
     commands: tauri::State<Mutex<commands::backup::BackupCommandState>>,
     request: commands::backup::CreateBackupRequest,
 ) -> commands::backup::BackupResponse {
-    let Ok(mut commands) = commands.lock() else {
-        return commands::backup::BackupResponse::error("storage_unavailable");
+    report_create_backup_entry();
+    let response = match commands.lock() {
+        Ok(mut commands) => commands::backup::create_backup(&state, &mut commands, request),
+        Err(_) => commands::backup::BackupResponse::error("storage_unavailable"),
     };
-    commands::backup::create_backup(&state, &mut commands, request)
+    report_create_backup_response(&response);
+    response
 }
 
 #[cfg(feature = "desktop")]
