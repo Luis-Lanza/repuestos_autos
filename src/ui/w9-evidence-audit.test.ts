@@ -742,7 +742,7 @@ const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "4514b021093dc559370a1e17a66865dd4f6b2bb1d26ce7158843d2f2df94930c",
+  "src/ui/w9-evidence-audit.test.ts": "4214390324ff80d16311d0fb7ad7622f7374ce88c00e2d489d4489a82ef0faf7",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -775,6 +775,16 @@ const catalogAccessCandidatePaths = [
 
 const catalogAccessUnifiedDiffSha256 = "65df10d3e6bae980fd1b9b5df3606cd9756d15be528ba10e597e9ab0af78689d";
 
+const catalogResponsiveTableCandidatePaths = [
+  "odd/tasks/catalog-access-and-profit-report.md",
+  "src/ui/styles.css",
+  "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+  "src/ui/visual-system/base-styles.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+const catalogResponsiveTableUnifiedDiffSha256 = "59892e0e3e5eb56cbf47ea62be4eaf9a22e69380e9365d4fd2a354355b321126";
+
 const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/Cargo.toml",
   "src-tauri/src/commands/backup.rs",
@@ -797,7 +807,7 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "4514b021093dc559370a1e17a66865dd4f6b2bb1d26ce7158843d2f2df94930c",
+  "src/ui/w9-evidence-audit.test.ts": "4214390324ff80d16311d0fb7ad7622f7374ce88c00e2d489d4489a82ef0faf7",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -828,6 +838,7 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
           .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
           .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
+          .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
   }
@@ -843,6 +854,7 @@ function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buf
           .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
           .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
+          .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected Windows desktop-fix diff content: ${path}`);
   }
@@ -991,6 +1003,7 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/tests/catalog_search.rs",
     "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
     "src/ui/catalog/catalog-maintenance-screen.ts",
+    "src/ui/visual-system/base-styles.mounted.test.ts",
     "src/ui/catalog/location-management-screen.mounted.test.ts",
     "src/ui/inventory/inventory-screen.mounted.test.ts",
     "src/ui/catalog/product-browser.test.ts",
@@ -1311,6 +1324,17 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
   const candidatePathSet = new Set(catalogAccessCandidatePaths);
   const changedCandidates = changedPaths.filter((path) => candidatePathSet.has(path));
+  const catalogAccessSources = changedCandidates.filter((path) => path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
+  if (catalogAccessSources.length === 0) {
+    const responsiveCandidates = changedPaths.filter((path) => catalogResponsiveTableCandidatePaths.includes(path));
+    assert.deepEqual(responsiveCandidates, [...catalogResponsiveTableCandidatePaths].sort());
+    const exactDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", ...catalogResponsiveTableCandidatePaths], { cwd: root, encoding: "utf8" });
+    const normalizedDiff = exactDiff
+      .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+      .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";');
+    assert.equal(sha256(normalizedDiff), catalogResponsiveTableUnifiedDiffSha256, "unexpected Catalog responsive-table candidate diff");
+    return;
+  }
   assert.deepEqual(changedCandidates, [...catalogAccessCandidatePaths].sort());
 
   const trackedCandidates = catalogAccessCandidatePaths.filter((path) => isTrackedPath(path));

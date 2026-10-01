@@ -24,6 +24,7 @@ Add device-local catalog access control, a period-based gross-profit report, cor
 - [ ] T6 Verify device-local access stays outside backups, old backups restore safely, and all affected flows pass Linux/Windows checks. Route: delegated verifier.
 - [x] T7 Keep Sales usable while Catalog is locked through a cost- and metadata-free sale browse/category projection; expose an explicit accessible Catalog lock action while preserving password/recovery controls. Route: delegated writer.
 - [x] T8 Keep Inventory and product onboarding operational while Catalog is locked using a separate safe Inventory browse projection and onboarding-specific location contracts; preserve Catalog gating and Sales projection behavior. Route: delegated writer. Verified with command-surface and mounted locked-session regressions.
+- [x] T9 Make Catalog table columns responsive without removing horizontal scrolling for genuinely wide content. Route: delegated writer. Independent audit corrections keep primary-location wrapping table-only, keep price/stock labels unbroken within minimum-width columns, and bind this UI-only candidate's exact paths and unified diff in W9. Verified with focused mounted Catalog/base-style and W9 regressions, full frontend suite, typecheck, build, and diff checks.
 
 ## Acceptance criteria
 - Catalog mutations and catalog screens require a local password after setup; reads outside Catalog remain available.

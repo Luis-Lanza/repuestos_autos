@@ -23,6 +23,47 @@ function styleOf(element: Element, property: string) {
   return value;
 }
 
+test("Catalog table columns shrink and wrap while the results region retains optional horizontal scrolling", async () => {
+  const style = await mountBaseStyles();
+  try {
+    render(createElement("div", { "data-ui-catalog-workspace": true },
+      createElement("div", { "data-ui-catalog-table-scroll": true },
+        createElement("ul", { "data-ui-catalog-table": "true" },
+          createElement("li", { "data-ui-catalog-table-row": true },
+            createElement("div", { "data-ui-catalog-table-thumbnail": true }),
+            createElement("div", { "data-ui-catalog-table-identity": true }, "A long product identity"),
+            createElement("span", { "data-testid": "catalog-table-price" }, "Bs 125,50"),
+            createElement("span", { "data-ui-catalog-table-category": true }, "A long category name"),
+            createElement("span", { "data-testid": "catalog-table-stock" }, createElement("span", { "data-ui-badge": "available" }, "Disponible")),
+            createElement("div", null, "Editar"),
+          ),
+        ),
+      ),
+    ));
+    const scrollRegion = document.querySelector("[data-ui-catalog-table-scroll]")!;
+    const table = document.querySelector('[data-ui-catalog-table="true"]')!;
+    const row = table.querySelector("li")!;
+    const identity = document.querySelector("[data-ui-catalog-table-identity]")!;
+    const category = document.querySelector("[data-ui-catalog-table-category]")!;
+    const price = document.querySelector('[data-testid="catalog-table-price"]')!;
+    const stock = document.querySelector('[data-testid="catalog-table-stock"] [data-ui-badge]')!;
+    assert.equal(styleOf(scrollRegion, "overflow-x"), "auto");
+    assert.equal(styleOf(table, "min-inline-size"), "0px");
+    assert.equal(styleOf(table, "flex-grow"), "1");
+    assert.equal(styleOf(row, "min-inline-size"), "0px");
+    assert.match(styleOf(row, "grid-template-columns"), /minmax\(0, 2fr\)/);
+    assert.equal(styleOf(identity, "min-inline-size"), "0px");
+    assert.equal(styleOf(identity, "overflow-wrap"), "anywhere");
+    assert.equal(styleOf(category, "min-inline-size"), "0px");
+    assert.equal(styleOf(category, "overflow-wrap"), "anywhere");
+    assert.equal(styleOf(price, "white-space"), "nowrap");
+    assert.equal(styleOf(stock, "white-space"), "nowrap");
+    assert.doesNotMatch(styleOf(row, "grid-template-columns"), /67rem/);
+  } finally {
+    style.remove();
+  }
+});
+
 test("base styles expose generic controls and the typography hierarchy", async () => {
   const style = await mountBaseStyles();
   const user = userEvent.setup({ document });

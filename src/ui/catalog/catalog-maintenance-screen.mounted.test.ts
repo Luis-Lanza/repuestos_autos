@@ -230,10 +230,16 @@ test("contains Catalog results in its desktop workspace while preserving table a
 test("keeps Gallery results separated from the toolbar and Table columns readable at narrow widths", async () => {
   const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   assert.match(css, /\[data-ui-catalog-gallery="true"\][^{]*\{[^}]*margin-block-start:\s*var\(--space-3\)/);
-  assert.match(css, /data-ui-catalog-table-scroll[^}]*overflow-x:\s*auto/);
-  assert.match(css, /data-ui-catalog-table="true"[^}]*min-inline-size:\s*(?:[0-9.]+rem|[0-9]+px)/);
-  assert.match(css, /data-ui-catalog-table="true"\]\s*>\s*li\s*\{[^}]*grid-template-columns:[^}]*minmax\([^)]*\)/);
-  assert.match(css, /data-ui-catalog-table-identity[^}]*min-inline-size:\s*(?:[0-9.]+rem|[0-9]+px)/);
+  assert.match(css, /data-ui-catalog-table-scroll[^}]*min-inline-size:\s*0[^}]*overflow-x:\s*auto/);
+  assert.match(css, /data-ui-catalog-table="true"[^}]*min-inline-size:\s*0[^}]*flex:\s*1 1 auto/);
+  assert.match(css, /data-ui-catalog-table="true"\]\s*>\s*li\s*\{[^}]*min-inline-size:\s*0[^}]*grid-template-columns:[^}]*minmax\(0,/);
+  assert.match(css, /grid-template-columns:[^}]*minmax\(5rem,\s*\.8fr\)[^}]*minmax\(0,\s*1fr\)\s*minmax\(6rem,\s*\.9fr\)/);
+  assert.match(css, /data-ui-catalog-table-row\]\s*>\s*:nth-child\(3\)\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(css, /data-ui-catalog-table-row\]\s*>\s*:nth-child\(5\)\s*\[data-ui-badge\][^{]*\{[^}]*white-space:\s*nowrap/);
+  assert.match(css, /\[data-ui-catalog-workspace\]\s+\[data-ui-catalog-table="true"\]\s+\[data-ui-catalog-primary-location\]\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(css, /\[data-ui-inventory-primary-location\][^}]*\[data-ui-catalog-primary-location\]/);
+  assert.doesNotMatch(css, /\[data-ui-catalog-workspace\]\s+\[data-ui-catalog-primary-location\]/);
+  assert.doesNotMatch(css, /data-ui-catalog-table="true"[^}]*min-inline-size:\s*67rem/);
 });
 
 test("applies a submitted multi-character catalog query", async () => {
