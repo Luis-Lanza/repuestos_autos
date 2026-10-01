@@ -19,6 +19,18 @@ fn finds_active_seeded_products_by_every_searchable_catalog_field() {
 }
 
 #[test]
+fn sale_search_contract_contains_only_safe_sale_facts() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("UPDATE products SET purchase_price_centavos = 7777 WHERE id = 1", []).unwrap();
+    let result = repuestos_autos::application::catalog::search_active_sale_products(&connection, "filtro").unwrap();
+    let value = serde_json::to_value(&result[0]).unwrap();
+    assert_eq!(value.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), [
+        "available_quantity", "category_name", "minimum_sale_price_centavos", "name", "product_id", "revision", "sale_price_centavos", "sku",
+    ]);
+    assert!(!value.to_string().contains("7777"));
+}
+
+#[test]
 fn exposes_sale_minimum_and_purchase_prices_separately() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     connection

@@ -4,6 +4,7 @@ use crate::application::catalog;
 use crate::application::catalog::{BrowseProductsInput, ProductActivityFilter, ProductStockFilter};
 use crate::domain::catalog::{CatalogActivity, CatalogIntent, CatalogTarget, CategorySchemaField, FieldType};
 use crate::infrastructure::sqlite::SqliteCatalogRepository;
+use crate::application::catalog::access::{CatalogAccessError, CatalogAccessSession, CatalogAccessStatus};
 use crate::application::catalog::locations as product_locations;
 
 #[derive(Debug, Deserialize)]
@@ -366,6 +367,77 @@ pub struct CatalogMaintenanceError {
 
 pub use catalog::{ProductBrowseCategory, ProductBrowsePage, ProductBrowseResult, ProductSearchResult};
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogSecretRequest { pub password: String }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogPasswordChangeRequest { pub current_password: String, pub new_password: String }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogRecoveryRequest { pub recovery_code: String, pub new_password: String }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogConfirmationRequest { pub confirmed: bool }
+
+#[derive(PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CatalogAccessResponse {
+    Status { status: &'static str },
+    RecoveryCode { recovery_code: String },
+    Success,
+    Error { code: &'static str, message: &'static str },
+}
+
+pub fn catalog_access_status(session: &CatalogAccessSession) -> CatalogAccessResponse {
+    let status = match session.status() {
+        CatalogAccessStatus::SetupRequired => "setup_required",
+        CatalogAccessStatus::Locked => "locked",
+        CatalogAccessStatus::Unlocked => "unlocked",
+        CatalogAccessStatus::Unavailable => "unavailable",
+    };
+    CatalogAccessResponse::Status { status }
+}
+
+pub fn begin_catalog_setup(session: &CatalogAccessSession, request: CatalogSecretRequest) -> CatalogAccessResponse {
+    session.begin_setup(&request.password).map_or_else(access_error, |recovery_code| CatalogAccessResponse::RecoveryCode { recovery_code })
+}
+
+pub fn finish_catalog_setup(session: &CatalogAccessSession, request: CatalogConfirmationRequest) -> CatalogAccessResponse {
+    session.finish_setup(request.confirmed).map_or_else(access_error, |_| CatalogAccessResponse::Success)
+}
+
+pub fn unlock_catalog(session: &CatalogAccessSession, request: CatalogSecretRequest) -> CatalogAccessResponse {
+    session.unlock(&request.password).map_or_else(access_error, |_| CatalogAccessResponse::Success)
+}
+
+pub fn change_catalog_password(session: &CatalogAccessSession, request: CatalogPasswordChangeRequest) -> CatalogAccessResponse {
+    session.change_password(&request.current_password, &request.new_password).map_or_else(access_error, |_| CatalogAccessResponse::Success)
+}
+
+pub fn begin_catalog_recovery(session: &CatalogAccessSession, request: CatalogRecoveryRequest) -> CatalogAccessResponse {
+    session.begin_recovery(&request.recovery_code, &request.new_password).map_or_else(access_error, |recovery_code| CatalogAccessResponse::RecoveryCode { recovery_code })
+}
+
+pub fn finish_catalog_recovery(session: &CatalogAccessSession, request: CatalogConfirmationRequest) -> CatalogAccessResponse {
+    session.finish_recovery(request.confirmed).map_or_else(access_error, |_| CatalogAccessResponse::Success)
+}
+
+fn access_error(error: CatalogAccessError) -> CatalogAccessResponse {
+    let (code, message) = match error {
+        CatalogAccessError::Invalid => ("validation_error", "Ingresá una contraseña válida y confirmá el código de recuperación guardado."),
+        CatalogAccessError::Unauthorized => ("invalid_credentials", "La contraseña o el código de recuperación no es válido."),
+        CatalogAccessError::AlreadyConfigured => ("already_configured", "El acceso al catálogo ya está configurado."),
+        CatalogAccessError::NotConfigured => ("setup_required", "Configurá el acceso al catálogo para continuar."),
+        CatalogAccessError::Pending => ("setup_pending", "Completá la confirmación pendiente para continuar."),
+        CatalogAccessError::Storage | CatalogAccessError::Corrupt => ("access_unavailable", "No se pudo acceder a la configuración local del catálogo."),
+    };
+    CatalogAccessResponse::Error { code, message }
+}
+
 pub fn browse_products(
     connection: &rusqlite::Connection,
     request: BrowseProductsRequest,
@@ -413,6 +485,14 @@ pub fn search_products(
     request: SearchProductsRequest,
 ) -> Result<Vec<ProductSearchResult>, String> {
     catalog::search_active_products(connection, &request.query)
+        .map_err(|_| "persistence_failure".into())
+}
+
+pub fn search_sale_products(
+    connection: &rusqlite::Connection,
+    request: SearchProductsRequest,
+) -> Result<Vec<catalog::SaleProductSearchResult>, String> {
+    catalog::search_active_sale_products(connection, &request.query)
         .map_err(|_| "persistence_failure".into())
 }
 

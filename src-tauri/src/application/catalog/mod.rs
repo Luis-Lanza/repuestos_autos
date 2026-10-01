@@ -11,6 +11,7 @@ use crate::domain::catalog::{
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
 pub(crate) mod bootstrap_demo;
+pub mod access;
 pub mod locations;
 pub mod repository;
 
@@ -623,6 +624,19 @@ pub struct ProductSearchResult {
     pub category_name: String,
     pub available_quantity: i64,
     pub purchase_price_centavos: Option<i64>,
+    pub sale_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
+    pub revision: i64,
+}
+
+/// Minimal product facts needed to build a sale; excludes catalog-management data and cost.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct SaleProductSearchResult {
+    pub product_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_name: String,
+    pub available_quantity: i64,
     pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
     pub revision: i64,
@@ -1379,6 +1393,32 @@ fn map_product_validation(error: CatalogValidationError) -> CreateProductError {
         CatalogValidationError::InvalidAttributeValue => CreateProductError::InvalidAttributeValue,
         _ => CreateProductError::Persistence,
     }
+}
+
+pub fn search_active_sale_products(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<SaleProductSearchResult>> {
+    let Some(query) = normalized_search_query(query) else {
+        return Ok(Vec::new());
+    };
+    let mut statement = connection.prepare(
+        "SELECT p.id, p.sku, p.name, c.name, s.quantity,
+         p.list_price_centavos, p.minimum_unit_price_centavos, p.revision
+         FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id
+         JOIN categories c ON c.id = p.category_id
+         JOIN stock_balances s ON s.product_id = p.id
+         WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
+         ORDER BY p.name LIMIT 20",
+    )?;
+    let results = statement.query_map([query], |row| Ok(SaleProductSearchResult {
+        product_id: row.get(0)?, sku: row.get(1)?, name: row.get(2)?,
+        category_name: row.get(3)?, available_quantity: row.get(4)?,
+        sale_price_centavos: row.get(5)?, minimum_sale_price_centavos: row.get(6)?,
+        revision: row.get(7)?,
+    }))?.collect();
+    results
 }
 
 pub fn search_active_products(

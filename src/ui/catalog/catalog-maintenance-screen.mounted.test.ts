@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
+
+let mockedCatalogAccessStatus: "setup_required" | "locked" | "unlocked" = "unlocked";
+const mockIPC: typeof nativeMockIPC = (handler) => nativeMockIPC((command, payload) => command === "catalog_access_status_command" ? { kind: "status", status: mockedCatalogAccessStatus } : handler(command, payload));
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -189,7 +192,7 @@ test("contains Catalog results in its desktop workspace while preserving table a
   render(createElement(CatalogMaintenanceScreen));
   const panel = await screen.findByRole("region", { name: "Productos" });
   const form = within(panel).getByRole("searchbox", { name: "Buscar en el catálogo" }).closest("form")!;
-  const tableViewport = within(panel).getByRole("region", { name: "Resultados de productos; desplazamiento horizontal disponible" });
+  const tableViewport = await within(panel).findByRole("region", { name: "Resultados de productos; desplazamiento horizontal disponible" });
   const table = within(tableViewport).getByRole("list", { name: "Resultados del catálogo" });
   assert.equal(form.querySelector('[data-ui-catalog-toolbar-item="views"]')?.children.length, 2);
   assert.equal(table.getAttribute("data-ui-catalog-table"), "true");
@@ -1024,4 +1027,85 @@ test("focuses validation errors in the routine form and retains stale feedback",
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-layout[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/);
   assert.match(css, /@media \(max-width: 960px\)[\s\S]*data-ui-catalog-workspace\] \[data-ui-product-browser\] > form \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(css, /@media \(max-width: 1199px\) and \(min-width: 961px\)/);
+});
+
+test("serializes password changes, preserves secrets on failure, and clears them after one current success", async () => {
+  let resolveChange!: (value: unknown) => void;
+  let calls = 0;
+  mockIPC((command) => {
+    if (command === "catalog_access_change_password_command") { calls += 1; return new Promise((resolve) => { resolveChange = resolve; }); }
+    return baseIPC(command);
+  });
+  render(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.click(screen.getByText("Cambiar contraseña del catálogo"));
+  const current = screen.getByLabelText("Contraseña actual") as HTMLInputElement;
+  const next = screen.getByLabelText("Nueva contraseña") as HTMLInputElement;
+  const confirm = screen.getByLabelText("Confirmar nueva contraseña") as HTMLInputElement;
+  await userEvent.type(current, "current-secret");
+  await userEvent.type(next, "replacement-secret");
+  await userEvent.type(confirm, "replacement-secret");
+  const submit = screen.getByRole("button", { name: "Guardar contraseña" });
+  await userEvent.click(submit);
+  await userEvent.click(submit);
+  assert.equal(calls, 1);
+  assert.equal(current.disabled, true);
+  await act(async () => { resolveChange({ kind: "error", code: "invalid_credentials", message: "private detail" }); });
+  assert.equal(current.value, "current-secret");
+  assert.equal(next.value, "replacement-secret");
+  assert.equal(confirm.value, "replacement-secret");
+  await userEvent.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+  assert.equal(calls, 2);
+  await act(async () => { resolveChange({ kind: "success" }); });
+  await waitFor(() => assert.equal(current.value, ""));
+  assert.equal(next.value, "");
+  assert.equal(confirm.value, "");
+  assert.equal(screen.getByText("Contraseña actualizada.").getAttribute("role"), "status");
+});
+
+test("does not apply a password-change response after its editor unmounts", async () => {
+  let resolveChange!: (value: unknown) => void;
+  mockIPC((command) => command === "catalog_access_change_password_command" ? new Promise((resolve) => { resolveChange = resolve; }) : baseIPC(command));
+  const view = render(createElement(CatalogMaintenanceScreen));
+  await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.click(screen.getByText("Cambiar contraseña del catálogo"));
+  await userEvent.type(screen.getByLabelText("Contraseña actual"), "current-secret");
+  await userEvent.type(screen.getByLabelText("Nueva contraseña"), "replacement-secret");
+  await userEvent.type(screen.getByLabelText("Confirmar nueva contraseña"), "replacement-secret");
+  await userEvent.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+  view.unmount();
+  await act(async () => { resolveChange({ kind: "success" }); });
+  assert.equal(screen.queryByText("Contraseña actualizada."), null);
+});
+
+test("requires saving the one-time recovery code before completing first-device Catalog setup", async () => {
+  mockedCatalogAccessStatus = "setup_required";
+  const calls: string[] = [];
+  mockIPC((command) => {
+    calls.push(command);
+    if (command === "catalog_access_begin_setup_command") return { kind: "recovery_code", recovery_code: "A".repeat(48) };
+    if (command === "catalog_access_finish_setup_command") return { kind: "success" };
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [activeCategory] };
+    if (command === "browse_products_command") return browse();
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  try {
+    render(createElement(CatalogMaintenanceScreen));
+    const password = await screen.findByLabelText("Nueva contraseña");
+    assert.ok(screen.getByRole("heading", { name: "Acceso al catálogo" }));
+    await userEvent.type(password, "device-password");
+    await userEvent.type(screen.getByLabelText("Confirmar contraseña"), "device-password");
+    await userEvent.click(screen.getByRole("button", { name: "Configurar catálogo" }));
+    const code = await screen.findByText("A".repeat(48));
+    assert.ok(code);
+    assert.equal(calls.includes("list_catalog_categories_command"), false);
+    const continueButton = screen.getByRole("button", { name: "Continuar al catálogo" });
+    assert.equal((continueButton as HTMLButtonElement).disabled, true);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Confirmo que guardé el código de recuperación" }));
+    await userEvent.click(continueButton);
+    await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+    assert.equal(calls.filter((command) => command === "catalog_access_finish_setup_command").length, 1);
+  } finally {
+    mockedCatalogAccessStatus = "unlocked";
+  }
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogMaintenanceCommands, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogAccessCommands, createCatalogMaintenanceCommands, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands } from "./catalog.ts";
 
 const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
 const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
@@ -27,21 +27,23 @@ test("rejects malformed paged browse responses without exposing native details",
   }
 });
 
-test("projects search products and strips native fields", async () => {
+test("projects sale-search products without purchase cost or catalog-management fields", async () => {
   const calls: unknown[] = [];
   const search = createSearchProductsCommand(async (command, payload) => { calls.push({ command, payload }); return [{ ...searchProduct, internal: "hidden" }]; });
-  assert.deepEqual(await search("filter"), [searchProduct]);
+  const [result] = await search("filter");
+  assert.equal(result.purchase_price_centavos, null);
+  assert.equal("internal" in result, false);
   assert.deepEqual(calls, [{ command: "search_products_command", payload: { request: { query: "filter" } } }]);
 });
 
-test("decodes legacy list-price aliases as sale prices and projects purchase cost", async () => {
+test("decodes legacy list-price aliases as sale prices without projecting purchase cost", async () => {
   const search = createSearchProductsCommand(async () => [{
     product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4,
     catalog_unit_price_centavos: 5000, list_price_centavos: 5000, purchase_price_centavos: 2_000, minimum_sale_price_centavos: 2500, revision: 2,
   }]);
   assert.deepEqual(await search("filter"), [{
     product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4,
-    purchase_price_centavos: 2_000, sale_price_centavos: 5_000, list_price_centavos: 5_000, catalog_unit_price_centavos: 5_000, minimum_sale_price_centavos: 2500, revision: 2,
+    purchase_price_centavos: null, sale_price_centavos: 5_000, list_price_centavos: 5_000, catalog_unit_price_centavos: 5_000, minimum_sale_price_centavos: 2500, revision: 2,
   }]);
 });
 
@@ -209,6 +211,34 @@ test("rejects malformed location contracts and hides native failure details", as
   }
   const rejected = createProductLocationCommands(async () => { throw new Error("SQL path /private"); });
   assert.deepEqual(await rejected.create(["A"]), { kind: "error", code: "persistence_failure", message: "The location change could not be completed." });
+});
+
+test("decodes path-free catalog access status and one-time recovery-code responses", async () => {
+  const calls: unknown[] = [];
+  const responses: unknown[] = [
+    { kind: "status", status: "setup_required" },
+    { kind: "recovery_code", recovery_code: "A".repeat(48) },
+    { kind: "success", source_path: "/private" },
+    { kind: "error", code: "invalid_credentials", message: "private backend text" },
+  ];
+  const access = createCatalogAccessCommands(async (command, payload) => { calls.push({ command, payload }); return responses.shift(); });
+  assert.deepEqual(await access.status(), { kind: "status", status: "setup_required" });
+  assert.deepEqual(await access.beginSetup("secret"), { kind: "recovery_code", recovery_code: "A".repeat(48) });
+  assert.deepEqual(await access.finishSetup(), { kind: "error", code: "access_unavailable", message: "No se pudo acceder a la configuración local del catálogo." });
+  assert.deepEqual(await access.unlock("secret"), { kind: "error", code: "invalid_credentials", message: "No se pudo completar la solicitud de acceso al catálogo." });
+  assert.deepEqual(calls, [
+    { command: "catalog_access_status_command", payload: undefined },
+    { command: "catalog_access_begin_setup_command", payload: { request: { password: "secret" } } },
+    { command: "catalog_access_finish_setup_command", payload: { request: { confirmed: true } } },
+    { command: "catalog_access_unlock_command", payload: { request: { password: "secret" } } },
+  ]);
+});
+
+test("rejects malformed access codes and path-bearing access responses", async () => {
+  for (const response of [null, { kind: "status", status: "unknown" }, { kind: "status", status: "locked", path: "/private" }, { kind: "recovery_code", recovery_code: "short" }, { kind: "recovery_code", recovery_code: "A".repeat(48), path: "/private" }]) {
+    const access = createCatalogAccessCommands(async () => response);
+    assert.deepEqual(await access.status(), { kind: "error", code: "access_unavailable", message: "No se pudo acceder a la configuración local del catálogo." });
+  }
 });
 
 test("rejects unsafe, nonpositive, and inconsistent catalog facts", async () => {

@@ -4,7 +4,7 @@ export const CATALOG_TARGET = { CATEGORY: "category", PRODUCT: "product" } as co
 export const CATALOG_INTENT = { ARCHIVE: "archive", REACTIVATE: "reactivate" } as const;
 export const ATTRIBUTE_FIELD_TYPE = { TEXT: "text", NUMBER: "number", OPTION: "option" } as const;
 const RESPONSE_KIND = { SUCCESS: "success", ERROR: "error" } as const;
-const ERROR_CODE = { VALIDATION: "validation_error", LIFECYCLE: "lifecycle_blocked", STALE: "stale_catalog_record", STALE_SCHEMA: "stale_category_schema", PERSISTENCE: "persistence_failure", UNAVAILABLE: "catalog_unavailable", IMAGE_UNAVAILABLE: "image_unavailable", INVALID_PURCHASE: "invalid_purchase_price", INVALID_SALE: "invalid_sale_price", INVALID_MINIMUM: "invalid_minimum_sale_price", MINIMUM_ABOVE_SALE: "minimum_sale_price_exceeds_sale_price" } as const;
+const ERROR_CODE = { CATALOG_ACCESS: "catalog_access_required", VALIDATION: "validation_error", LIFECYCLE: "lifecycle_blocked", STALE: "stale_catalog_record", STALE_SCHEMA: "stale_category_schema", PERSISTENCE: "persistence_failure", UNAVAILABLE: "catalog_unavailable", IMAGE_UNAVAILABLE: "image_unavailable", INVALID_PURCHASE: "invalid_purchase_price", INVALID_SALE: "invalid_sale_price", INVALID_MINIMUM: "invalid_minimum_sale_price", MINIMUM_ABOVE_SALE: "minimum_sale_price_exceeds_sale_price" } as const;
 export interface ProductSearchResult { product_id: number; sku: string; name: string; category_name: string; available_quantity: number; purchase_price_centavos: number | null; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; revision: number; }
 export interface ProductBrowseAttribute { definition_id: number; label: string; value: string; }
 export interface ProductBrowseResult extends ProductSearchResult { category_id: number; primary_location_code: string | null; attribute_values: ProductBrowseAttribute[]; }
@@ -42,7 +42,7 @@ const responseRecord = (value: unknown): value is RecordValue => record(value) &
 const safeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value);
 const positiveSafeInteger = (value: unknown): value is number => safeInteger(value) && value > 0;
 const nonNegativeSafeInteger = (value: unknown): value is number => safeInteger(value) && value >= 0;
-const searchProduct = (value: unknown): ProductSearchResult | null => {
+const searchProduct = (value: unknown, includePurchaseCost = false): ProductSearchResult | null => {
   if (!responseRecord(value)) return null;
   const hasSale = Object.hasOwn(value, "sale_price_centavos");
   const hasLegacyList = Object.hasOwn(value, "list_price_centavos");
@@ -51,19 +51,19 @@ const searchProduct = (value: unknown): ProductSearchResult | null => {
   const purchase = value.purchase_price_centavos;
   const validPrices = (!hasSale || positiveSafeInteger(value.sale_price_centavos)) && (!hasLegacyList || positiveSafeInteger(value.list_price_centavos)) && (!Object.hasOwn(value, "catalog_unit_price_centavos") || positiveSafeInteger(value.catalog_unit_price_centavos)) && (purchase === undefined || purchase === null || positiveSafeInteger(purchase));
   return positiveSafeInteger(value.product_id) && typeof value.sku === "string" && typeof value.name === "string" && typeof value.category_name === "string" && nonNegativeSafeInteger(value.available_quantity) && positiveSafeInteger(sale) && positiveSafeInteger(minimum) && nonNegativeSafeInteger(value.revision) && validPrices && minimum <= sale
-    ? { product_id: value.product_id, sku: value.sku, name: value.name, category_name: value.category_name, available_quantity: value.available_quantity, purchase_price_centavos: purchase === undefined ? null : purchase as number | null, sale_price_centavos: sale, list_price_centavos: sale, catalog_unit_price_centavos: sale, minimum_sale_price_centavos: minimum, revision: value.revision }
+    ? { product_id: value.product_id, sku: value.sku, name: value.name, category_name: value.category_name, available_quantity: value.available_quantity, purchase_price_centavos: includePurchaseCost && purchase !== undefined ? purchase as number | null : null, sale_price_centavos: sale, list_price_centavos: sale, catalog_unit_price_centavos: sale, minimum_sale_price_centavos: minimum, revision: value.revision }
     : null;
 };
 const searchResults = (value: unknown): ProductSearchResult[] | null => {
   if (!Array.isArray(value)) return null;
-  const decoded = value.map(searchProduct);
+  const decoded = value.map((item) => searchProduct(item));
   return decoded.every((item): item is ProductSearchResult => item !== null) ? decoded : null;
 };
 const browseAttribute = (value: unknown): ProductBrowseAttribute | null => responseRecord(value) && hasOnlyKeys(value, ["definition_id", "label", "value"]) && positiveSafeInteger(value.definition_id) && typeof value.label === "string" && typeof value.value === "string"
   ? { definition_id: value.definition_id, label: value.label, value: value.value }
   : null;
 const browseProduct = (value: unknown): ProductBrowseResult | null => {
-  const product = searchProduct(value);
+  const product = searchProduct(value, true);
   if (!product || !responseRecord(value) || !positiveSafeInteger(value.category_id) || (value.primary_location_code !== undefined && value.primary_location_code !== null && typeof value.primary_location_code !== "string") || !Array.isArray(value.attribute_values)) return null;
   const attributeValues = value.attribute_values.map(browseAttribute);
   return attributeValues.every((item): item is ProductBrowseAttribute => item !== null)
@@ -165,14 +165,14 @@ export const catalogProductImageCommands = createCatalogProductImageCommands(inv
 export interface ProductLocationSegment { id: number; label: string; position: number; }
 export interface ProductLocationSchema { revision: number; segments: ProductLocationSegment[]; }
 export interface ProductLocationRecord { location_id: number; code: string; values: string[]; active: boolean; revision: number; }
-export type ProductLocationErrorCode = "validation_error" | "location_schema_in_use" | "duplicate_location_code" | "location_unavailable" | "location_inactive" | "location_in_use" | "stale_location" | "persistence_failure";
+export type ProductLocationErrorCode = "catalog_access_required" | "validation_error" | "location_schema_in_use" | "duplicate_location_code" | "location_unavailable" | "location_inactive" | "location_in_use" | "stale_location" | "persistence_failure";
 export type ProductLocationError = { kind: "error"; code: ProductLocationErrorCode; message: string };
 export type ProductLocationResponse = { kind: "schema_success"; schema: ProductLocationSchema } | { kind: "locations_success"; locations: ProductLocationRecord[] } | { kind: "location_success"; location: ProductLocationRecord } | { kind: "assignment_success"; product_id: number; location_id: number | null; revision: number } | { kind: "deleted" } | ProductLocationError;
 export interface SaveProductLocationSchemaInput { expected_revision: number; segments: string[]; }
 export interface ProductLocationLifecycleInput { location_id: number; expected_revision: number; }
 export interface AssignProductLocationInput { product_id: number; expected_revision: number; location_id: number | null; }
 
-const LOCATION_ERROR_CODES: readonly ProductLocationErrorCode[] = ["validation_error", "location_schema_in_use", "duplicate_location_code", "location_unavailable", "location_inactive", "location_in_use", "stale_location", "persistence_failure"];
+const LOCATION_ERROR_CODES: readonly ProductLocationErrorCode[] = ["catalog_access_required", "validation_error", "location_schema_in_use", "duplicate_location_code", "location_unavailable", "location_inactive", "location_in_use", "stale_location", "persistence_failure"];
 const productLocationSegment = (value: unknown): ProductLocationSegment | null => responseRecord(value) && positiveSafeInteger(value.id) && typeof value.label === "string" && value.label.trim().length > 0 && nonNegativeSafeInteger(value.position) ? { id: value.id, label: value.label, position: value.position } : null;
 const productLocationSchema = (value: unknown): ProductLocationSchema | null => {
   if (!responseRecord(value) || !nonNegativeSafeInteger(value.revision) || !Array.isArray(value.segments)) return null;
@@ -207,3 +207,29 @@ export function createProductLocationCommands(command: Invoke) {
   };
 }
 export const productLocationCommands = createProductLocationCommands(invoke as Invoke);
+
+export type CatalogAccessStatus = "setup_required" | "locked" | "unlocked" | "unavailable";
+export type CatalogAccessResponse = { kind: "status"; status: CatalogAccessStatus } | { kind: "recovery_code"; recovery_code: string } | { kind: "success" } | { kind: "error"; code: string; message: string };
+const catalogAccessFailure = (): CatalogAccessResponse => ({ kind: "error", code: "access_unavailable", message: "No se pudo acceder a la configuración local del catálogo." });
+const CATALOG_ACCESS_ERROR_CODES = ["license_required", "validation_error", "invalid_credentials", "already_configured", "setup_required", "setup_pending", "access_unavailable"] as const;
+const decodeCatalogAccess = (value: unknown): CatalogAccessResponse => {
+  if (!responseRecord(value) || typeof value.kind !== "string") return catalogAccessFailure();
+  if (value.kind === "status" && hasOnlyKeys(value, ["kind", "status"]) && ["setup_required", "locked", "unlocked", "unavailable"].includes(String(value.status))) return { kind: "status", status: value.status as CatalogAccessStatus };
+  if (value.kind === "recovery_code" && hasOnlyKeys(value, ["kind", "recovery_code"]) && typeof value.recovery_code === "string" && /^[A-F0-9]{48}$/.test(value.recovery_code)) return { kind: "recovery_code", recovery_code: value.recovery_code };
+  if (value.kind === "success" && hasOnlyKeys(value, ["kind"])) return { kind: "success" };
+  if (value.kind === "error" && hasOnlyKeys(value, ["kind", "code", "message"]) && typeof value.code === "string" && CATALOG_ACCESS_ERROR_CODES.includes(value.code as (typeof CATALOG_ACCESS_ERROR_CODES)[number]) && typeof value.message === "string") return { kind: "error", code: value.code, message: "No se pudo completar la solicitud de acceso al catálogo." };
+  return catalogAccessFailure();
+};
+export function createCatalogAccessCommands(command: Invoke) {
+  const call = (name: string, payload?: Record<string, unknown>) => command(name, payload).then(decodeCatalogAccess).catch(catalogAccessFailure);
+  return {
+    status: () => call("catalog_access_status_command"),
+    beginSetup: (password: string) => call("catalog_access_begin_setup_command", { request: { password } }),
+    finishSetup: () => call("catalog_access_finish_setup_command", { request: { confirmed: true } }),
+    unlock: (password: string) => call("catalog_access_unlock_command", { request: { password } }),
+    changePassword: (current_password: string, new_password: string) => call("catalog_access_change_password_command", { request: { current_password, new_password } }),
+    beginRecovery: (recovery_code: string, new_password: string) => call("catalog_access_begin_recovery_command", { request: { recovery_code, new_password } }),
+    finishRecovery: () => call("catalog_access_finish_recovery_command", { request: { confirmed: true } }),
+  };
+}
+export const catalogAccessCommands = createCatalogAccessCommands(invoke as Invoke);
