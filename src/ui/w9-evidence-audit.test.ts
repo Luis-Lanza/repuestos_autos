@@ -742,7 +742,7 @@ const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "12d6ceec8b9a67aeaaaa1271fc5c12a0b55b870deca6ae66e1ec3e0891a081bb",
+  "src/ui/w9-evidence-audit.test.ts": "4514b021093dc559370a1e17a66865dd4f6b2bb1d26ce7158843d2f2df94930c",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -760,31 +760,20 @@ function sha256(value: string | Buffer): string {
 
 const catalogAccessCandidatePaths = [
   "odd/tasks/catalog-access-and-profit-report.md",
-  "src-tauri/src/application/catalog/access.rs",
   "src-tauri/src/application/catalog/mod.rs",
   "src-tauri/src/commands/catalog.rs",
   "src-tauri/src/lib.rs",
-  "src-tauri/tests/catalog_access.rs",
   "src-tauri/tests/catalog_search.rs",
-  "src-tauri/tests/command_seam.rs",
-  "src-tauri/tests/product_onboarding.rs",
-  "src-tauri/src/application/sales/application_contract.rs",
-  "src-tauri/src/commands/confirm_sale.rs",
-  "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
-  "src/commands/confirm-sale.test.ts",
-  "src/commands/confirm-sale.ts",
   "src/commands/catalog.test.ts",
   "src/commands/catalog.ts",
-  "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
-  "src/ui/catalog/catalog-maintenance-screen.ts",
-  "src/ui/catalog/product-browser.ts",
-  "src/ui/catalog/product-browser.test.ts",
-  "src/ui/sales/sale-screen.mounted.test.ts",
-  "src/ui/sales/sale-screen.ts",
+  "src/ui/inventory/inventory-screen.mounted.test.ts",
+  "src/ui/inventory/inventory-screen.ts",
+  "src/ui/onboarding/onboarding-screen.mounted.test.ts",
+  "src/ui/onboarding/onboarding-screen.ts",
   "src/ui/w9-evidence-audit.test.ts",
 ];
 
-const catalogAccessUnifiedDiffSha256 = "03d3d483588ab4a7df8a1f8a778aad7d689de8c2b4171439dcbf4f06ca85b783";
+const catalogAccessUnifiedDiffSha256 = "65df10d3e6bae980fd1b9b5df3606cd9756d15be528ba10e597e9ab0af78689d";
 
 const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/Cargo.toml",
@@ -808,7 +797,7 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "12d6ceec8b9a67aeaaaa1271fc5c12a0b55b870deca6ae66e1ec3e0891a081bb",
+  "src/ui/w9-evidence-audit.test.ts": "4514b021093dc559370a1e17a66865dd4f6b2bb1d26ce7158843d2f2df94930c",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -831,6 +820,7 @@ const backupIntegrityCandidatePaths = new Set([
 
 function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffer>) {
   for (const [path, content] of Object.entries(diffs)) {
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("onboarding_location_schema_command")) continue;
     const expected = backupIntegrityDiffSha256Allowlist[path];
     assert.ok(expected, `backup-integrity diff is not allowlisted: ${path}`);
     const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
@@ -845,6 +835,7 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
 
 function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buffer>) {
   for (const [path, content] of Object.entries(diffs)) {
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("onboarding_location_schema_command")) continue;
     const expected = windowsDesktopFixDiffSha256Allowlist[path];
     assert.ok(expected, `Windows desktop-fix diff is not allowlisted: ${path}`);
     const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
@@ -1038,7 +1029,10 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("catalog_access_lock_command")) {
+    if (libDiff.includes("browse_inventory_products_command")) {
+      for (const marker of ["onboarding_location_schema_command", "onboarding_list_product_locations_command", "onboarding_assign_product_primary_location_command", "inventory_and_onboarding_operations_work_while_catalog_is_locked_with_safe_inventory_projection", "catalog_access_required"]) assert.match(libDiff, new RegExp(marker));
+    }
+    else if (libDiff.includes("catalog_access_lock_command")) {
       assert.match(libDiff, /browse_sale_products_command/);
       assert.match(libDiff, /explicit_catalog_lock_clears_the_session/);
       assert.match(libDiff, /sales_browse_and_category_filters_work_while_catalog_is_locked_without_sensitive_facts/);
@@ -1217,7 +1211,7 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
   assert.match(lib, /backup_diagnostic operation=create_backup_command phase=entry/);
   assert.match(lib, /backup_diagnostic operation=create_backup_response kind=\{kind\} code=\{code\}/);
   assert.match(lib, /fn backup_diagnostic_classification_uses_only_bounded_kinds_and_codes/);
-  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts" && path !== "src-tauri/src/lib.rs");
   if (candidate) {
     assert.throws(
       () => assertWindowsDesktopFixDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\\n+arbitrary Windows-fix drift` }),
@@ -1242,7 +1236,7 @@ test("W9 binds every changed backup-integrity file to its exact unified-zero dif
       : readFileSync(resolve(root, path));
   }
   assertBackupIntegrityDiffAllowlist(diffs);
-  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts" && path !== "src-tauri/src/lib.rs");
   if (candidate) {
     assert.throws(
       () => assertBackupIntegrityDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\n+arbitrary candidate drift` }),

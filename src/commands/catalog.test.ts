@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogAccessCommands, createCatalogMaintenanceCommands, createSalesBrowseProductsCommand, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createInventoryBrowseProductsCommand, createCatalogAccessCommands, createCatalogMaintenanceCommands, createSalesBrowseProductsCommand, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands, createOnboardingProductLocationCommands } from "./catalog.ts";
 
 const searchProduct = { product_id: 1, revision: 2, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500 };
 const browsePage = { kind: "success", products: [{ ...searchProduct, revision: 2, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
@@ -11,6 +11,20 @@ test("decodes the paged browse contract and sends optional filters in its reques
   const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return { ...browsePage, products: [{ ...browsePage.products[0], original_image_base64: "/9j/secret", source_path: "/private/image.jpg" }] }; });
   assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
   assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "low_stock", activity: "active", page: 2, page_size: 20 } } }]);
+});
+
+test("decodes Inventory browse without purchase cost, revision, or attributes", async () => {
+  const calls: unknown[] = [];
+  const browse = createInventoryBrowseProductsCommand(async (command, payload) => {
+    calls.push({ command, payload });
+    return { products: [{ product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1" }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+  });
+  const result = await browse({ query: " filter " });
+  assert.deepEqual(result.products[0], { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1" });
+  assert.deepEqual(calls, [{ command: "browse_inventory_products_command", payload: { request: { query: "filter", category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } }]);
+  for (const unsafe of [{ purchase_price_centavos: 1 }, { revision: 1 }, { attribute_values: [] }, { activity: "active" }]) {
+    await assert.rejects(createInventoryBrowseProductsCommand(async () => ({ ...result, products: [{ ...result.products[0], ...unsafe }] }))());
+  }
 });
 
 test("decodes locked-Sales browse with bounded attributes and no Catalog or revision fields", async () => {
@@ -215,6 +229,24 @@ test("location command contracts send narrow request envelopes and decode stable
     { name: "create_product_location_command", payload: { request: { values: ["A1", "Shelf"] } } },
     { name: "assign_product_primary_location_command", payload: { request: { product_id: 3, expected_revision: 7, location_id: null } } },
     { name: "delete_product_location_command", payload: { request: { location_id: 7, expected_revision: 0 } } },
+  ]);
+});
+
+test("uses onboarding-only location reads and assignment contracts", async () => {
+  const calls: unknown[] = [];
+  const onboarding = createOnboardingProductLocationCommands(async (name, payload) => {
+    calls.push({ name, payload });
+    if (name === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [] } };
+    if (name === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [] };
+    return { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 };
+  });
+  assert.deepEqual(await onboarding.schema(), { kind: "schema_success", schema: { revision: 1, segments: [] } });
+  assert.deepEqual(await onboarding.list(), { kind: "locations_success", locations: [] });
+  assert.deepEqual(await onboarding.assignPrimary({ product_id: 2, expected_revision: 0, location_id: 8 }), { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 });
+  assert.deepEqual(calls, [
+    { name: "onboarding_location_schema_command", payload: undefined },
+    { name: "onboarding_list_product_locations_command", payload: undefined },
+    { name: "onboarding_assign_product_primary_location_command", payload: { request: { product_id: 2, expected_revision: 0, location_id: 8 } } },
   ]);
 });
 

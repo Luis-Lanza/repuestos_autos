@@ -3,15 +3,18 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { InventoryScreen } from "./inventory-screen.ts";
 
 const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
-const browse = (products: typeof product[] = [product]) => ({ kind: "success", products, categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
+const browse = (products: typeof product[] = [product]) => ({ products: products.map((item) => ({ product_id: item.product_id, category_id: item.category_id, sku: item.sku, name: item.name, category_name: item.category_name, available_quantity: item.available_quantity, sale_price_centavos: item.sale_price_centavos ?? item.list_price_centavos ?? item.catalog_unit_price_centavos, minimum_sale_price_centavos: item.minimum_sale_price_centavos, primary_location_code: item.primary_location_code })), categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
 const success = (request_id: string) => ({ kind: "success", request_id, product_id: 1, previous_quantity: 10, quantity_delta: 3, resulting_quantity: 11, occurred_at: "2025-01-01T00:00:00Z", note: null });
+function mockIPC(handler: (command: string, payload?: { request?: unknown }) => unknown) {
+  installIPC((command, payload) => handler(command === "browse_inventory_products_command" ? "browse_products_command" : command, payload));
+}
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? ids.at(-1) }); }
 
 async function searchAndSelect() {
@@ -22,6 +25,19 @@ async function searchAndSelect() {
   await user.keyboard("{Enter}");
   return user;
 }
+
+test("loads operational Inventory browse while the Catalog session is locked", async () => {
+  const calls: string[] = [];
+  installIPC((command) => {
+    calls.push(command);
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_inventory_products_command") return browse();
+    throw new Error(`Unexpected command while Catalog is locked: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  assert.ok(await screen.findByText("Filter"));
+  assert.deepEqual(calls.sort(), ["browse_inventory_products_command", "list_inventory_alerts_command"]);
+});
 
 test("shows the selection intro only alongside results, not initial, loading, empty or error feedback", async () => {
   const initialMarkup = renderToStaticMarkup(createElement(InventoryScreen));

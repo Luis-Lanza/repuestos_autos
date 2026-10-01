@@ -478,6 +478,31 @@ fn access_error(error: CatalogAccessError) -> CatalogAccessResponse {
     CatalogAccessResponse::Error { code, message }
 }
 
+pub fn browse_inventory_products(
+    connection: &rusqlite::Connection,
+    request: BrowseProductsRequest,
+) -> Result<catalog::InventoryBrowsePage, String> {
+    let stock_filter = match request.stock_state.as_str() {
+        "all" => ProductStockFilter::All,
+        "low_stock" => ProductStockFilter::LowStock,
+        "out_of_stock" => ProductStockFilter::OutOfStock,
+        "available" => ProductStockFilter::Available,
+        "alerts" => ProductStockFilter::Alerts,
+        _ => return Err("validation_error".into()),
+    };
+    if request.activity != "active" || request.category_id.is_some_and(|id| id <= 0) || request.page < 1 || request.page_size < 1 || request.page_size > 50 {
+        return Err("validation_error".into());
+    }
+    catalog::browse_active_inventory_products(connection, &BrowseProductsInput {
+        query: request.query,
+        category_id: request.category_id,
+        stock_filter,
+        activity_filter: ProductActivityFilter::Active,
+        page: request.page,
+        page_size: request.page_size,
+    }).map_err(|_| "persistence_failure".into())
+}
+
 pub fn browse_sale_products(
     connection: &rusqlite::Connection,
     request: BrowseProductsRequest,

@@ -733,6 +733,30 @@ pub struct ProductBrowsePage {
     pub total_pages: i64,
 }
 
+/// Operational Inventory facts only; Catalog pricing cost and management metadata stay private.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct InventoryBrowseProduct {
+    pub product_id: i64,
+    pub category_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_name: String,
+    pub available_quantity: i64,
+    pub sale_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
+    pub primary_location_code: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct InventoryBrowsePage {
+    pub products: Vec<InventoryBrowseProduct>,
+    pub categories: Vec<ProductBrowseCategory>,
+    pub page: i64,
+    pub page_size: i64,
+    pub total: i64,
+    pub total_pages: i64,
+}
+
 /// Bounded Sales facts without purchase cost, location, revision, or maintenance metadata.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct SaleBrowseProduct {
@@ -901,6 +925,36 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
         page_size: input.page_size,
         total,
         total_pages,
+    })
+}
+
+struct InventoryBrowseRepository;
+
+impl CatalogBrowseRepository for InventoryBrowseRepository {
+    fn load_page_attributes(&self, _: &Connection, _: &[i64]) -> Result<Vec<(i64, ProductBrowseAttribute)>> {
+        Ok(Vec::new())
+    }
+}
+
+pub fn browse_active_inventory_products(connection: &Connection, input: &BrowseProductsInput) -> Result<InventoryBrowsePage> {
+    let page = browse_active_products(connection, &InventoryBrowseRepository, input)?;
+    Ok(InventoryBrowsePage {
+        products: page.products.into_iter().map(|product| InventoryBrowseProduct {
+            product_id: product.product_id,
+            category_id: product.category_id,
+            sku: product.sku,
+            name: product.name,
+            category_name: product.category_name,
+            available_quantity: product.available_quantity,
+            sale_price_centavos: product.sale_price_centavos,
+            minimum_sale_price_centavos: product.minimum_sale_price_centavos,
+            primary_location_code: product.primary_location_code,
+        }).collect(),
+        categories: page.categories,
+        page: page.page,
+        page_size: page.page_size,
+        total: page.total,
+        total_pages: page.total_pages,
     })
 }
 

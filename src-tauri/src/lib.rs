@@ -717,6 +717,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         catalog_access_finish_recovery_command,
         search_products_command,
         browse_products_command,
+        browse_inventory_products_command,
         browse_sale_products_command,
         dashboard_command,
         confirm_sale_command,
@@ -740,6 +741,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         catalog_product_image_thumbnail_command,
         sales_product_image_thumbnail_command,
         location_schema_command,
+        onboarding_location_schema_command,
+        onboarding_list_product_locations_command,
+        onboarding_assign_product_primary_location_command,
         save_location_schema_command,
         list_product_locations_command,
         create_product_location_command,
@@ -1174,6 +1178,17 @@ fn browse_products_command(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn browse_inventory_products_command(
+    state: tauri::State<AppState>,
+    license: tauri::State<commands::license::LicenseCommandState>,
+    request: commands::catalog::BrowseProductsRequest,
+) -> Result<application::catalog::InventoryBrowsePage, String> {
+    if license.authorize_business_operation().is_err() { return Err("license_required".into()); }
+    state.with_read(|connection| commands::catalog::browse_inventory_products(connection, request))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn browse_sale_products_command(state: tauri::State<AppState>, request: commands::catalog::BrowseProductsRequest) -> Result<application::catalog::SaleBrowsePage, String> {
     state.with_read(|connection| commands::catalog::browse_sale_products(connection, request))
 }
@@ -1476,6 +1491,30 @@ fn location_schema_command(state: tauri::State<AppState>, license: tauri::State<
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+fn onboarding_location_schema_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
+    state.with_read(|connection| Ok(commands::catalog::location_schema(connection)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn onboarding_list_product_locations_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
+    state.with_read(|connection| Ok(commands::catalog::list_product_locations(connection, commands::catalog::ListProductLocationsRequest { include_inactive: false })))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn onboarding_assign_product_primary_location_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, request: commands::catalog::AssignProductLocationRequest) -> commands::catalog::ProductLocationResponse {
+    if license.authorize_business_operation().is_err() { return license_required_location_response(); }
+    state.with_write(|connection| Ok(commands::catalog::assign_product_primary_location(connection, request)))
+        .unwrap_or_else(|_| commands::catalog::ProductLocationResponse::Error(commands::catalog::CatalogLocationError { code: "persistence_failure", message: "The location change could not be completed." }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 fn save_location_schema_command(state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, access: tauri::State<application::catalog::access::CatalogAccessSession>, request: commands::catalog::SaveLocationSchemaRequest) -> commands::catalog::ProductLocationResponse {
     if !catalog_access_authorized(&license, &access) { return license_required_location_response(); }
     state.with_write(|connection| Ok(commands::catalog::save_location_schema(connection, request)))
@@ -1533,9 +1572,9 @@ fn assign_product_primary_location_command(state: tauri::State<AppState>, licens
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn list_categories_command(
-    state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>, access: tauri::State<application::catalog::access::CatalogAccessSession>,
+    state: tauri::State<AppState>, license: tauri::State<commands::license::LicenseCommandState>,
 ) -> Result<commands::onboarding::ListCategoriesResponse, String> {
-    if !catalog_access_authorized(&license, &access) { return Err("catalog_access_required".into()); }
+    if license.authorize_business_operation().is_err() { return Err("license_required".into()); }
     state.with_read(commands::onboarding::list_categories)
 }
 
@@ -1544,10 +1583,9 @@ fn list_categories_command(
 fn create_category_command(
     state: tauri::State<AppState>,
     license: tauri::State<commands::license::LicenseCommandState>,
-    access: tauri::State<application::catalog::access::CatalogAccessSession>,
     request: application::catalog::CreateCategoryInput,
 ) -> Result<commands::onboarding::CreateCategoryResponse, String> {
-    if !catalog_access_authorized(&license, &access) { return Ok(commands::onboarding::CreateCategoryResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
+    if license.authorize_business_operation().is_err() { return Ok(commands::onboarding::CreateCategoryResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
     state.with_write(|connection| commands::onboarding::create_category(connection, request))
 }
 
@@ -1556,10 +1594,9 @@ fn create_category_command(
 fn create_product_command(
     state: tauri::State<AppState>,
     license: tauri::State<commands::license::LicenseCommandState>,
-    access: tauri::State<application::catalog::access::CatalogAccessSession>,
     request: application::catalog::CreateProductInput,
 ) -> Result<commands::onboarding::CreateProductResponse, String> {
-    if !catalog_access_authorized(&license, &access) { return Ok(commands::onboarding::CreateProductResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
+    if license.authorize_business_operation().is_err() { return Ok(commands::onboarding::CreateProductResponse::Error(commands::onboarding::OnboardingError { code: "license_required", message: "A valid license is required to change the catalog.", field_error: None })); }
     state.with_write(|connection| commands::onboarding::create_product(connection, request))
 }
 
@@ -1836,6 +1873,35 @@ mod command_surface_tests {
         assert_eq!(listing["code"], "catalog_access_required");
         access.set_test_authorized(true);
         assert!(access.is_authorized(), "an authorized unlock can start a new session");
+    }
+
+    #[test]
+    fn inventory_and_onboarding_operations_work_while_catalog_is_locked_with_safe_inventory_projection() {
+        let (app, window) = test_window();
+        app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(false);
+        app.state::<AppState>().with_write(|connection| {
+            connection.execute("UPDATE products SET purchase_price_centavos = 7777, revision = 9 WHERE id = 1", []).map_err(|_| "test_setup_failed")?;
+            connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required, active) VALUES (9001, 1, 'Material', 'text', 0, 1), (9002, 1, 'Retired secret', 'text', 0, 0)", []).map_err(|_| "test_setup_failed")?;
+            connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9001, 'Steel', 'Steel'), (1, 9002, 'retired-secret', 'retired-secret')", []).map_err(|_| "test_setup_failed")?;
+            Ok(())
+        }).unwrap();
+        let browse = get_ipc_response(&window, request_with("browse_inventory_products_command", serde_json::json!({"query":"filtro","category_id":1,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(browse["products"].as_array().unwrap().len(), 1);
+        for forbidden in ["purchase_price_centavos", "revision", "attribute_values", "retired-secret", "7777", "activity"] {
+            assert!(!browse.to_string().contains(forbidden), "unexpected Inventory field {forbidden}: {browse}");
+        }
+        assert!(get_ipc_response(&window, request("list_categories_command")).is_ok());
+        assert!(get_ipc_response(&window, request_with("create_category_command", serde_json::json!({"name":"Locked onboarding","fields":[]}))).is_ok());
+        let product = get_ipc_response(&window, request_with("create_product_command", serde_json::json!({"sku":"LOCKED-1","name":"Locked onboarding product","category_id":1,"purchase_price_centavos":100,"sale_price_centavos":200,"minimum_sale_price_centavos":100,"opening_quantity":1,"attribute_values":[]}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(product["kind"], "success");
+        assert!(get_ipc_response(&window, request("onboarding_location_schema_command")).is_ok());
+        assert!(get_ipc_response(&window, request("onboarding_list_product_locations_command")).is_ok());
+        let assignment = get_ipc_response(&window, request_with("onboarding_assign_product_primary_location_command", serde_json::json!({"product_id":product["product_id"],"expected_revision":0,"location_id":null}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(assignment["kind"], "assignment_success");
+        let detail = get_ipc_response(&window, request_with("catalog_metadata_detail_command", serde_json::json!({"target":"product","entity_id":1}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(detail["code"], "catalog_access_required");
+        let maintain = get_ipc_response(&window, request_with("maintain_catalog_command", serde_json::json!({"target":"product","entity_id":1,"intent":"archive","expected_revision":9}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(maintain["code"], "catalog_access_required");
     }
 
     #[test]

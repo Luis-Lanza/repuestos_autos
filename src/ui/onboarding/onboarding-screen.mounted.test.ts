@@ -19,6 +19,39 @@ async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
 }
 
+test("keeps product onboarding and its location path operational while Catalog is locked", async () => {
+  const calls: string[] = [];
+  mockIPC((command) => {
+    calls.push(command);
+    if (command === "list_categories_command") return success();
+    if (command === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1", values: ["A1"], active: true, revision: 0 }] };
+    if (command === "create_category_command") return { kind: "success", category_id: 2, name: "New category", fields: [] };
+    if (command === "create_product_command") return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true };
+    if (command === "onboarding_assign_product_primary_location_command") return { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 };
+    throw new Error(`Unexpected Catalog-gated command while locked: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(OnboardingScreen, { onBack: () => undefined }));
+  await screen.findByLabelText("Marca");
+  await user.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "New category");
+  await user.click(screen.getByRole("button", { name: "Crear categoría" }));
+  await screen.findByText("Categoría creada: New category.");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Categoría" }), "1");
+  await enterValidProduct(user);
+  await screen.findByRole("option", { name: "A1" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sector" }), "A1");
+  await user.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.ok(await screen.findByText(/Producto creado: FIL-1.*Ubicación principal: A1/));
+  assert.ok(calls.includes("list_categories_command"));
+  assert.ok(calls.includes("create_category_command"));
+  assert.ok(calls.includes("create_product_command"));
+  assert.ok(calls.includes("onboarding_location_schema_command"));
+  assert.ok(calls.includes("onboarding_list_product_locations_command"));
+  assert.ok(calls.includes("onboarding_assign_product_primary_location_command"));
+  assert.equal(calls.includes("catalog_metadata_detail_command"), false);
+});
+
 test("shows loading then exact empty-category guidance", async () => {
   let resolve!: (value: unknown) => void;
   mockIPC((command) => command === "list_categories_command" ? new Promise((done) => { resolve = done; }) : undefined);
@@ -111,11 +144,10 @@ test("optionally assigns a generated active location after product creation", as
   mockIPC((command, payload) => {
     calls.push({ command, payload });
     if (command === "list_categories_command") return success();
-    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
-    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
+    if (command === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
     if (command === "create_product_command") return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true };
-    if (command === "catalog_metadata_detail_command") return { target: "product", entity_id: 2, category_id: 1, category_revision: 1, sku: "FIL-1", name: "Filtro", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_id: null, activity: "active", revision: 0, attribute_definitions: [], attribute_values: [] };
-    if (command === "assign_product_primary_location_command") return { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 };
+    if (command === "onboarding_assign_product_primary_location_command") return { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 };
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup({ document });
@@ -133,8 +165,8 @@ test("optionally assigns a generated active location after product creation", as
   await user.selectOptions(screen.getByRole("combobox", { name: "Gaveta" }), "Shelf 2");
   await user.click(screen.getByRole("button", { name: "Crear producto" }));
   assert.ok(await screen.findByText(/Producto creado: FIL-1.*Ubicación principal: A1-SHELF2/));
-  assert.deepEqual(calls.filter((call) => call.command === "assign_product_primary_location_command")[0], {
-    command: "assign_product_primary_location_command",
+  assert.deepEqual(calls.filter((call) => call.command === "onboarding_assign_product_primary_location_command")[0], {
+    command: "onboarding_assign_product_primary_location_command",
     payload: { request: { product_id: 2, expected_revision: 0, location_id: 8 } },
   });
   assert.deepEqual(calls.find((call) => call.command === "create_product_command")?.payload, { request: { sku: "FIL-1", name: "Filtro", category_id: 1, purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, low_stock_threshold: 1, opening_quantity: 3, attribute_values: [{ definition_id: 10, value: "ACDelco" }] } });
@@ -143,10 +175,10 @@ test("optionally assigns a generated active location after product creation", as
 test("keeps product creation successful when the follow-up location assignment fails", async () => {
   mockIPC((command) => {
     if (command === "list_categories_command") return success();
-    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
-    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
+    if (command === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }, { id: 2, label: "Gaveta", position: 1 }] } };
+    if (command === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1-SHELF2", values: ["A-1", "Shelf 2"], active: true, revision: 0 }] };
     if (command === "create_product_command") return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true };
-    if (command === "catalog_metadata_detail_command") return { kind: "error", code: "persistence_failure", message: "detail unavailable" };
+    if (command === "onboarding_assign_product_primary_location_command") return { kind: "error", code: "persistence_failure", message: "detail unavailable" };
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup({ document });
@@ -212,8 +244,8 @@ test("shows the safe specific create-product failure reason", async () => {
 test("offers guided native controls for active locations with live status and an optional clear choice", async () => {
   mockIPC((command) => {
     if (command === "list_categories_command") return success();
-    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Piso", position: 0 }, { id: 2, label: "Estante", position: 1 }] } };
-    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [
+    if (command === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Piso", position: 0 }, { id: 2, label: "Estante", position: 1 }] } };
+    if (command === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [
       { location_id: 8, code: "PB-12", values: ["PB", "12"], active: true, revision: 0 },
       { location_id: 9, code: "PA-2", values: ["PA", "2"], active: true, revision: 0 },
       { location_id: 10, code: "PB-9", values: ["PB", "9"], active: false, revision: 0 },

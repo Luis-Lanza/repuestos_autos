@@ -6,7 +6,7 @@ Add device-local catalog access control, a period-based gross-profit report, cor
 ## Decisions
 - Catalog access is device-local configuration outside SQLite and outside ordinary database backups.
 - Sales remains operational while Catalog is locked: it receives a separate safe category-list projection and safe product-search projection, neither exposing purchase cost or catalog-management metadata.
-- Unlocking Catalog authorizes its management session until the user explicitly chooses "Bloquear catálogo" or the app restarts.
+- Unlocking Catalog authorizes only the Catalog screen's sensitive management session until the user explicitly chooses "Bloquear catálogo" or the app restarts. Inventory, product onboarding, Sales, history, reports, backup, and every other application screen remain usable while Catalog is locked.
 - Sales search, inventory alerts, and movement-ledger product options remain available while Catalog is locked; these read surfaces never disclose purchase cost.
 - Password and recovery code are stored only as salted, memory-hard hashes; plaintext values are never persisted.
 - A new licensed device restored from a backup configures its own catalog password and recovery code.
@@ -23,6 +23,7 @@ Add device-local catalog access control, a period-based gross-profit report, cor
 - [ ] T5 Rename Dashboard presentation to Metrics and verify navigation accessibility. Route: delegated writer.
 - [ ] T6 Verify device-local access stays outside backups, old backups restore safely, and all affected flows pass Linux/Windows checks. Route: delegated verifier.
 - [x] T7 Keep Sales usable while Catalog is locked through a cost- and metadata-free sale browse/category projection; expose an explicit accessible Catalog lock action while preserving password/recovery controls. Route: delegated writer.
+- [x] T8 Keep Inventory and product onboarding operational while Catalog is locked using a separate safe Inventory browse projection and onboarding-specific location contracts; preserve Catalog gating and Sales projection behavior. Route: delegated writer. Verified with command-surface and mounted locked-session regressions.
 
 ## Acceptance criteria
 - Catalog mutations and catalog screens require a local password after setup; reads outside Catalog remain available.

@@ -13,6 +13,8 @@ export type ProductStockState = "all" | "low_stock" | "out_of_stock" | "availabl
 export type ProductActivityState = "active" | "archived" | "all";
 export interface ProductBrowseInput { query?: string; category_id?: number | null; stock_state?: ProductStockState; activity?: ProductActivityState; page?: number; page_size?: number; }
 export interface ProductBrowsePage { products: ProductBrowseResult[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
+export interface InventoryBrowseProduct { product_id: number; category_id: number; sku: string; name: string; category_name: string; available_quantity: number; sale_price_centavos: number; minimum_sale_price_centavos: number; primary_location_code: string | null; }
+export interface InventoryBrowsePage { products: InventoryBrowseProduct[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
 export interface SalesBrowseProduct { product_id: number; category_id: number; sku: string; name: string; category_name: string; available_quantity: number; sale_price_centavos: number; list_price_centavos: number; catalog_unit_price_centavos: number; minimum_sale_price_centavos: number; attribute_values: ProductBrowseAttribute[]; }
 export interface SalesBrowsePage { products: SalesBrowseProduct[]; categories: ProductBrowseCategory[]; page: number; page_size: number; total: number; total_pages: number; }
 export type ProductBrowserProduct = ProductBrowseResult | SalesBrowseProduct;
@@ -155,6 +157,20 @@ export function createSalesBrowseProductsCommand(command: Invoke) {
   };
 }
 
+export function createInventoryBrowseProductsCommand(command: Invoke) {
+  return async (input: ProductBrowseInput = {}): Promise<InventoryBrowsePage> => {
+    const request = { query: input.query?.trim() || null, category_id: input.category_id ?? null, stock_state: input.stock_state ?? "all", activity: "active", page: input.page ?? 1, page_size: input.page_size ?? 20 };
+    try {
+      const value = await command("browse_inventory_products_command", { request });
+      if (!responseRecord(value) || !Array.isArray(value.products) || !Array.isArray(value.categories)) throw new Error("invalid inventory browse response");
+      const products = value.products.map((item): InventoryBrowseProduct | null => responseRecord(item) && hasOnlyKeys(item, ["product_id", "category_id", "sku", "name", "category_name", "available_quantity", "sale_price_centavos", "minimum_sale_price_centavos", "primary_location_code"]) && positiveSafeInteger(item.product_id) && positiveSafeInteger(item.category_id) && typeof item.sku === "string" && typeof item.name === "string" && typeof item.category_name === "string" && nonNegativeSafeInteger(item.available_quantity) && positiveSafeInteger(item.sale_price_centavos) && positiveSafeInteger(item.minimum_sale_price_centavos) && item.minimum_sale_price_centavos <= item.sale_price_centavos && (item.primary_location_code === null || typeof item.primary_location_code === "string") ? { product_id: item.product_id, category_id: item.category_id, sku: item.sku, name: item.name, category_name: item.category_name, available_quantity: item.available_quantity, sale_price_centavos: item.sale_price_centavos, minimum_sale_price_centavos: item.minimum_sale_price_centavos, primary_location_code: item.primary_location_code as string | null } : null);
+      const categories = value.categories.map((item): ProductBrowseCategory | null => responseRecord(item) && hasOnlyKeys(item, ["category_id", "name"]) && positiveSafeInteger(item.category_id) && typeof item.name === "string" ? { category_id: item.category_id, name: item.name } : null);
+      if (!safeInteger(value.page) || value.page < 1 || !safeInteger(value.page_size) || value.page_size < 1 || value.page_size > 50 || !nonNegativeSafeInteger(value.total) || !nonNegativeSafeInteger(value.total_pages) || !products.every((item) => item !== null) || !categories.every((item) => item !== null)) throw new Error("invalid inventory browse response");
+      return { products: products as InventoryBrowseProduct[], categories: categories as ProductBrowseCategory[], page: value.page, page_size: value.page_size, total: value.total, total_pages: value.total_pages };
+    } catch { throw new Error("The product catalog could not be loaded."); }
+  };
+}
+
 export function createBrowseProductsCommand(command: Invoke) {
   return async (input: ProductBrowseInput = {}): Promise<ProductBrowsePage> => {
     const request = { query: input.query?.trim() || null, category_id: input.category_id ?? null, stock_state: input.stock_state ?? "all", activity: input.activity ?? "active", page: input.page ?? 1, page_size: input.page_size ?? 20 };
@@ -200,6 +216,7 @@ export function createCatalogMaintenanceCommands(command: Invoke) {
 }
 export const searchProducts = createSearchProductsCommand(invoke as Invoke);
 export const browseProducts = createBrowseProductsCommand(invoke as Invoke);
+export const browseInventoryProducts = createInventoryBrowseProductsCommand(invoke as Invoke);
 export const browseSalesProducts = createSalesBrowseProductsCommand(invoke as Invoke);
 export const catalogMaintenanceCommands = createCatalogMaintenanceCommands(invoke as Invoke);
 export const catalogProductImageCommands = createCatalogProductImageCommands(invoke as Invoke);
@@ -248,7 +265,16 @@ export function createProductLocationCommands(command: Invoke) {
     assignPrimary: (input: AssignProductLocationInput) => invokeLocation("assign_product_primary_location_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision, location_id: input.location_id } }),
   };
 }
+export function createOnboardingProductLocationCommands(command: Invoke) {
+  const invokeLocation = (name: string, payload?: Record<string, unknown>): Promise<ProductLocationResponse> => command(name, payload).then(decodeProductLocationResponse).then((decoded) => decoded ?? locationFailure()).catch(locationFailure);
+  return {
+    schema: () => invokeLocation("onboarding_location_schema_command"),
+    list: () => invokeLocation("onboarding_list_product_locations_command"),
+    assignPrimary: (input: AssignProductLocationInput) => invokeLocation("onboarding_assign_product_primary_location_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision, location_id: input.location_id } }),
+  };
+}
 export const productLocationCommands = createProductLocationCommands(invoke as Invoke);
+export const onboardingProductLocationCommands = createOnboardingProductLocationCommands(invoke as Invoke);
 
 export type CatalogAccessStatus = "setup_required" | "locked" | "unlocked" | "unavailable";
 export type CatalogAccessResponse = { kind: "status"; status: CatalogAccessStatus } | { kind: "recovery_code"; recovery_code: string } | { kind: "success" } | { kind: "error"; code: string; message: string };
