@@ -10,7 +10,7 @@ Keep Inventory on All Stock regardless of alert entry, preserve current product 
 - Password verification is enforced in Rust before the physical-count application operation; the modal is not the security boundary.
 
 ## Tasks
-- [~] I1 Keep the Inventory entry state on All Stock and cover alert navigation. — Implementation and independent checks passed; awaiting explicit local-commit authorization.
+- [x] I1 Keep the Inventory entry state on All Stock and cover alert navigation. — Implemented in `de8f80b` (`fix(inventory): keep alert navigation on all stock`); focused mounted test and independent verification passed. Native review preflight stopped because RDD is disabled.
 - [ ] I2 Make all Stock Entry price inputs optional while preserving omitted persisted values.
 - [ ] I3 Require shared Catalog-password verification for physical-count confirmation end to end.
 - [ ] I4 Run focused Rust/frontend checks and record Windows smoke cases.
