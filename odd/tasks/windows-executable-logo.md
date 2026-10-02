@@ -18,7 +18,7 @@ Use the supplied original Advance Auto Parts logo as the Windows application exe
 - Independent read-only verification confirmed exact source JPEG and retained installer ICO copies, six 32-bit ICO frames (16, 24, 32, 48, 64, 256 px), and previews retaining the complete artwork.
 - Installed CLI 2.11.4 successfully read the configuration; installed schema and Rust config support `uninstallerIcon`. Windows codegen/build select the configured ICO for both the default window icon and executable resource.
 - Formal JSON-Schema-engine validation was unavailable; no standalone validator is installed. No Windows build or appearance smoke was run. Linux desktop prerequisites remain unavailable.
-- Changes remain uncommitted and unpushed; Windows verification requires transferring these changes first.
+- E1/E2 are committed in `eb79641` (`feat(windows): use original logo for application icon`); Windows build and appearance verification remain pending. Native RDD is off (global setting); no native review ran.
 
 ## Acceptance criteria
 - The application `.exe`, application window, and taskbar use the supplied original logo, proportionally rendered at the available Windows icon sizes.
