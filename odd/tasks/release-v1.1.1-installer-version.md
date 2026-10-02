@@ -13,7 +13,7 @@ Create a patch-release candidate whose application manifests advertise a version
 ## Tasks
 - [x] V1 Align application versions to 1.1.1 without changing product identity. Evidence: `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` both declare `1.1.1`; identifier remains `com.repuestosautos.app`.
 - [x] V2 Verify manifest consistency and prepare the Windows NSIS build command/artifact path. Evidence: independent metadata verification passed; build command is `npm run tauri -- build --features desktop --bundles nsis`, producing the installer under `src-tauri\\target\\release\\bundle\\nsis\\`.
-- [ ] V3 Build and smoke-test upgrade from 0.1.0 on Windows before customer delivery.
+- [x] V3 Build and smoke-test upgrade from 0.1.0 on Windows before customer delivery. Evidence: Windows built `Repuestos Autos_1.1.1_x64-setup.exe`; user installed it in place over 0.1.0 and confirmed the new version works correctly.
 
 ## Acceptance criteria
 - Tauri and Cargo both declare 1.1.1.
