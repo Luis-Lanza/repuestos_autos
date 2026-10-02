@@ -1,9 +1,11 @@
-import { createElement, useEffect, useReducer, useRef } from "react";
+import { createElement, useEffect, useReducer, useRef, useState } from "react";
 import { MOVEMENT_TYPES, movementLedgerCommands, type MovementType } from "../../commands/movement-ledger.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData, Panel } from "../visual-system/structure.ts";
 import { createMovementLedgerFlow, initialLedgerState, type LedgerState } from "./movement-ledger-flow.ts";
+import { GrossProfitReportScreen } from "./gross-profit-report-screen.ts";
 
+type ReportMode = MovementType | "" | "gross_profit";
 const labels: Record<MovementType, string> = { opening_stock: "Stock inicial", stock_entry: "Ingreso", sale: "Venta", return: "Devolución", adjustment: "Ajuste", cancellation: "Cancelación" };
 const columns = [
  { label: "Fecha y hora", align: "start", kind: "text" }, { label: "Producto · datos actuales", align: "start", kind: "text" },
@@ -13,6 +15,9 @@ const columns = [
 const emptyMessage = (state: LedgerState) => state.status === "empty" ? "No hay movimientos para los filtros aplicados." : "";
 export function MovementLedgerScreen() {
  const [state, dispatch] = useReducer(createMovementLedgerFlow, undefined, () => initialLedgerState());
+ const [reportMode, setReportMode] = useState<ReportMode>("");
+ const [appliedMode, setAppliedMode] = useState<ReportMode | null>(null);
+ const [profitPeriod, setProfitPeriod] = useState({ from: state.applied.from, to: state.applied.to });
  const mounted = useRef(true); const listAttempt = useRef(0); const productsAttempt = useRef(0); const exportAttempt = useRef(0);
  useEffect(() => { mounted.current = true; return () => { mounted.current = false; listAttempt.current++; productsAttempt.current++; exportAttempt.current++; }; }, []);
  const load = (page: number, filters = state.applied) => {
@@ -33,7 +38,15 @@ export function MovementLedgerScreen() {
   const request_id = ++listAttempt.current; dispatch({ type: "filters_applied", request_id });
   void movementLedgerCommands.list(state.applied, 1).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); });
  }, []);
- const apply = () => { const request_id = ++listAttempt.current; exportAttempt.current++; dispatch({ type: "filters_applied", request_id }); void movementLedgerCommands.list(state.draft, 1).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); }); };
+ const apply = () => {
+  const filters = { ...state.draft, movement_type: reportMode === "gross_profit" ? null : reportMode || null };
+  dispatch({ type: "draft_changed", filters });
+  setAppliedMode(reportMode || null);
+  const request_id = ++listAttempt.current; exportAttempt.current++;
+  if (reportMode === "gross_profit") { setProfitPeriod({ from: filters.from, to: filters.to }); return; }
+  dispatch({ type: "filters_applied", request_id });
+  void movementLedgerCommands.list(filters, 1).then(response => { if (!mounted.current || request_id !== listAttempt.current) return; dispatch(response.kind === "success" ? { type: "list_succeeded", request_id, response } : { type: "list_failed", request_id }); });
+ };
  const retry = () => load(state.page, state.applied);
  const change = (key: keyof typeof state.draft, value: string) => dispatch({ type: "draft_changed", filters: { ...state.draft, [key]: key === "product_id" ? (value ? Number(value) : null) : key === "movement_type" ? (value || null) : value } as typeof state.draft });
  const changeProductQuery = (query: string) => dispatch({ type: "product_query_changed", query, request_id: ++productsAttempt.current });
@@ -58,28 +71,29 @@ export function MovementLedgerScreen() {
   : state.products_status === "error" ? createElement(Feedback, { kind: "error" }, createElement("span", null, "No se pudo buscar en el catálogo local. Reintentá. ", createElement(Action, { variant: "tertiary", onClick: () => searchProducts(state.product_submitted_query, state.products_page) }, "Reintentar")))
   : state.products_status === "initial" ? createElement(Feedback, { kind: "initial" }, createElement("span", null, "Todos los productos. Buscá un producto por nombre o SKU para filtrar el registro.")) : null;
  const exportMessage = state.export_status === "pending" ? "Preparando el PDF…" : state.export_status === "success" ? "El PDF se generó correctamente." : state.export_status === "cancelled" ? "Se canceló la exportación." : state.export_status === "error" ? "No se pudo exportar el registro." : null;
- return createElement("main", { "aria-labelledby": "movement-ledger-heading", "data-ui-movement-ledger": true, "aria-busy": state.status === "loading" || undefined },
-  createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "movement-ledger-heading" }, "Registro de movimientos"), createElement("p", null, "Consulta de movimientos de inventario guardados. Este informe es de solo lectura.")),
+ return createElement("main", { "aria-labelledby": "movement-ledger-heading", "data-ui-movement-ledger": true, "data-ui-report-mode": reportMode === "gross_profit" ? "gross-profit" : "movement",
+  "data-ui-report-applied-mode": appliedMode === "gross_profit" ? "gross-profit" : "movement", "aria-busy": (appliedMode === "gross_profit" ? false : state.status === "loading") || undefined },
+  createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "movement-ledger-heading" }, "Reportes"), createElement("p", null, "Consultá los movimientos de inventario o la ganancia bruta del período.")),
   createElement(Panel, { label: "Filtros" },
    createElement("div", { "data-ui-ledger-filters": true },
     createElement("div", { "data-ui-ledger-date-row": true },
      createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: Event) => change("from", (event.currentTarget as HTMLInputElement).value) }) }),
      createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: Event) => change("to", (event.currentTarget as HTMLInputElement).value) }) })),
     createElement("div", { "data-ui-ledger-filter-row": true },
-     createElement("div", { "data-ui-ledger-product-filter": true },
+     reportMode !== "gross_profit" ? createElement("div", { "data-ui-ledger-product-filter": true },
       createElement("form", { "data-ui-ledger-product-search": true, onSubmit: (event: Event) => { event.preventDefault(); searchProducts(state.product_query, 1); } },
        createElement(Field, { kind: "search", label: "Buscar producto por nombre o SKU", control: createElement("input", { maxLength: 100, value: state.product_query, onChange: (event: Event) => changeProductQuery((event.currentTarget as HTMLInputElement).value), onKeyDown: (event: KeyboardEvent) => { if (event.key === "Enter") { event.preventDefault(); searchProducts(state.product_query, 1); } } }) }),
-       createElement(Action, { variant: "secondary", type: "submit", disabled: !state.product_query.trim() }, "Buscar"))),
-     createElement(Field, { kind: "select", label: "Tipo de movimiento", control: createElement("select", { value: state.draft.movement_type ?? "", onChange: (event: Event) => change("movement_type", (event.currentTarget as HTMLSelectElement).value) }, createElement("option", { value: "" }, "Todos"), ...MOVEMENT_TYPES.map(type => createElement("option", { key: type, value: type }, labels[type]))) }),
+       createElement(Action, { variant: "secondary", type: "submit", disabled: !state.product_query.trim() }, "Buscar"))) : null,
+     createElement(Field, { kind: "select", label: "Tipo de movimiento", control: createElement("select", { value: reportMode, onChange: (event: Event) => { const value = (event.currentTarget as HTMLSelectElement).value; setReportMode(value === "gross_profit" ? "gross_profit" : value as MovementType | ""); } }, createElement("option", { value: "" }, "Todos"), ...MOVEMENT_TYPES.map(type => createElement("option", { key: type, value: type }, labels[type])), createElement("option", { value: "gross_profit" }, "Ganancia bruta")) }),
      createElement("form", { "data-ui-ledger-apply-form": true, onSubmit: (event: Event) => { event.preventDefault(); apply(); } },
       createElement("span", { "aria-hidden": true, "data-ui-ledger-apply-label-space": true }, "Tipo de movimiento"),
       createElement(Action, { variant: "primary", type: "submit", disabled: !filtersValid }, "Aplicar filtros"))),
-    createElement("div", { "data-ui-ledger-product-feedback-row": true },
+    reportMode !== "gross_profit" ? createElement("div", { "data-ui-ledger-product-feedback-row": true },
      state.selected_product ? createElement("div", { "data-ui-ledger-selected-product": true }, createElement("span", null, `${state.selected_product.product_name} · ${state.selected_product.product_sku}${state.selected_product.active ? "" : " · Archivado"}`), createElement(Action, { variant: "tertiary", onClick: clearProduct }, "Quitar producto")) : null,
      productStatus,
      state.products_status === "ready" ? createElement("ul", { "aria-label": "Resultados de productos", "data-ui-ledger-product-results": true }, state.products.map(product => createElement("li", { key: product.product_id }, createElement("span", null, `${product.product_name} · ${product.product_sku}${product.active ? "" : " · Archivado"}`), createElement(Action, { variant: "secondary", onClick: () => selectProduct(product), "aria-label": `Seleccionar ${product.product_name} (SKU: ${product.product_sku})` }, "Seleccionar")))) : null,
-     state.products_status === "ready" && state.products_has_more ? createElement(Action, { variant: "tertiary", onClick: () => searchProducts(state.product_submitted_query, state.products_page + 1) }, "Más productos") : null))),
-  createElement(Panel, { label: "Movimientos" }, status,
+     state.products_status === "ready" && state.products_has_more ? createElement(Action, { variant: "tertiary", onClick: () => searchProducts(state.product_submitted_query, state.products_page + 1) }, "Más productos") : null) : null)),
+  appliedMode === "gross_profit" ? createElement(GrossProfitReportScreen, { period: profitPeriod }) : createElement(Panel, { label: "Resultados" }, status,
    state.status === "ready" || state.status === "empty" ? createElement("div", { "data-ui-ledger-pages": true }, createElement("span", { role: "status" }, `Página ${state.page}`), createElement(Action, { variant: "secondary", disabled: state.page <= 1 || state.status === "loading", onClick: () => load(state.page - 1) }, "Anterior"), createElement(Action, { variant: "secondary", disabled: !state.has_more || state.status === "loading", onClick: () => load(state.page + 1) }, "Siguiente"), createElement(Action, { variant: "secondary", disabled: state.status !== "ready", pending: state.export_status === "pending", onClick: exportPdf }, "Exportar PDF")) : null,
    exportMessage ? createElement(Feedback, { kind: state.export_status === "error" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportMessage) : null));
 }

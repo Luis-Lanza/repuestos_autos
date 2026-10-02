@@ -11,7 +11,6 @@ import { SaleScreen } from "./sales/sale-screen.ts";
 import { SalesHistoryScreen } from "./sales/history-screen.ts";
 import { CatalogMaintenanceScreen } from "./catalog/catalog-maintenance-screen.ts";
 import { MovementLedgerScreen } from "./reports/movement-ledger-screen.ts";
-import { GrossProfitReportScreen } from "./reports/gross-profit-report-screen.ts";
 import { ActivationScreen } from "./licensing/activation-screen.ts";
 
 export const SCREEN = {
@@ -32,7 +31,7 @@ function screenContent(screen: Screen, onNavigate: (action: NavigationAction) =>
   if (screen === SCREEN.BACKUP) return createElement(BackupScreen, { canRestore });
   if (screen === SCREEN.CATALOG) return createElement(CatalogMaintenanceScreen);
   if (screen === SCREEN.SALES_HISTORY) return createElement(SalesHistoryScreen);
-  if (screen === SCREEN.REPORTS) return createElement(Fragment, null, createElement(GrossProfitReportScreen), createElement(MovementLedgerScreen));
+  if (screen === SCREEN.REPORTS) return createElement(MovementLedgerScreen);
   return createElement(SaleScreen, { onInventoryAlertsRefresh: refreshInventoryCount });
 }
 export function App() {

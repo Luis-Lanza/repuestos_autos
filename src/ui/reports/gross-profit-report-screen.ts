@@ -11,29 +11,30 @@ const money = (centavos: number) => `Bs ${centavos < 0 ? "−" : ""}${(Math.abs(
 const signed = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value)}`;
 const rowName = (row: GrossProfitOperation) => row.operation_kind === "venta" ? `Venta #${row.sale_id}` : `Devolución #${row.return_id} · Venta #${row.sale_id}`;
 
-export function GrossProfitReportScreen() {
+export function GrossProfitReportScreen({ period }: { period?: Period } = {}) {
  const [state, dispatch] = useReducer(createGrossProfitReportFlow, undefined, () => initialGrossProfitReportState(currentMonth()));
- const rangeRequest = useRef(0); const operationsRequest = useRef(0); const pageRequestInFlight = useRef<number | null>(null); const exportInFlight = useRef(false);
+ const mounted = useRef(true); const rangeRequest = useRef(0); const operationsRequest = useRef(0); const pageRequestInFlight = useRef<number | null>(null); const exportInFlight = useRef(false);
+ useEffect(() => { mounted.current = true; return () => { mounted.current = false; rangeRequest.current++; operationsRequest.current++; pageRequestInFlight.current = null; }; }, []);
  const runRange = (period: Period) => {
   const rangeId = ++rangeRequest.current; const operationsId = ++operationsRequest.current; pageRequestInFlight.current = null;
   dispatch({ type: "range_applied", period, range_id: rangeId, operations_request_id: operationsId });
-  void grossProfitCommands.load(period.from, period.to).then(response => response.kind === "success" ? dispatch({ type: "summary_succeeded", range_id: rangeId, report: response.report }) : dispatch({ type: "summary_failed", range_id: rangeId }));
-  void grossProfitOperationsCommands.load(period.from, period.to, 1).then(response => response.kind === "success" ? dispatch({ type: "operations_succeeded", range_id: rangeId, operations_request_id: operationsId, report: response.report }) : dispatch({ type: "operations_failed", range_id: rangeId, operations_request_id: operationsId }));
+  void grossProfitCommands.load(period.from, period.to).then(response => { if (!mounted.current || rangeId !== rangeRequest.current) return; dispatch(response.kind === "success" ? { type: "summary_succeeded", range_id: rangeId, report: response.report } : { type: "summary_failed", range_id: rangeId }); });
+  void grossProfitOperationsCommands.load(period.from, period.to, 1).then(response => { if (!mounted.current || rangeId !== rangeRequest.current || operationsId !== operationsRequest.current) return; dispatch(response.kind === "success" ? { type: "operations_succeeded", range_id: rangeId, operations_request_id: operationsId, report: response.report } : { type: "operations_failed", range_id: rangeId, operations_request_id: operationsId }); });
  };
- useEffect(() => { runRange(state.applied); }, []);
+ useEffect(() => { runRange(period ?? state.applied); }, [period?.from, period?.to]);
  const valid = Boolean(state.draft.from && state.draft.to && state.draft.from <= state.draft.to);
  const requestPage = (page: number) => {
   if (pageRequestInFlight.current !== null || state.operations_status !== "ready") return;
   const requestId = ++operationsRequest.current; const rangeId = state.range_id; pageRequestInFlight.current = requestId;
   dispatch({ type: "page_requested", page, operations_request_id: requestId });
-  void grossProfitOperationsCommands.load(state.applied.from, state.applied.to, page).then(response => response.kind === "success" ? dispatch({ type: "operations_succeeded", range_id: rangeId, operations_request_id: requestId, report: response.report }) : dispatch({ type: "operations_failed", range_id: rangeId, operations_request_id: requestId })).finally(() => { if (pageRequestInFlight.current === requestId) pageRequestInFlight.current = null; });
+  void grossProfitOperationsCommands.load(state.applied.from, state.applied.to, page).then(response => { if (!mounted.current || rangeId !== rangeRequest.current || requestId !== operationsRequest.current) return; dispatch(response.kind === "success" ? { type: "operations_succeeded", range_id: rangeId, operations_request_id: requestId, report: response.report } : { type: "operations_failed", range_id: rangeId, operations_request_id: requestId }); }).finally(() => { if (pageRequestInFlight.current === requestId) pageRequestInFlight.current = null; });
  };
  const exportPdf = () => {
   if (state.range_id === 0 || exportInFlight.current) return;
   exportInFlight.current = true;
   dispatch({ type: "export_started" });
   void exportGrossProfitOperationsCommand(state.applied.from, state.applied.to).then(response => {
-   dispatch({ type: "export_completed", outcome: response.kind === "success" ? "success" : response.kind === "cancelled" ? "cancelled" : response.code === "resource_limit" ? "resource_limit" : "error" });
+   if (mounted.current) dispatch({ type: "export_completed", outcome: response.kind === "success" ? "success" : response.kind === "cancelled" ? "cancelled" : response.code === "resource_limit" ? "resource_limit" : "error" });
   }).finally(() => { exportInFlight.current = false; });
  };
  const exportFeedback = state.export_status === "pending" ? "Guardando PDF…" : state.export_status === "cancelled" ? "Exportación cancelada." : state.export_status === "success" ? "PDF guardado correctamente." : state.export_status === "resource_limit" ? "El informe supera los límites de recursos y no se guardó. Ajustá el período e intentá de nuevo." : state.export_status === "error" ? "No se pudo guardar el PDF." : null;
@@ -48,13 +49,13 @@ export function GrossProfitReportScreen() {
   createElement("td", null, signed(row.signed_quantity)), createElement("td", null, money(row.negotiated_unit_price_centavos)),
   createElement("td", null, row.cost_state === "unknown" ? "No disponible (no calculable)" : money(row.unit_cost_snapshot_centavos!)),
   createElement("td", null, row.signed_gross_profit_centavos === null ? "No calculable" : money(row.signed_gross_profit_centavos))));
- return createElement("section", { "aria-labelledby": "gross-profit-heading", "data-ui-gross-profit-report": true, "aria-busy": state.summary_status === "loading" || state.operations_status === "loading" || undefined },
-  createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "gross-profit-heading" }, "Ganancia bruta"), createElement("p", null, "Total del período según ventas confirmadas y devoluciones registradas.")),
-  createElement(Panel, { label: "Período" }, createElement("form", { "data-ui-gross-profit-filters": true, onSubmit: (event: Event) => { event.preventDefault(); if (valid) runRange(state.draft); } },
+ return createElement("section", { "aria-label": "Resultados de ganancia bruta", "data-ui-gross-profit-report": true, "aria-busy": state.summary_status === "loading" || state.operations_status === "loading" || undefined },
+  period ? null : createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "gross-profit-heading" }, "Ganancia bruta"), createElement("p", null, "Total del período según ventas confirmadas y devoluciones registradas.")),
+  (period ? null : createElement(Panel, { label: "Período" }, createElement("form", { "data-ui-gross-profit-filters": true, onSubmit: (event: Event) => { event.preventDefault(); if (valid) runRange(state.draft); } },
    createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: Event) => dispatch({ type: "draft_changed", period: { ...state.draft, from: (event.currentTarget as HTMLInputElement).value } }) }) }),
    createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: Event) => dispatch({ type: "draft_changed", period: { ...state.draft, to: (event.currentTarget as HTMLInputElement).value } }) }) }),
-   createElement(Action, { variant: "primary", type: "submit", disabled: !valid }, "Aplicar período"))),
-  createElement(Panel, { label: "Resultado" }, status,
+   createElement(Action, { variant: "primary", type: "submit", disabled: !valid }, "Aplicar período")))),
+  createElement(Panel, { label: "Ganancia bruta" }, status,
    createElement(Action, { variant: "secondary", onClick: exportPdf, disabled: state.range_id === 0 || state.export_status === "pending" }, state.export_status === "pending" ? "Exportando PDF…" : "Exportar PDF"),
    exportFeedback ? createElement(Feedback, { kind: state.export_status === "error" || state.export_status === "resource_limit" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportFeedback) : null,
    state.report ? createElement("section", { "aria-label": "Total de ganancia bruta", "data-ui-gross-profit-total": true }, createElement("p", null, `Período: ${state.applied.from} al ${state.applied.to}`), createElement("h2", null, money(state.report.amount_centavos)), state.report.missing_cost_line_count > 0 ? createElement(Feedback, { kind: "advisory" }, `Cálculo parcial: ${state.report.missing_cost_line_count} línea(s) no tienen costo histórico conocido. Esas líneas se excluyen del total; no se estima su costo con el catálogo actual.`) : null) : null,

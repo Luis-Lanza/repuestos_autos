@@ -1116,6 +1116,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-ledger-filters] { container: movement-ledger-filters / inline-size; display: grid; gap: var(--space-4); }
 [data-ui-ledger-date-row] { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
 [data-ui-ledger-filter-row] { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+[data-ui-report-mode="gross-profit"] [data-ui-ledger-filter-row] { grid-template-columns: minmax(0, 1fr) auto; }
 [data-ui-ledger-apply-form] { display: grid; min-inline-size: 0; gap: var(--space-2); margin: 0; }
 [data-ui-ledger-apply-label-space] { visibility: hidden; user-select: none; }
 [data-ui-ledger-filters] [data-ui-field] { min-inline-size: 0; margin: 0; }
@@ -1134,6 +1135,13 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-ledger-current] { display: block; color: var(--color-text-muted); font-size: var(--type-caption-size); }
 [data-ui-movement-ledger] [data-ui-aligned-data] { table-layout: fixed; }
 [data-ui-movement-ledger] [data-ui-aligned-data] :is(th, td) { overflow-wrap: anywhere; }
+[data-ui-gross-profit-report] { display: grid; min-inline-size: 0; gap: var(--space-4); }
+[data-ui-gross-profit-report] [data-ui-panel] { display: grid; min-inline-size: 0; gap: var(--space-4); }
+[data-ui-gross-profit-total] { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-canvas); }
+[data-ui-gross-profit-total] :is(p, h2) { margin: 0; }
+[data-ui-gross-profit-report] table { inline-size: 100%; border-collapse: collapse; }
+[data-ui-gross-profit-report] :is(th, td) { padding: var(--space-2); border-block-end: 1px solid var(--color-border); text-align: start; }
+[data-ui-gross-profit-report] th { font-weight: var(--weight-semibold); }
 @container movement-ledger-filters (min-width: 34rem) {
   [data-ui-ledger-date-row] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -31,6 +31,41 @@ async function submitSearch(query = "filtro") {
  await user.type(input, `${query}{Enter}`);
  return user;
 }
+test("applies shared dates to the gross-profit mode and exposes only its historical PDF action", async () => {
+ const movementExports: unknown[] = []; const profitExports: unknown[] = []; const movementRequests: unknown[] = [];
+ mockIPC((command, payload) => {
+  if (command === "list_movement_ledger_product_options_command") return productPage([]);
+  if (command === "list_movement_ledger_command") { movementRequests.push(payload); return page(); }
+  if (command === "export_movement_ledger_command") { movementExports.push(payload); return { kind: "success" }; }
+  if (command === "gross_profit_report_command") return report;
+  if (command === "gross_profit_operations_command") return historicalOperations;
+  if (command === "export_gross_profit_operations_command") { profitExports.push(payload); return { kind: "success" }; }
+  throw new Error(`Unexpected command: ${command}`);
+ });
+ const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
+ await screen.findByRole("table");
+ assert.equal((screen.getByRole("combobox", { name: "Tipo de movimiento" }) as HTMLSelectElement).value, "");
+ await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "gross_profit");
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-10" } });
+ fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2024-03-20" } });
+ await user.click(screen.getByRole("button", { name: "Aplicar filtros" }));
+ assert.ok(await screen.findByRole("heading", { name: "Bs 12.50" }));
+ assert.ok(await screen.findByText("Venta #7"));
+ assert.equal(screen.getAllByLabelText("Desde").length, 1);
+ assert.equal(screen.getAllByLabelText("Hasta").length, 1);
+ assert.equal(screen.queryByRole("button", { name: "Aplicar período" }), null);
+ assert.equal(screen.queryByRole("searchbox", { name: "Buscar producto por nombre o SKU" }), null);
+ assert.equal(screen.getAllByRole("button", { name: "Exportar PDF" }).length, 1);
+ assert.equal(screen.queryByRole("region", { name: "Movimientos" }), null);
+ await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ assert.ok(await screen.findByText("PDF guardado correctamente."));
+ assert.equal(movementExports.length, 0); assert.equal(profitExports.length, 1);
+ assert.equal((profitExports[0] as { request: { from: { local_date: string }; to_exclusive: { local_date: string } } }).request.from.local_date, "2024-03-10");
+ assert.equal((profitExports[0] as { request: { to_exclusive: { local_date: string } } }).request.to_exclusive.local_date, "2024-03-21");
+ assert.equal((movementRequests[0] as { request: { movement_type: unknown } }).request.movement_type, null);
+});
+const report = { kind: "success", report: { amount_centavos: 1250, missing_cost_line_count: 0, activity_count: 1 } };
+const historicalOperations = { kind: "success", report: { rows: [{ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: 7, return_id: null, product_name: "Filtro histórico", sku: "SKU-7", signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: 500, cost_state: "known", signed_gross_profit_centavos: 1500 }], page: 1, page_size: 20, total: 1, total_pages: 1 } };
 test("starts with loading ledger and does not eagerly request an unbounded product list", async () => {
  const { searches } = mount(); render(createElement(MovementLedgerScreen));
  assert.ok(await screen.findByText("Cargando movimientos…"));
@@ -94,7 +129,7 @@ test("stale product search responses are rejected independently of ledger list r
 });
 test("shows archived historical product, persisted facts truthfully, and exports active filters", async () => {
  const { exports } = mount(); const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
- assert.ok(screen.getByRole("heading", { level: 1, name: "Registro de movimientos" }));
+ assert.ok(screen.getByRole("heading", { level: 1, name: "Reportes" }));
  await submitSearch();
  await user.click(await screen.findByRole("button", { name: "Seleccionar Filtro actual (SKU: FLT-7)" }));
  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "sale");
@@ -143,7 +178,7 @@ test("keeps date, control, and product-feedback rows structurally separate and r
  assert.ok(await screen.findByText("Filtro actual"));
  assert.equal(screen.getAllByRole("main").length, 1);
  assert.ok(screen.getByRole("region", { name: "Filtros" }));
- assert.ok(screen.getByRole("region", { name: "Movimientos" }));
+ assert.ok(screen.getByRole("region", { name: "Resultados" }));
  const filters = screen.getByRole("region", { name: "Filtros" }).querySelector("[data-ui-ledger-filters]")!;
  assert.equal(filters.children[0].getAttribute("data-ui-ledger-date-row"), "true");
  assert.deepEqual([...filters.children[0].querySelectorAll("label")].map(label => label.textContent), ["Desde", "Hasta"]);

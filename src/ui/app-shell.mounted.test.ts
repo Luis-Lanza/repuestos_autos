@@ -84,7 +84,7 @@ test("App keeps the global Inventory alert count across screens and opens the al
   assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "alerts");
 });
 
-test("opens Reports directly to the Movement Ledger and keeps sidebar focus and active state", async () => {
+test("opens the unified Reports interface and keeps sidebar focus and active state", async () => {
   mockIPC((command) => {
     if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
@@ -98,8 +98,9 @@ test("opens Reports directly to the Movement Ledger and keeps sidebar focus and 
   const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
   const reports = within(navigation).getByRole("button", { name: "Reportes" });
   await user.click(reports);
-  assert.ok(await screen.findByRole("heading", { level: 1, name: "Registro de movimientos" }));
-  assert.ok(await screen.findByRole("region", { name: "Ganancia bruta" }));
+  assert.ok(await screen.findByRole("heading", { level: 1, name: "Reportes" }));
+  assert.ok(await screen.findByRole("combobox", { name: "Tipo de movimiento" }));
+  assert.equal(screen.queryByRole("region", { name: "Ganancia bruta" }), null);
   assert.equal(document.querySelectorAll("main").length, 1);
   assert.equal(reports.getAttribute("aria-current"), "page");
   assert.equal(document.activeElement, reports);
