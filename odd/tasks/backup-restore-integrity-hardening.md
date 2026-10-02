@@ -54,5 +54,5 @@ Make backup and full-database restore safe enough to act as the customer's recov
 - Startup removes bounded abandoned stage/snapshot artifacts only when no marker or recovery evidence exists; ambiguous entries and cleanup failures leave storage unavailable. Active-marker stages remain owned by recovery.
 - Stage/snapshot admission is bounded by a maximum of eight artifacts and 512 MiB per database; excess or ambiguous state returns a stable storage error. Windows durable installation and cleanup still require platform validation.
 
-## Next Step
-- Complete T5's automated verification and validate the full protocol on Windows fixed NTFS plus expected FAT/exFAT rejection.
+## Superseding Windows validation evidence
+Windows `backup_restore` passed 51/51. Manual backup and restore on fixed NTFS succeeded; removable FAT and exFAT USB destinations were rejected with the fixed-NTFS message, `Elegí una unidad fija NTFS para guardar la copia.` This supersedes older pending Windows-evidence notes for the covered backup-destination and recovery validation only; it does not attest untested behavior.
