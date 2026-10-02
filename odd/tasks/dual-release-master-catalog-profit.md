@@ -11,7 +11,7 @@ Preservar el estado actual de `master` como una release inmutable y publicar la 
 
 ## Tareas
 - [x] R1 Congelar y verificar el candidato actual de `master`; publicar `v1.0.0`. Evidencia: tag anotado en `f1d995073059daf3ce3b72f348f07544f5ca6909`, enviado a `origin`; GitHub Release publicada en `https://github.com/Luis-Lanza/repuestos_autos/releases/tag/v1.0.0`.
-- [ ] R2 Aislar cambios locales ajenos, verificar el candidato de la rama e integrar solamente sus commits en `master`.
+- [x] R2 Aislar cambios locales ajenos, verificar el candidato de la rama e integrar solamente sus commits en `master`. Evidencia: integración no-fast-forward `1658c0e` (`feat: release catalog access and profit reports`) enviada a `origin/master`; los seis archivos no rastreados ajenos permanecieron sin incluirse.
 - [ ] R3 Verificar el `master` integrado; publicar `v1.1.0` y registrar la evidencia.
 
 ## Criterios de aceptación
