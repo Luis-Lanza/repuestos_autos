@@ -10,7 +10,7 @@ import { App, NAVIGATION_ACTION, SCREEN, screenAfter } from "./app.ts";
 import { AppShell } from "./app-shell.ts";
 
 const destinations = [
-  ["Dashboard", SCREEN.DASHBOARD, NAVIGATION_ACTION.OPEN_DASHBOARD],
+  ["Métricas", SCREEN.DASHBOARD, NAVIGATION_ACTION.OPEN_DASHBOARD],
   ["Ventas", SCREEN.SALES, NAVIGATION_ACTION.RETURN_TO_SALES],
   ["Inventario", SCREEN.INVENTORY, NAVIGATION_ACTION.OPEN_INVENTORY],
   ["Catálogo", SCREEN.CATALOG, NAVIGATION_ACTION.OPEN_CATALOG],
@@ -43,7 +43,7 @@ test("AppShell exposes identity and the dashboard-first Spanish navigation", asy
   const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
   const buttons = within(navigation).getAllByRole("button");
   assert.deepEqual(buttons.map((button) => button.textContent), destinations.map(([label]) => label));
-  assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.textContent), ["Dashboard"]);
+  assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.textContent), ["Métricas"]);
 
   for (const [label, , action] of destinations) {
     await user.click(within(navigation).getByRole("button", { name: label }));
@@ -149,8 +149,8 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   render(createElement(App));
 
   const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
-  assert.ok(screen.getByRole("heading", { level: 1, name: "Dashboard" }));
-  assert.equal(within(navigation).getByRole("button", { name: "Dashboard" }).getAttribute("aria-current"), "page");
+  assert.ok(screen.getByRole("heading", { level: 1, name: "Métricas" }));
+  assert.equal(within(navigation).getByRole("button", { name: "Métricas" }).getAttribute("aria-current"), "page");
 
   const backup = within(navigation).getByRole("button", { name: "Copia y restauración" });
   await user.click(backup);
@@ -205,7 +205,7 @@ test("unlicensed startup defaults to activation and recovery exposes only safe n
   assert.ok(await screen.findByRole("heading", { name: "Activá Repuestos Autos" }));
   await user.click(screen.getByRole("button", { name: "Continuar en modo de recuperación" }));
   const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
-  assert.deepEqual(within(navigation).getAllByRole("button").map((button) => button.textContent), ["Dashboard", "Historial de ventas", "Reportes", "Copia y restauración"]);
+  assert.deepEqual(within(navigation).getAllByRole("button").map((button) => button.textContent), ["Métricas", "Historial de ventas", "Reportes", "Copia y restauración"]);
   await user.click(within(navigation).getByRole("button", { name: "Copia y restauración" }));
   const restore = screen.getByRole("button", { name: "Elegir archivo de respaldo" }) as HTMLButtonElement;
   assert.equal(restore.disabled, true);

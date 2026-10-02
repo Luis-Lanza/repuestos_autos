@@ -29,7 +29,7 @@ test("renders the approved hierarchy and complete report facts before opening st
   render(createElement(DashboardScreen, { onOpenInventoryAlerts: () => { opened = true; } }));
 
   const main = await screen.findByRole("main");
-  assert.equal(within(main).getAllByRole("heading", { name: "Dashboard" }).length, 1);
+  assert.equal(within(main).getAllByRole("heading", { level: 1, name: "Métricas" }).length, 1);
   assert.ok(within(main).getByText("Resumen operativo de ventas e inventario."));
   await waitFor(() => assert.equal(main.querySelectorAll("[data-ui-dashboard-metric]").length, 10));
 
