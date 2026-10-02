@@ -13,7 +13,7 @@ Eliminar la sección independiente y sobredimensionada de ganancia bruta. Integr
 
 ## Tareas
 - [x] U1 Mapear los flujos de Reportes, ledger, ganancia, accesibilidad y contratos.
-- [x] U2 Crear un orquestador único de filtros/modos y trasladar ganancia al área de resultados.
+- [x] U2 Crear un orquestador único de filtros/modos y trasladar ganancia al área de resultados. Evidencia: `770b708 feat(reports): unify gross profit mode`.
 - [x] U3 Eliminar la sección duplicada, preservar accesibilidad y validar regresiones de movimientos/ganancia/PDF. Evidencia: 38 pruebas enfocadas y `npm run typecheck:tests` pasaron; `git diff --check` pasó.
 - [ ] U4 Verificar el modo Ganancia bruta y el PDF unificado en Windows.
 
