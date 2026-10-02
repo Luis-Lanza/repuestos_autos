@@ -12,7 +12,7 @@ Keep Inventory on All Stock regardless of alert entry, preserve current product 
 
 ## Tasks
 - [x] I1 Keep the Inventory entry state on All Stock and cover alert navigation. — Implemented in `de8f80b` (`fix(inventory): keep alert navigation on all stock`); focused mounted test and independent verification passed. Native review preflight stopped because RDD is disabled.
-- [~] I2 Make all Stock Entry price inputs optional while preserving omitted persisted values.
+- [x] I2 Make all Stock Entry price inputs optional while preserving omitted persisted values. — Implemented in `9712a0a` (`feat(inventory): preserve omitted stock entry prices`); lock metadata synchronized separately in `24ba59a` (`chore(tauri): sync package lock version`). Frontend 35/35 and Rust 21/21 focused tests passed; native review preflight stopped because RDD is disabled.
 - [ ] I3 Require shared Catalog-password verification for physical-count confirmation end to end.
 - [ ] I4 Run focused Rust/frontend checks and record Windows smoke cases.
 
