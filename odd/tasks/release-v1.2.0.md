@@ -7,11 +7,11 @@ Prepare and publish the Inventory and Windows-logo feature release from merged m
 - Maintainer approved version `1.2.0` (latest published release is `v1.1.1`). Never reuse or move an existing version tag.
 - Maintainer chose no Authenticode signing; Windows security warnings are expected.
 - Preserve identifier `com.repuestosautos.app`.
-- Release preparation is authorized; obtain explicit commit/push/tag/publication authority before those actions.
+- Maintainer explicitly authorized the version-preparation commit and push. Tag/publication authority and successful Windows artifact/update verification remain required before release delivery.
 - Do not uninstall or reset customer data. Before customer delivery, require verified backup on fixed NTFS and user-observed in-place update smoke over the previous installed version.
 
 ## Tasks
-- [x] R1 Align application and Cargo versions to 1.2.0 on `chore/release-1.2.0` and verify static metadata consistency.
+- [x] R1 Align application and Cargo versions to 1.2.0 on `chore/release-1.2.0` and verify static metadata consistency. Committed and pushed as `ed70185` (`chore(release): align application version to 1.2.0`); independent metadata verification passed.
 - [ ] R2 Generate and identify the Windows NSIS installer; verify backup and in-place smoke (launch, data, license, Catalog access, Sales, Inventory, Reports, icons).
 - [ ] R3 After explicit delivery authority and successful smoke, create an immutable annotated tag and GitHub Release with the verified Windows installer attached.
 
