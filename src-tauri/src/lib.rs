@@ -721,6 +721,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         browse_sale_products_command,
         dashboard_command,
         gross_profit_report_command,
+        gross_profit_operations_command,
         confirm_sale_command,
         create_sale_return_command,
         cancel_sale_command,
@@ -1156,6 +1157,21 @@ fn gross_profit_report_command(
         .unwrap_or_else(|_| commands::gross_profit::GrossProfitResponse::Error(commands::gross_profit::GrossProfitError {
             code: "persistence_failure", message: "The gross-profit report could not be loaded.",
         }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn gross_profit_operations_command(
+    state: tauri::State<AppState>,
+    request: commands::gross_profit_operations::GrossProfitOperationsRequest,
+) -> commands::gross_profit_operations::GrossProfitOperationsResponse {
+    state.with_read(|connection| Ok(commands::gross_profit_operations::gross_profit_operations(connection, request)))
+        .unwrap_or_else(|_| commands::gross_profit_operations::GrossProfitOperationsResponse::Error(
+            commands::gross_profit_operations::GrossProfitOperationsError {
+                code: "persistence_failure",
+                message: "The gross-profit operations could not be loaded.",
+            },
+        ))
 }
 
 #[cfg(feature = "desktop")]
@@ -2080,6 +2096,22 @@ mod command_surface_tests {
             "month_from_utc": "2024-03-01T05:00:00Z",
             "month_to_exclusive_utc": "2024-04-01T04:00:00Z"
         }))).is_ok());
+        assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
+    }
+
+    #[test]
+    fn registers_gross_profit_operations_command_with_strict_paged_request_at_ipc_seam() {
+        let (app, window) = test_window();
+        let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();
+        let response = get_ipc_response(&window, request_with("gross_profit_operations_command", serde_json::json!({
+            "from_utc": "2024-03-10T05:00:00.000Z",
+            "to_exclusive_utc": "2024-03-11T04:00:00.000Z",
+            "page": 1,
+            "page_size": 20
+        }))).unwrap();
+        let payload = response.deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(payload["kind"], "success");
+        assert_eq!(payload["report"]["total"], 0);
         assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
     }
 

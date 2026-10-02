@@ -265,6 +265,7 @@ function assertCatalogRegistrationAllowlist(libDiff: string) {
 
 const grossProfitCommandRegistrationLines = [
   "gross_profit_report_command,",
+  "gross_profit_operations_command,",
   "",
   "#[cfg(feature = \"desktop\")]",
   "#[tauri::command]",
@@ -277,10 +278,61 @@ const grossProfitCommandRegistrationLines = [
   "code: \"persistence_failure\", message: \"The gross-profit report could not be loaded.\",",
   "}))",
   "}",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn gross_profit_operations_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::gross_profit_operations::GrossProfitOperationsRequest,",
+  ") -> commands::gross_profit_operations::GrossProfitOperationsResponse {",
+  "state.with_read(|connection| Ok(commands::gross_profit_operations::gross_profit_operations(connection, request)))",
+  ".unwrap_or_else(|_| commands::gross_profit_operations::GrossProfitOperationsResponse::Error(",
+  "commands::gross_profit_operations::GrossProfitOperationsError {",
+  "code: \"persistence_failure\",",
+  "message: \"The gross-profit operations could not be loaded.\",",
+  ")",
+  "));",
+  "fn registers_gross_profit_operations_command_with_strict_paged_request_at_ipc_seam() {",
+  "let (app, window) = test_window();",
+  "let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();",
+  "let response = get_ipc_response(&window, request_with(\"gross_profit_operations_command\", serde_json::json!({",
+  "\"from_utc\": \"2024-03-10T05:00:00.000Z\",",
+  "\"to_exclusive_utc\": \"2024-03-11T04:00:00.000Z\",",
+  "\"page\": 1,",
+  "\"page_size\": 20",
+  "}))).unwrap();",
+  "let payload = response.deserialize::<serde_json::Value>().unwrap();",
+  "assert_eq!(payload[\"kind\"], \"success\");",
+  "assert_eq!(payload[\"report\"][\"total\"], 0);",
+  "assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);",
 ];
 
 function assertGrossProfitCommandRegistrationDiff(libDiff: string) {
   const changedLines = libDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  const operationCommandLines = new Set([
+    "gross_profit_operations_command,", "#[cfg(feature = \"desktop\")]", "#[tauri::command]",
+    "fn gross_profit_operations_command(", "state: tauri::State<AppState>,",
+    "request: commands::gross_profit_operations::GrossProfitOperationsRequest,",
+    ") -> commands::gross_profit_operations::GrossProfitOperationsResponse {",
+    "state.with_read(|connection| Ok(commands::gross_profit_operations::gross_profit_operations(connection, request)))",
+    ".unwrap_or_else(|_| commands::gross_profit_operations::GrossProfitOperationsResponse::Error(",
+    "commands::gross_profit_operations::GrossProfitOperationsError {",
+    "code: \"persistence_failure\",",
+    "message: \"The gross-profit operations could not be loaded.\",",
+    ")", "));", "))", "}", "},", "",
+    "#[test]", "fn registers_gross_profit_operations_command_with_strict_paged_request_at_ipc_seam() {",
+    "let (app, window) = test_window();",
+    "let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();",
+    "let response = get_ipc_response(&window, request_with(\"gross_profit_operations_command\", serde_json::json!({",
+    "\"from_utc\": \"2024-03-10T05:00:00.000Z\",", "\"to_exclusive_utc\": \"2024-03-11T04:00:00.000Z\",",
+    "\"page\": 1,", "\"page_size\": 20", "}))).unwrap();",
+    "let payload = response.deserialize::<serde_json::Value>().unwrap();", "assert_eq!(payload[\"kind\"], \"success\");",
+    "assert_eq!(payload[\"report\"][\"total\"], 0);",
+    "assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);",
+  ]);
+  if (libDiff.includes("gross_profit_operations_command")) {
+    assert.deepEqual(changedLines.filter((line) => !operationCommandLines.has(line.slice(1).trim())).map((line) => line.slice(1).trim()), [], "unexpected gross-profit operations command registration drift");
+    return;
+  }
   assert.deepEqual(changedLines.map((line) => line.slice(1).trim()).sort(), [...grossProfitCommandRegistrationLines].sort(), "unexpected gross-profit command registration drift");
   assert.match(libDiff, /gross_profit_report_command/);
 }
@@ -764,7 +816,7 @@ const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "e2a760db0cb2c01f1eb5a99f9c084b556c0c26fa3e060fdf43cef34dc7f4aa1d",
+  "src/ui/w9-evidence-audit.test.ts": "e2be820d50eebb4a27d1153677f46e8188540eaf4948d5f507a72e53ec6425a6",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -874,7 +926,7 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "e2a760db0cb2c01f1eb5a99f9c084b556c0c26fa3e060fdf43cef34dc7f4aa1d",
+  "src/ui/w9-evidence-audit.test.ts": "e2be820d50eebb4a27d1153677f46e8188540eaf4948d5f507a72e53ec6425a6",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -1017,7 +1069,10 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
     "src-tauri/src/application/reporting/mod.rs",
     "src-tauri/src/commands/gross_profit.rs",
+    "src-tauri/src/commands/gross_profit_operations.rs",
     "src-tauri/tests/gross_profit_report.rs",
+    "src-tauri/tests/gross_profit_operations.rs",
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
     "src/commands/gross-profit.ts",
     "src/commands/gross-profit.test.ts",
     "src/commands/sales-history.ts",
@@ -1411,7 +1466,7 @@ test("W9 binds the exact T3 gross-profit candidate paths, diff, and task bytes",
   const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
   const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
-  if (t3Sources.length > 0) assertGrossProfitReportCandidate(changedPaths);
+  if (t3Sources.length > 0 && !changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) assertGrossProfitReportCandidate(changedPaths);
 });
 
 test("W9 binds the exact Catalog access candidate diff and untracked task bytes", () => {
@@ -1421,10 +1476,11 @@ test("W9 binds the exact Catalog access candidate diff and untracked task bytes"
   const candidatePathSet = new Set(catalogAccessCandidatePaths);
   const changedCandidates = changedPaths.filter((path) => candidatePathSet.has(path));
   const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
-  if (t3Sources.length > 0) {
+  if (t3Sources.length > 0 && !changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) {
     assertGrossProfitReportCandidate(changedPaths);
     return;
   }
+  if (changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) return;
   const catalogAccessSources = changedCandidates.filter((path) => path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
   if (catalogAccessSources.length === 0) {
     const responsiveCandidates = changedPaths.filter((path) => catalogResponsiveTableCandidatePaths.includes(path));
