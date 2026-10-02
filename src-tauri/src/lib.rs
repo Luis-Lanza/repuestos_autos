@@ -1774,7 +1774,7 @@ mod command_surface_tests {
         let license = commands::license::LicenseCommandState::new(
             application::license::LicenseService::new(
                 infrastructure::windows_machine_identity::SystemMachineIdentity,
-                application::license::FileLicenseStorage::new(std::env::temp_dir()),
+                application::license::FileLicenseStorage::new(&std::env::temp_dir()),
             ),
         );
         license.set_test_authorized(authorized);
