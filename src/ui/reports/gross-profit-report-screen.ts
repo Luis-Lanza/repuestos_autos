@@ -23,6 +23,7 @@ export function GrossProfitReportScreen({ period }: { period?: Period } = {}) {
  };
  useEffect(() => { runRange(period ?? state.applied); }, [period?.from, period?.to]);
  const valid = Boolean(state.draft.from && state.draft.to && state.draft.from <= state.draft.to);
+ const exportReady = state.summary_status === "ready" && state.operations_status === "ready";
  const requestPage = (page: number) => {
   if (pageRequestInFlight.current !== null || state.operations_status !== "ready") return;
   const requestId = ++operationsRequest.current; const rangeId = state.range_id; pageRequestInFlight.current = requestId;
@@ -30,7 +31,7 @@ export function GrossProfitReportScreen({ period }: { period?: Period } = {}) {
   void grossProfitOperationsCommands.load(state.applied.from, state.applied.to, page).then(response => { if (!mounted.current || rangeId !== rangeRequest.current || requestId !== operationsRequest.current) return; dispatch(response.kind === "success" ? { type: "operations_succeeded", range_id: rangeId, operations_request_id: requestId, report: response.report } : { type: "operations_failed", range_id: rangeId, operations_request_id: requestId }); }).finally(() => { if (pageRequestInFlight.current === requestId) pageRequestInFlight.current = null; });
  };
  const exportPdf = () => {
-  if (state.range_id === 0 || exportInFlight.current) return;
+  if (!exportReady || exportInFlight.current) return;
   exportInFlight.current = true;
   dispatch({ type: "export_started" });
   void exportGrossProfitOperationsCommand(state.applied.from, state.applied.to).then(response => {
@@ -55,8 +56,9 @@ export function GrossProfitReportScreen({ period }: { period?: Period } = {}) {
    createElement(Field, { kind: "date", label: "Desde", control: createElement("input", { type: "date", required: true, value: state.draft.from, onChange: (event: Event) => dispatch({ type: "draft_changed", period: { ...state.draft, from: (event.currentTarget as HTMLInputElement).value } }) }) }),
    createElement(Field, { kind: "date", label: "Hasta", control: createElement("input", { type: "date", required: true, value: state.draft.to, onChange: (event: Event) => dispatch({ type: "draft_changed", period: { ...state.draft, to: (event.currentTarget as HTMLInputElement).value } }) }) }),
    createElement(Action, { variant: "primary", type: "submit", disabled: !valid }, "Aplicar período")))),
-  createElement(Panel, { label: "Ganancia bruta" }, status,
-   createElement(Action, { variant: "secondary", onClick: exportPdf, disabled: state.range_id === 0 || state.export_status === "pending" }, state.export_status === "pending" ? "Exportando PDF…" : "Exportar PDF"),
+  createElement(Panel, { label: period ? "Resultados" : "Ganancia bruta" },
+   createElement("div", { "data-ui-report-actions": true }, createElement(Action, { variant: "secondary", onClick: exportPdf, disabled: !exportReady, pending: state.export_status === "pending", pendingLabel: "Exportar PDF" }, "Exportar PDF")),
+   status,
    exportFeedback ? createElement(Feedback, { kind: state.export_status === "error" || state.export_status === "resource_limit" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportFeedback) : null,
    state.report ? createElement("section", { "aria-label": "Total de ganancia bruta", "data-ui-gross-profit-total": true }, createElement("p", null, `Período: ${state.applied.from} al ${state.applied.to}`), createElement("h2", null, money(state.report.amount_centavos)), state.report.missing_cost_line_count > 0 ? createElement(Feedback, { kind: "advisory" }, `Cálculo parcial: ${state.report.missing_cost_line_count} línea(s) no tienen costo histórico conocido. Esas líneas se excluyen del total; no se estima su costo con el catálogo actual.`) : null) : null,
    createElement("section", { "aria-label": "Operaciones de ganancia bruta" }, operationsStatus,

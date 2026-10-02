@@ -31,6 +31,15 @@ async function submitSearch(query = "filtro") {
  await user.type(input, `${query}{Enter}`);
  return user;
 }
+function assertSharedPdfAction(panel: HTMLElement) {
+ const heading = panel.querySelector("h2");
+ const actionBar = panel.querySelector("[data-ui-report-actions]");
+ assert.ok(heading);
+ assert.equal(actionBar?.previousElementSibling, heading, "the PDF action bar follows the Results heading");
+ assert.equal(actionBar?.parentElement, panel);
+ const button = actionBar?.querySelector('[data-ui-action="secondary"]');
+ assert.equal(button?.textContent, "Exportar PDF");
+}
 test("applies shared dates to the gross-profit mode and exposes only its historical PDF action", async () => {
  const movementExports: unknown[] = []; const profitExports: unknown[] = []; const movementRequests: unknown[] = [];
  mockIPC((command, payload) => {
@@ -44,6 +53,8 @@ test("applies shared dates to the gross-profit mode and exposes only its histori
  });
  const user = userEvent.setup({ document }); render(createElement(MovementLedgerScreen));
  await screen.findByRole("table");
+ assertSharedPdfAction(screen.getByRole("region", { name: "Resultados" }));
+ assert.equal(screen.getAllByRole("button", { name: "Exportar PDF" }).length, 1);
  assert.equal((screen.getByRole("combobox", { name: "Tipo de movimiento" }) as HTMLSelectElement).value, "");
  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "gross_profit");
  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-10" } });
@@ -56,6 +67,8 @@ test("applies shared dates to the gross-profit mode and exposes only its histori
  assert.equal(screen.queryByRole("button", { name: "Aplicar período" }), null);
  assert.equal(screen.queryByRole("searchbox", { name: "Buscar producto por nombre o SKU" }), null);
  assert.equal(screen.getAllByRole("button", { name: "Exportar PDF" }).length, 1);
+ assertSharedPdfAction(screen.getByRole("region", { name: "Resultados" }));
+ assert.equal(screen.queryByRole("region", { name: "Ganancia bruta" }), null);
  assert.equal(screen.queryByRole("region", { name: "Movimientos" }), null);
  await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
  assert.ok(await screen.findByText("PDF guardado correctamente."));
@@ -66,6 +79,50 @@ test("applies shared dates to the gross-profit mode and exposes only its histori
 });
 const report = { kind: "success", report: { amount_centavos: 1250, missing_cost_line_count: 0, activity_count: 1 } };
 const historicalOperations = { kind: "success", report: { rows: [{ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: 7, return_id: null, product_name: "Filtro histórico", sku: "SKU-7", signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: 500, cost_state: "known", signed_gross_profit_centavos: 1500 }], page: 1, page_size: 20, total: 1, total_pages: 1 } };
+test("keeps the unified gross-profit PDF disabled until results are ready", async () => {
+ for (const resultState of ["loading", "error", "empty"] as const) {
+  let finishSummary!: (value: unknown) => void;
+  let finishOperations!: (value: unknown) => void;
+  let exports = 0;
+  mockIPC(command => {
+   if (command === "list_movement_ledger_command") return page();
+   if (command === "gross_profit_report_command") {
+    if (resultState === "loading") return new Promise(resolve => { finishSummary = resolve; });
+    if (resultState === "error") return { kind: "error", code: "persistence_failure", message: "bounded" };
+    return { ...report, report: { ...report.report, activity_count: 0 } };
+   }
+   if (command === "gross_profit_operations_command") {
+    if (resultState === "loading") return new Promise(resolve => { finishOperations = resolve; });
+    if (resultState === "error") return { kind: "error", code: "persistence_failure", message: "bounded" };
+    return operations([], 1, 0);
+   }
+   if (command === "export_gross_profit_operations_command") { exports++; return { kind: "success" }; }
+   throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  const mounted = render(createElement(MovementLedgerScreen));
+  await screen.findByText("Filtro actual");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Tipo de movimiento" }), "gross_profit");
+  await user.click(screen.getByRole("button", { name: "Aplicar filtros" }));
+  const pdf = screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement;
+  assert.equal(pdf.disabled, true, `${resultState}: unavailable gross-profit results must not export`);
+  if (resultState === "loading") {
+   assert.ok(await screen.findByText("Cargando ganancia bruta…"));
+   await act(async () => { finishSummary(report); finishOperations(historicalOperations); });
+   await screen.findByRole("heading", { name: "Bs 12.50" });
+   assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, false);
+  } else if (resultState === "error") {
+   assert.ok(await screen.findByText(/No se pudo cargar el informe/));
+   assert.ok(await screen.findByText(/No se pudieron cargar las operaciones/));
+   assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
+  } else {
+   assert.ok(await screen.findByText("No hay ventas ni devoluciones en el período aplicado."));
+   assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
+  }
+  assert.equal(exports, 0);
+  mounted.unmount();
+ }
+});
 test("starts with loading ledger and does not eagerly request an unbounded product list", async () => {
  const { searches } = mount(); render(createElement(MovementLedgerScreen));
  assert.ok(await screen.findByText("Cargando movimientos…"));

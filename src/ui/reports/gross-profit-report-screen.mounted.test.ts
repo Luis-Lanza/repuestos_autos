@@ -11,7 +11,10 @@ test("shows signed summary, missing-cost disclosure, and accessible Spanish oper
  mockIPC(command => command === "gross_profit_report_command" ? report(-1250, 2) : operations());
  render(createElement(GrossProfitReportScreen));
  assert.ok(await screen.findByRole("heading", { name: "Bs −12.50" }));
- assert.ok(screen.getByRole("region", { name: "Ganancia bruta" }));
+ const results = screen.getByRole("region", { name: "Ganancia bruta" });
+ const actionBar = results.querySelector("[data-ui-report-actions]");
+ assert.equal(actionBar?.previousElementSibling, results.querySelector("h2"));
+ assert.equal(actionBar?.querySelector('[data-ui-action="secondary"]')?.textContent, "Exportar PDF");
  assert.match(screen.getByText(/2 línea\(s\) no tienen costo histórico conocido/).textContent ?? "", /se excluyen del total/);
  const table = await screen.findByRole("table", { name: /Operaciones del período aplicado:/ });
  for (const name of ["Fecha y hora", "Operación", "Producto", "Cantidad", "Precio final", "Costo histórico", "Ganancia bruta"]) assert.ok(screen.getByRole("columnheader", { name }));
@@ -135,7 +138,7 @@ test("exports the applied range instead of drafts or the current page and preven
  assert.equal((exportRequests[0]?.from as Record<string, unknown>).local_date, "2024-03-10");
  assert.equal((exportRequests[0]?.to_exclusive as Record<string, unknown>).local_date, "2024-03-21");
  assert.ok(await screen.findByText("Guardando PDF…"));
- assert.equal((screen.getByRole("button", { name: "Exportando PDF…" }) as HTMLButtonElement).disabled, true);
+ assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
  assert.ok(screen.getByText(/Operaciones del período aplicado:/));
  await act(async () => { finishExport({ kind: "success" }); });
  assert.ok(await screen.findByText("PDF guardado correctamente."));
@@ -160,8 +163,8 @@ test("range changes during an export keep the original request pending and block
  fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-15" } });
  fireEvent.click(screen.getByRole("button", { name: "Aplicar período" }));
  await screen.findByRole("table", { name: /2024-03-15/ });
- assert.equal((screen.getByRole("button", { name: "Exportando PDF…" }) as HTMLButtonElement).disabled, true);
- fireEvent.click(screen.getByRole("button", { name: "Exportando PDF…" }));
+ assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, true);
+ fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
  assert.equal(exportCalls, 1);
  assert.equal(originalFrom, "2024-03-10");
  await act(async () => { finishExport({ kind: "cancelled" }); });
