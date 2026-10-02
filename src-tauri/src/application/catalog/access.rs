@@ -81,6 +81,13 @@ impl CatalogAccessSession {
         Ok(())
     }
 
+    pub fn verify_password(&self, password: &str) -> Result<(), CatalogAccessError> {
+        let inner = self.inner.lock().map_err(|_| CatalogAccessError::Storage)?;
+        if inner.unavailable { return Err(CatalogAccessError::Storage); }
+        let config = inner.config.as_ref().ok_or(CatalogAccessError::NotConfigured)?;
+        if verify_secret(password, &config.password_hash) { Ok(()) } else { Err(CatalogAccessError::Unauthorized) }
+    }
+
     pub fn unlock(&self, password: &str) -> Result<(), CatalogAccessError> {
         let mut inner = self.inner.lock().map_err(|_| CatalogAccessError::Storage)?;
         if inner.unavailable { return Err(CatalogAccessError::Storage); }
@@ -143,6 +150,30 @@ fn new_recovery_code() -> String {
     let mut bytes = [0_u8; RECOVERY_CODE_BYTES];
     OsRng.fill_bytes(&mut bytes);
     bytes.iter().map(|byte| format!("{byte:02X}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_verification_is_pure_and_tracks_password_changes() {
+        let directory = std::env::temp_dir().join(format!("catalog-verify-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let access = CatalogAccessSession::open(CatalogAccessStore::new(&directory));
+        access.begin_setup("old-password").unwrap();
+        access.finish_setup(true).unwrap();
+        access.lock().unwrap();
+        assert_eq!(access.verify_password("old-password"), Ok(()));
+        assert_eq!(access.status(), CatalogAccessStatus::Locked, "verification must not unlock Catalog");
+        assert_eq!(access.verify_password("wrong-password"), Err(CatalogAccessError::Unauthorized));
+        access.change_password("old-password", "new-password").unwrap();
+        assert_eq!(access.verify_password("old-password"), Err(CatalogAccessError::Unauthorized));
+        assert_eq!(access.verify_password("new-password"), Ok(()));
+        assert_eq!(access.status(), CatalogAccessStatus::Unlocked);
+        drop(access);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 impl From<CatalogAccessStorageError> for CatalogAccessError {

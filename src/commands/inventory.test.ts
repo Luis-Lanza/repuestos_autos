@@ -66,6 +66,18 @@ test("bounds alert error variants and rejects unknown top-level kinds", async ()
   }
 });
 
+test("sends only the Catalog credential with physical-count IPC and decodes bounded authorization errors", async () => {
+  const calls: unknown[] = [];
+  const commands = createInventoryCommands(async (command, payload) => {
+    calls.push({ command, payload });
+    return { kind: "error", code: "catalog_password_invalid", message: "secret native details" };
+  });
+  const result = await commands.confirmPhysicalCount({ request_id: "request", product_id: 1, count: 0, reason: "counted", catalog_password: "catalog-secret" });
+  assert.deepEqual(calls, [{ command: "confirm_physical_count_command", payload: { request: { request_id: "request", product_id: 1, count: 0, reason: "counted", catalog_password: "catalog-secret" } } }]);
+  assert.deepEqual(result, { kind: "error", code: "catalog_password_invalid", message: "The inventory operation could not be completed." });
+  assert.doesNotMatch(JSON.stringify(result), /catalog-secret|secret native details/);
+});
+
 test("rejects fractional inventory quantities before invoking IPC", async () => {
   const commands = createInventoryCommands(async () => ({ kind: "success" }));
   assert.deepEqual(await commands.confirmStockEntry({ request_id: "550e8400-e29b-41d4-a716-446655440212", product_id: 1, quantity: 1.5, unit_purchase_price_centavos: 100, note: null }), { kind: "error", code: "invalid_quantity", message: "The inventory operation could not be completed." });

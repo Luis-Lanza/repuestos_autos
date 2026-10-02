@@ -53,6 +53,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const [state, dispatch] = useReducer(createInventoryFlow, initialInventoryState);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
   const [alertState, setAlertState] = useState<LoadState>("loading");
+  const [catalogPassword, setCatalogPassword] = useState("");
   const mounted = useRef(true);
   const searchAttempt = useRef(0);
   const alertAttempt = useRef(0);
@@ -99,20 +100,21 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     await browsePage(browser.query, browser.category_id, browser.stock_state, page);
   };
   const confirm = async () => {
-    if (!state.product || confirmLocked.current) return;
+    if (!state.product || confirmLocked.current || (state.operation === "physical_count" && !catalogPassword.trim())) return;
     confirmLocked.current = true;
     const request_id = state.request_id ?? crypto.randomUUID();
     dispatch({ type: "confirmation_started", request_id });
     const response: InventoryResponse = state.operation === "stock_entry"
       ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), ...(stockEntryPrices(state).purchase === undefined ? {} : { unit_purchase_price_centavos: stockEntryPrices(state).purchase! }), ...(stockEntryPrices(state).sale === undefined ? {} : { sale_price_centavos: stockEntryPrices(state).sale! }), ...(stockEntryPrices(state).minimum === undefined ? {} : { minimum_sale_price_centavos: stockEntryPrices(state).minimum! }), note: state.note || null })
-      : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason });
+      : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason, catalog_password: catalogPassword });
     if (!mounted.current) return;
+    setCatalogPassword("");
     confirmLocked.current = false;
     if (response.kind === "success") {
       dispatch({ type: "confirmation_succeeded", result: response });
       props.onInventoryAlertsRefresh?.();
       await refreshAlerts();
-    } else dispatch({ type: "confirmation_failed", message: response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : "No se pudo guardar la operación de inventario. Reintentá." });
+    } else dispatch({ type: "confirmation_failed", message: response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : response.code === "catalog_password_invalid" ? "La contraseña del catálogo no es correcta. Ingresala de nuevo." : "No se pudo guardar la operación de inventario. Reintentá." });
   };
 
   const projection = projectedBalance(state);
@@ -120,7 +122,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const value = state.operation === "stock_entry" ? state.entry_quantity : state.physical_count;
   const whole = value.trim() !== "" && Number.isSafeInteger(Number(value)) && (state.operation === "stock_entry" ? Number(value) > 0 : Number(value) >= 0);
   const prices = stockEntryPrices(state);
-  const valid = whole && (state.operation === "physical_count" ? Boolean(state.reason.trim()) : prices.valid);
+  const valid = whole && (state.operation === "physical_count" ? Boolean(state.reason.trim() && catalogPassword.trim()) : prices.valid);
   const sortedAlerts = [...state.alerts].sort((a, b) => a.classification === b.classification ? 0 : a.classification === "out_of_stock" ? -1 : 1);
 
   return createElement("main", {
@@ -133,13 +135,13 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     createElement("div", { "data-ui-inventory-layout": true },
       createElement(Panel, { label: "Operación de inventario" } as never,
         !state.product && browser.status === "results" ? createElement("p", { "data-ui-inventory-intro": true }, "Seleccioná un producto para comenzar.") : null,
-        !state.product ? createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => dispatch(catalog.select(product)), actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
+        !state.product ? createElement(ProductBrowser, { state: browser, loadingMessage: "Buscando productos…", searchLabel: "Buscar producto", initialMessage: "Seleccioná un producto para comenzar.", onQueryChange: (value) => browserDispatch({ type: "query_changed", value }), onCategoryChange: (value) => browserDispatch({ type: "category_changed", value }), onStockStateChange: (value) => browserDispatch({ type: "stock_state_changed", value }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { setCatalogPassword(""); dispatch(catalog.select(product)); }, actionLabel: "Seleccionar", allowUnavailableSelection: true, disabled: pending }) as never : null,
         state.product ? createElement("div", { "data-ui-inventory-operation": true, "aria-busy": pending || undefined },
           createElement("div", { "data-ui-inventory-selection": true },
             createElement("div", { "data-ui-inventory-identity": true }, createElement("strong", null, state.product.name), createElement("span", { "data-ui-kind": "sku" }, `SKU: ${(state.product as Product).sku}`)),
             createElement("span", { "data-ui-inventory-stock": true }, `Stock actual: ${state.product.available_quantity}`),
             createElement("span", { "data-ui-inventory-primary-location": true }, `Ubicación principal: ${state.product.primary_location_code ?? "Sin ubicación asignada"}`)),
-          createElement(InventoryOperationChoices, { operation: state.operation, disabled: pending, onChange: (operation) => dispatch({ type: "operation_changed", operation }) }),
+          createElement(InventoryOperationChoices, { operation: state.operation, disabled: pending, onChange: (operation) => { setCatalogPassword(""); dispatch({ type: "operation_changed", operation }); } }),
           createElement("div", { "data-ui-inventory-fields": true }, state.operation === "stock_entry"
             ? createElement(Field, { kind: "quantity", label: "Cantidad (unidades enteras)", hint: "Solo unidades enteras positivas.", error: value && !whole ? "Ingresá una cantidad entera mayor que cero." : undefined, control: createElement("input", { min: 1, value, disabled: pending, onChange: (event) => dispatch({ type: "entry_quantity_changed", value: event.target.value }) }) } as never)
             : createElement(Field, { kind: "quantity", label: "Conteo físico (unidades enteras)", error: value && !whole ? "Ingresá un conteo entero igual o mayor que cero." : undefined, control: createElement("input", { min: 0, value, disabled: pending, onChange: (event) => dispatch({ type: "physical_count_changed", value: event.target.value }) }) } as never),
@@ -148,10 +150,11 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
               createElement(Field, { kind: "money", label: "Precio de venta (Bs)", error: state.sale_price && prices.sale === null ? "Ingresá un precio de venta positivo y válido." : undefined, control: createElement("input", { value: state.sale_price, disabled: pending, onChange: (event) => dispatch({ type: "sale_price_changed", value: event.target.value }) }) } as never),
               createElement(Field, { kind: "money", label: "Precio mínimo de venta (Bs)", error: state.minimum_sale_price && prices.minimum === null ? "Ingresá un precio mínimo de venta positivo y válido." : prices.valid || (!state.minimum_sale_price && !state.sale_price) ? undefined : "El precio mínimo no puede superar el precio de venta." , control: createElement("input", { value: state.minimum_sale_price, disabled: pending, onChange: (event) => dispatch({ type: "minimum_sale_price_changed", value: event.target.value }) }) } as never),
             ] : []),
-            createElement(Field, { kind: "text", label: state.operation === "stock_entry" ? "Nota (opcional)" : "Motivo", error: state.operation === "physical_count" && !state.reason.trim() ? "Ingresá el motivo del conteo físico." : undefined, control: createElement("input", { required: state.operation === "physical_count", value: state.operation === "stock_entry" ? state.note : state.reason, disabled: pending, onChange: (event) => dispatch({ type: state.operation === "stock_entry" ? "note_changed" : "reason_changed", value: event.target.value } as Parameters<typeof dispatch>[0]) }) } as never)),
+            createElement(Field, { kind: "text", label: state.operation === "stock_entry" ? "Nota (opcional)" : "Motivo", error: state.operation === "physical_count" && !state.reason.trim() ? "Ingresá el motivo del conteo físico." : undefined, control: createElement("input", { required: state.operation === "physical_count", value: state.operation === "stock_entry" ? state.note : state.reason, disabled: pending, onChange: (event) => dispatch({ type: state.operation === "stock_entry" ? "note_changed" : "reason_changed", value: event.target.value } as Parameters<typeof dispatch>[0]) }) } as never),
+            ...(state.operation === "physical_count" ? [createElement(Field, { kind: "text", label: "Contraseña del catálogo", control: createElement("input", { type: "password", autoComplete: "current-password", required: true, value: catalogPassword, disabled: pending, onChange: (event) => setCatalogPassword(event.target.value) }) } as never)] : [])),
           projection !== null ? createElement("p", { "data-ui-inventory-projection": true }, `Saldo proyectado: ${projection}`) : null,
           state.advisory_notice ? createElement(Feedback, { kind: "stale" } as never, "Saldo proyectado desactualizado. Revisá el stock actual.") : null,
-          createElement("div", { "data-ui-inventory-actions": true }, createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => dispatch({ type: "discard" }) }, "Nueva operación"), createElement(Action, { variant: "primary", pending, pendingLabel: "Guardando…", disabled: !valid, onClick: confirm }, "Confirmar operación")),
+          createElement("div", { "data-ui-inventory-actions": true }, createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => { setCatalogPassword(""); dispatch({ type: "discard" }); } }, "Nueva operación"), createElement(Action, { variant: "primary", pending, pendingLabel: "Guardando…", disabled: !valid, onClick: confirm }, "Confirmar operación")),
           state.result ? createElement(Feedback, { kind: "success" } as never, `Operación guardada. Stock actual: ${state.result.resulting_quantity}.`) : null,
           state.feedback ? createElement(Feedback, { kind: "error" } as never, createElement("span", null, state.feedback, " ", createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar"))) : null) : null),
       createElement(Panel, { label: "Alertas de stock" } as never,

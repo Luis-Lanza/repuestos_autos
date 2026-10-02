@@ -383,6 +383,7 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   assert.equal(screen.queryByText("Saldo proyectado: 0"), null);
   assert.equal((screen.getByRole("button", { name: "Confirmar operación" }) as HTMLButtonElement).disabled, true);
   await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
+  await user.type(screen.getByLabelText("Contraseña del catálogo"), "current-password");
   assert.ok(screen.getByText("Saldo proyectado: 0"));
   assert.ok(within(screen.getByRole("region", { name: "Operación de inventario" })).getByRole("textbox", { name: "Motivo" }));
   assert.ok(within(screen.getByRole("region", { name: "Alertas de stock" })).getByText("Correa"));
@@ -392,6 +393,54 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   const items = within(screen.getByRole("region", { name: "Alertas de stock" })).getAllByRole("listitem");
   assert.match(items[0].textContent ?? "", /Sin stock: 0.*Correa/);
   assert.match(items[1].textContent ?? "", /Stock bajo: 1.*Bujía/);
+});
+
+test("requires an accessible Catalog password for physical counts and never exposes the secret", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  let attempts = 0;
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_physical_count_command") {
+      requests.push(payload?.request as Record<string, unknown>);
+      attempts += 1;
+      return attempts === 1 ? { kind: "error", code: "catalog_password_invalid", message: "native secret" } : success("authorized-count");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
+  await user.type(screen.getByRole("textbox", { name: "Motivo" }), "Recuento");
+  const submit = screen.getByRole("button", { name: "Confirmar operación" });
+  assert.equal((submit as HTMLButtonElement).disabled, true);
+  const password = screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement;
+  assert.equal(password.type, "password");
+  await user.type(password, "catalog-secret");
+  assert.equal((submit as HTMLButtonElement).disabled, false);
+  await user.click(screen.getByRole("radio", { name: /Entrada de stock/ }));
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  assert.equal((screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
+  await user.type(screen.getByLabelText("Contraseña del catálogo"), "catalog-secret");
+  await user.click(submit);
+  const error = await screen.findByRole("alert");
+  assert.match(error.textContent ?? "", /La contraseña del catálogo no es correcta/);
+  assert.doesNotMatch(document.body.textContent ?? "", /catalog-secret|native secret/);
+  assert.equal(password.value, "");
+  await user.type(password, "current-secret");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByText("Operación guardada. Stock actual: 11.");
+  assert.equal(password.value, "");
+  assert.deepEqual(requests.map(({ catalog_password, ...rest }) => rest), [
+    { request_id: requests[0].request_id, product_id: 1, count: 0, reason: "Recuento" },
+    { request_id: requests[1].request_id, product_id: 1, count: 0, reason: "Recuento" },
+  ]);
+  assert.deepEqual(requests.map((request) => request.catalog_password), ["catalog-secret", "current-secret"]);
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  assert.equal((screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
 });
 
 test("locks both operation cards while a physical count is pending", async () => {
@@ -407,6 +456,7 @@ test("locks both operation cards while a physical count is pending", async () =>
   await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
   await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
   await user.type(screen.getByRole("textbox", { name: "Motivo" }), "Recuento de depósito");
+  await user.type(screen.getByLabelText("Contraseña del catálogo"), "current-password");
   assert.ok(screen.getByText("Saldo proyectado: 0"));
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   assert.equal((screen.getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement).disabled, true);

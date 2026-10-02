@@ -1333,11 +1333,12 @@ fn confirm_stock_entry_command(
 fn confirm_physical_count_command(
     state: tauri::State<AppState>,
     license: tauri::State<commands::license::LicenseCommandState>,
+    access: tauri::State<application::catalog::access::CatalogAccessSession>,
     request: commands::inventory::PhysicalCountRequest,
 ) -> Result<commands::inventory::InventoryCommandResponse, String> {
     if license.authorize_business_operation().is_err() { return Ok(commands::inventory::InventoryCommandResponse::Error(commands::confirm_sale::CommandError { code: "license_required", message: "A valid license is required to change inventory." })); }
     state.with_write(|connection| {
-        commands::inventory::confirm_physical_count_command(connection, request)
+        commands::inventory::confirm_physical_count_command(connection, &access, request)
     })
 }
 
@@ -1979,6 +1980,31 @@ mod command_surface_tests {
         assert_eq!(detail["code"], "catalog_access_required");
         let maintain = get_ipc_response(&window, request_with("maintain_catalog_command", serde_json::json!({"target":"product","entity_id":1,"intent":"archive","expected_revision":9}))).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(maintain["code"], "catalog_access_required");
+    }
+
+    #[test]
+    fn physical_count_ipc_requires_the_current_catalog_password_without_unlocking_catalog() {
+        let (app, window) = test_window();
+        let access = app.state::<application::catalog::access::CatalogAccessSession>();
+        access.begin_setup("old-password").unwrap();
+        access.finish_setup(true).unwrap();
+        access.lock().unwrap();
+        let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();
+        for payload in [
+            serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440250","product_id":1,"count":7,"reason":"count"}),
+            serde_json::json!({"request_id":"550e8400-e29b-41d4-a716-446655440251","product_id":1,"count":7,"reason":"count","catalog_password":"wrong-password"}),
+        ] {
+            let response = get_ipc_response(&window, request_with("confirm_physical_count_command", payload)).unwrap().deserialize::<serde_json::Value>().unwrap();
+            assert_eq!(response["code"], "catalog_password_invalid");
+            assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
+            assert_eq!(access.status(), application::catalog::access::CatalogAccessStatus::Locked);
+        }
+        let success = get_ipc_response(&window, request_with("confirm_physical_count_command", serde_json::json!({
+            "request_id":"550e8400-e29b-41d4-a716-446655440252","product_id":1,"count":7,"reason":"count","catalog_password":"old-password"
+        }))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(success["kind"], "success");
+        assert_eq!(access.status(), application::catalog::access::CatalogAccessStatus::Locked);
+        assert_ne!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
     }
 
     #[test]
