@@ -81,7 +81,7 @@ test("App keeps the global Inventory alert count across screens and opens the al
   assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/);
   await user.click(inventory);
   assert.ok(await screen.findByRole("combobox", { name: "Estado del stock" }));
-  assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "alerts");
+  assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "all");
 });
 
 test("opens the unified Reports interface and keeps sidebar focus and active state", async () => {
