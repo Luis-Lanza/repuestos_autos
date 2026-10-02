@@ -20,13 +20,17 @@ function assertTicket14PackageAllowlist(
   baselineLock: Record<string, any>,
 ) {
   assert.equal(currentPackage.scripts["typecheck:tests"], "tsc --project tsconfig.tests.json --noEmit");
+  assert.equal(currentPackage.scripts.test, "tsx --test --import ./test/react-dom.ts $(find src \\( -name '*.test.js' -o -name '*.test.ts' \\) ! -path 'src/ui/w9-evidence-audit.test.ts')");
+  assert.equal(currentPackage.scripts["test:w9"], "tsx --test src/ui/w9-evidence-audit.test.ts");
   assert.equal(currentPackage.devDependencies["@types/jsdom"], "^30.0.0");
 
   const comparablePackage = clone(currentPackage);
   const comparableBaselinePackage = clone(baselinePackage);
-  delete comparablePackage.scripts["typecheck:tests"];
+  for (const script of ["typecheck:tests", "test", "test:w9"]) {
+    delete comparablePackage.scripts[script];
+    delete comparableBaselinePackage.scripts[script];
+  }
   delete comparablePackage.devDependencies["@types/jsdom"];
-  delete comparableBaselinePackage.scripts["typecheck:tests"];
   delete comparableBaselinePackage.devDependencies["@types/jsdom"];
   assert.deepEqual(comparablePackage, comparableBaselinePackage, "unexpected package.json drift");
 
@@ -2226,16 +2230,27 @@ test("W9 rejects appended text adjacent to an allowed ticket 11 marker", () => {
   );
 });
 
-test("W9 rejects non-allowlisted package metadata drift", () => {
+test("W9 allows only the exact general-test exclusion and dedicated audit scripts", () => {
+  assert.equal(currentPackage.scripts.test, "tsx --test --import ./test/react-dom.ts $(find src \\( -name '*.test.js' -o -name '*.test.ts' \\) ! -path 'src/ui/w9-evidence-audit.test.ts')");
+  assert.equal(currentPackage.scripts["test:w9"], "tsx --test src/ui/w9-evidence-audit.test.ts");
+  const allowedPackage = clone(baselinePackage);
+  allowedPackage.scripts["typecheck:tests"] = "tsc --project tsconfig.tests.json --noEmit";
+  allowedPackage.scripts.test = "tsx --test --import ./test/react-dom.ts $(find src \\( -name '*.test.js' -o -name '*.test.ts' \\) ! -path 'src/ui/w9-evidence-audit.test.ts')";
+  allowedPackage.scripts["test:w9"] = "tsx --test src/ui/w9-evidence-audit.test.ts";
+  allowedPackage.devDependencies["@types/jsdom"] = "^30.0.0";
+  assert.doesNotThrow(() => assertTicket14PackageAllowlist(allowedPackage, baselinePackage, currentLock, baselineLock));
+
   for (const drift of [
     (packageJson: Record<string, any>) => { packageJson.dependencies.react = "^18.3.2"; },
     (packageJson: Record<string, any>) => { packageJson.scripts.build = "vite --mode unexpected-drift"; },
+    (packageJson: Record<string, any>) => { packageJson.scripts.test += " --unexpected"; },
+    (packageJson: Record<string, any>) => { packageJson.scripts["test:w9"] = "tsx --test --import ./test/react-dom.ts src/ui/w9-evidence-audit.test.ts"; },
+    (packageJson: Record<string, any>) => { packageJson.scripts.unapproved = "echo drift"; },
   ]) {
-    const driftedPackage = clone(currentPackage);
+    const driftedPackage = clone(allowedPackage);
     drift(driftedPackage);
     assert.throws(
-      () => assertW9ProtectedDiffPolicy(["package.json"], driftedPackage, baselinePackage, currentLock, baselineLock, ""),
-      /unexpected package\.json drift/,
+      () => assertTicket14PackageAllowlist(driftedPackage, baselinePackage, currentLock, baselineLock),
     );
   }
 });

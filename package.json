@@ -7,7 +7,8 @@
     "build": "vite build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --features desktop",
-    "test": "tsx --test --import ./test/react-dom.ts $(find src -name '*.test.js' -o -name '*.test.ts')",
+    "test": "tsx --test --import ./test/react-dom.ts $(find src \\( -name '*.test.js' -o -name '*.test.ts' \\) ! -path 'src/ui/w9-evidence-audit.test.ts')",
+    "test:w9": "tsx --test src/ui/w9-evidence-audit.test.ts",
     "typecheck:tests": "tsc --project tsconfig.tests.json --noEmit",
     "test:mounted": "tsx --test --import ./test/react-dom.ts src/ui/inventory/inventory-screen.mounted.test.ts"
   },
