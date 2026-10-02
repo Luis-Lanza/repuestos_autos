@@ -12,7 +12,7 @@ Preservar el estado actual de `master` como una release inmutable y publicar la 
 ## Tareas
 - [x] R1 Congelar y verificar el candidato actual de `master`; publicar `v1.0.0`. Evidencia: tag anotado en `f1d995073059daf3ce3b72f348f07544f5ca6909`, enviado a `origin`; GitHub Release publicada en `https://github.com/Luis-Lanza/repuestos_autos/releases/tag/v1.0.0`.
 - [x] R2 Aislar cambios locales ajenos, verificar el candidato de la rama e integrar solamente sus commits en `master`. Evidencia: integración no-fast-forward `1658c0e` (`feat: release catalog access and profit reports`) enviada a `origin/master`; los seis archivos no rastreados ajenos permanecieron sin incluirse.
-- [x] R3 Verificar el `master` integrado; publicar `v1.1.0` y registrar la evidencia. Evidencia: tag anotado `v1.1.0` apunta a `3b0a103fdd1c056ae67d3bc7d31c071389c6d25f` y fue enviado a `origin`; GitHub Release: https://github.com/Luis-Lanza/repuestos_autos/releases/tag/v1.1.0. La revisión posterior de evidencia de release encontró registros de validación pendientes de seguimiento en tareas históricas; no se afirma que todos sus elementos estén completos.
+- [x] R3 Verificar el `master` integrado; publicar `v1.1.0` y registrar la evidencia. Evidencia: tag anotado `v1.1.0` apunta a `3b0a103fdd1c056ae67d3bc7d31c071389c6d25f` y fue enviado a `origin`; GitHub Release: https://github.com/Luis-Lanza/repuestos_autos/releases/tag/v1.1.0. Los registros históricos de tareas se reconciliaron con evidencia confirmada de smoke en Windows.
 
 ## Criterios de aceptación
 - `v1.0.0` apunta exactamente al `master` previo a la integración.
