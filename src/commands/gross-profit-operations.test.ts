@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGrossProfitOperationsCommands, decodeGrossProfitOperations } from "./gross-profit-operations.ts";
+import { createGrossProfitOperationsCommands, createGrossProfitOperationsExportCommand, decodeGrossProfitOperations, decodeGrossProfitOperationsExport } from "./gross-profit-operations.ts";
 const row = { occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: 7, return_id: null, product_name: "Filtro", sku: "FIL-1", signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null };
 const page = (rows = [row], current = 1, total = 1) => ({ kind: "success", report: { rows, page: current, page_size: 20, total, total_pages: Math.ceil(total / 20) } });
 test("requests bounded pages using inclusive local dates and decodes explicit unknown cost", async () => {
@@ -23,6 +23,21 @@ test("rejects unknown fields, malformed costs, unsafe profit arithmetic, and unb
  assert.equal(decodeGrossProfitOperations(page([row, row], 2, 21)).kind, "error", "the final page must have its exact remainder");
  assert.equal(decodeGrossProfitOperations({ kind: "success", report: { ...page().report, page_size: 101 } }).kind, "error");
  assert.equal(decodeGrossProfitOperations({ kind: "error", code: "internal", message: "unsafe" }).code, "persistence_failure");
+});
+test("strictly decodes saved, cancelled and bounded export outcomes without paths", async () => {
+ assert.deepEqual(decodeGrossProfitOperationsExport({ kind: "success" }), { kind: "success" });
+ assert.deepEqual(decodeGrossProfitOperationsExport({ kind: "cancelled" }), { kind: "cancelled" });
+ assert.deepEqual(decodeGrossProfitOperationsExport({ kind: "error", code: "resource_limit", message: "El informe supera los límites de recursos y no se guardó." }), { kind: "error", code: "resource_limit", message: "El informe supera los límites de recursos y no se guardó." });
+ assert.equal(decodeGrossProfitOperationsExport({ kind: "success", path: "/private/file.pdf" }).kind, "error");
+ assert.equal(decodeGrossProfitOperationsExport({ kind: "error", code: "unsafe", message: "/private/file.pdf" }).kind, "error");
+ const calls: unknown[] = [];
+ const command = createGrossProfitOperationsExportCommand(async (name, payload) => { calls.push([name, payload]); return { kind: "cancelled" }; });
+ assert.deepEqual(await command("2024-03-10", "2024-03-10"), { kind: "cancelled" });
+ const [name, payload] = calls[0] as [string, { request: Record<string, unknown> }];
+ assert.equal(name, "export_gross_profit_operations_command");
+ assert.equal((payload.request.from as Record<string, unknown>).local_date, "2024-03-10");
+ assert.equal((payload.request.to_exclusive as Record<string, unknown>).local_date, "2024-03-11");
+ assert.equal(typeof (payload.request.from as Record<string, unknown>).utc_offset_minutes, "number");
 });
 test("accepts exact signed known profit, negative returns and a distinct empty page", () => {
  assert.equal(decodeGrossProfitOperations(page([{ ...row, unit_cost_snapshot_centavos: 500, cost_state: "known", signed_gross_profit_centavos: 1500 }])).kind, "success");

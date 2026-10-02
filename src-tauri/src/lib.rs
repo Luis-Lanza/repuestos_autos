@@ -722,6 +722,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         dashboard_command,
         gross_profit_report_command,
         gross_profit_operations_command,
+        export_gross_profit_operations_command,
         confirm_sale_command,
         create_sale_return_command,
         cancel_sale_command,
@@ -1172,6 +1173,53 @@ fn gross_profit_operations_command(
                 message: "The gross-profit operations could not be loaded.",
             },
         ))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn export_gross_profit_operations_command<R: Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    request: commands::gross_profit_operations::GrossProfitOperationsExportRequest,
+) -> Result<commands::gross_profit_operations::GrossProfitOperationsExportResponse, String> {
+    #[cfg(test)]
+    {
+        let _ = (app_handle, request);
+        Ok(commands::gross_profit_operations::GrossProfitOperationsExportResponse::Cancelled)
+    }
+    #[cfg(not(test))]
+    {
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        app_handle.dialog().file().add_filter("PDF", &["pdf"])
+            .set_file_name("informe-ganancia-bruta.pdf")
+            .save_file(move |path| {
+                let converted = match path {
+                    None => Ok(None),
+                    Some(path) => path.into_path().map(Some).map_err(|_| ()),
+                };
+                let _ = sender.try_send(converted);
+            });
+        let path = match receiver.recv().await {
+            Some(Ok(Some(path))) => path,
+            Some(Ok(None)) | None => return Ok(commands::gross_profit_operations::GrossProfitOperationsExportResponse::Cancelled),
+            Some(Err(())) => return Ok(commands::gross_profit_operations::GrossProfitOperationsExportResponse::Error(
+                commands::gross_profit_operations::GrossProfitOperationsError { code: "export_failed", message: "No se pudo guardar el informe PDF." },
+            )),
+        };
+        let generated_at = time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "No disponible".to_string());
+        let state = app_handle.state::<AppState>();
+        let response = state.with_read(|connection| Ok(commands::gross_profit_operations::export_gross_profit_operations(
+            connection, request, &generated_at, |bytes| {
+                std::fs::write(&path, bytes).map_or(
+                    commands::gross_profit_operations::ExportSaveResult::Failed,
+                    |_| commands::gross_profit_operations::ExportSaveResult::Saved,
+                )
+            },
+        ))).unwrap_or_else(|_| commands::gross_profit_operations::GrossProfitOperationsExportResponse::Error(
+            commands::gross_profit_operations::GrossProfitOperationsError { code: "export_failed", message: "No se pudo guardar el informe PDF." },
+        ));
+        Ok(response)
+    }
 }
 
 #[cfg(feature = "desktop")]
@@ -2113,6 +2161,23 @@ mod command_surface_tests {
         assert_eq!(payload["kind"], "success");
         assert_eq!(payload["report"]["total"], 0);
         assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);
+    }
+
+    #[test]
+    fn registers_gross_profit_pdf_export_without_exposing_a_path_at_the_ipc_seam() {
+        let (_app, window) = test_window();
+        let response = get_ipc_response(&window, request_with("export_gross_profit_operations_command", serde_json::json!({
+            "from": { "local_date": "2024-03-10", "utc": "2024-03-10T05:00:00.000Z", "utc_offset_minutes": 300 },
+            "to_exclusive": { "local_date": "2024-03-11", "utc": "2024-03-11T04:00:00.000Z", "utc_offset_minutes": 240 }
+        }))).unwrap();
+        let value = response.deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(value, serde_json::json!({ "kind": "cancelled" }));
+        assert!(!value.to_string().contains("path"));
+        assert!(get_ipc_response(&window, request_with("export_gross_profit_operations_command", serde_json::json!({
+            "from": { "local_date": "2024-03-10", "utc": "2024-03-10T05:00:00.000Z", "utc_offset_minutes": 300 },
+            "to_exclusive": { "local_date": "2024-03-11", "utc": "2024-03-11T04:00:00.000Z", "utc_offset_minutes": 240 },
+            "path": "/private/report.pdf"
+        }))).is_err());
     }
 
     #[test]

@@ -207,12 +207,26 @@ impl GrossProfitOperationsPagination {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GrossProfitOperationsExportReadError {
+    LimitExceeded,
+    Reporting(ReportingError),
+}
+
+impl From<ReportingError> for GrossProfitOperationsExportReadError {
+    fn from(error: ReportingError) -> Self { Self::Reporting(error) }
+}
+
 pub trait GrossProfitOperationsReader {
     fn read_gross_profit_operations(
         &self,
         range: &DashboardRange,
         pagination: &GrossProfitOperationsPagination,
     ) -> Result<GrossProfitOperationsPage, ReportingError>;
+    fn read_all_gross_profit_operations(
+        &self,
+        range: &DashboardRange,
+    ) -> Result<Vec<GrossProfitOperationRow>, GrossProfitOperationsExportReadError>;
 }
 
 pub fn load_gross_profit_operations<R: GrossProfitOperationsReader>(

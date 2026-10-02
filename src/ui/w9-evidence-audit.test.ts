@@ -812,11 +812,11 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 }
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
-  "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
+  "src-tauri/src/lib.rs": "e04045f6ab23345b83fc89a19bf12d66df5bfd0a59ab35476eec033f42182ae3",
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "cfe269333bb30b3fc97c38e6db8b610f9d5fdfd916ef31b9d57556e5ac47353d",
+  "src/ui/w9-evidence-audit.test.ts": "72fe06bb4bdd51d33f24f359e8949b1ad3310d6db99a4e5966c541faa4bbb81c",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -927,6 +927,50 @@ function assertGrossProfitOperationsR3Candidate(changedPaths: string[]) {
   assert.equal(sha256(grossProfitOperationsR3CandidateDiff()), grossProfitOperationsR3CandidateDiffSha256, "unexpected R3 candidate diff or file bytes");
 }
 
+const grossProfitOperationsR4CandidatePaths = [
+  "src-tauri/src/application/reporting/mod.rs",
+  "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+  "src-tauri/src/commands/gross_profit_operations.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/gross_profit_operations_export.rs",
+  "src/commands/gross-profit-operations.ts",
+  "src/commands/gross-profit-operations.test.ts",
+  "src/ui/reports/gross-profit-report-flow.ts",
+  "src/ui/reports/gross-profit-report-flow.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+  "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+];
+function assertGrossProfitOperationsR4Candidate(changedPaths: string[]) {
+  assert.deepEqual(changedPaths.filter((path) => grossProfitOperationsR4CandidatePaths.includes(path)), [...grossProfitOperationsR4CandidatePaths].sort());
+  assert.match(read("src/ui/reports/gross-profit-report-screen.ts"), /Exportar PDF/);
+  assert.match(read("src/commands/gross-profit-operations.ts"), /export_gross_profit_operations_command/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /every_matching_event/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /operation_count_over_resource_limit/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /pdf_renders_negative_profit_and_total_with_a_visible_ascii_minus/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /rejects_cumulative_returns_above_sold_quantity_before_saving/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /preserves_multiple_partial_returns_within_sold_quantity/);
+  assert.match(read("src-tauri/src/application/reporting/mod.rs"), /GrossProfitOperationsExportReadError/);
+  assert.match(read("src-tauri/src/commands/gross_profit_operations.rs"), /GrossProfitExportDateBound/);
+  assert.match(read("src-tauri/src/commands/gross_profit_operations.rs"), /if centavos < 0 \{ \"-\" \}/);
+  assert.match(read("src-tauri/src/commands/gross_profit_operations.rs"), /No calculable/);
+  assert.match(read("src-tauri/src/lib.rs"), /path.into_path\(\).map\(Some\).map_err/);
+  assert.match(read("src/ui/reports/gross-profit-report-flow.ts"), /resource_limit/);
+  assert.match(read("src/ui/reports/gross-profit-report-screen.ts"), /supera los límites de recursos/);
+  assert.match(read("src/ui/reports/gross-profit-report-flow.ts"), /export_status === "pending"/);
+  assert.match(read("src-tauri/src/infrastructure/sqlite/dashboard_repository.rs"), /MAX_EXPORT_OPERATIONS: i64 = 10_000/);
+  assert.match(read("odd/tasks/reporte-ganancia-operaciones-pdf.md"), /R4 Generar y guardar el PDF nativo/);
+}
+
+function assertGrossProfitPdfExportRegistration(libDiff: string) {
+  assert.match(libDiff, /export_gross_profit_operations_command,/);
+  assert.match(libDiff, /\.set_file_name\("informe-ganancia-bruta\.pdf"\)/);
+  assert.match(libDiff, /\.save_file\(move \|path\|/);
+  assert.match(libDiff, /registers_gross_profit_pdf_export_without_exposing_a_path_at_the_ipc_seam/);
+  assert.match(libDiff, /GrossProfitOperationsExportResponse::Cancelled/);
+}
+
 const catalogResponsiveTableCandidatePaths = [
   "odd/tasks/catalog-access-and-profit-report.md",
   "src/ui/styles.css",
@@ -956,10 +1000,10 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
-  "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
+  "src-tauri/src/lib.rs": "e04045f6ab23345b83fc89a19bf12d66df5bfd0a59ab35476eec033f42182ae3",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "cfe269333bb30b3fc97c38e6db8b610f9d5fdfd916ef31b9d57556e5ac47353d",
+  "src/ui/w9-evidence-audit.test.ts": "72fe06bb4bdd51d33f24f359e8949b1ad3310d6db99a4e5966c541faa4bbb81c",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -1109,6 +1153,7 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/src/commands/gross_profit_operations.rs",
     "src-tauri/tests/gross_profit_report.rs",
     "src-tauri/tests/gross_profit_operations.rs",
+    "src-tauri/tests/gross_profit_operations_export.rs",
     "odd/tasks/reporte-ganancia-operaciones-pdf.md",
     "src/commands/gross-profit.ts",
     "src/commands/gross-profit.test.ts",
@@ -1240,6 +1285,7 @@ function assertW9ProtectedDiffPolicy(
     else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
     else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("export_gross_profit_operations_command")) assertGrossProfitPdfExportRegistration(libDiff);
     else if (libDiff.includes("gross_profit_report_command")) assertGrossProfitCommandRegistrationDiff(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
@@ -1506,6 +1552,10 @@ test("W9 binds the exact R3 gross-profit operations paths, diff, and task bytes"
   const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
   const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  if (changedPaths.includes("src-tauri/tests/gross_profit_operations_export.rs")) {
+    assertGrossProfitOperationsR4Candidate(changedPaths);
+    return;
+  }
   assertGrossProfitOperationsR3Candidate(changedPaths);
 });
 

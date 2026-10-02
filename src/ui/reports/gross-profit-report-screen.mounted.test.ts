@@ -115,6 +115,77 @@ test("shows the applied range in the operations caption even when summary loadin
  assert.ok(table);
  assert.ok(await screen.findByText(/No se pudo cargar el informe/));
 });
+test("exports the applied range instead of drafts or the current page and prevents duplicate saves", async () => {
+ let finishExport!: (value: unknown) => void; const exportRequests: Record<string, unknown>[] = []; let exportCalls = 0;
+ mockIPC((command, payload) => {
+  if (command === "gross_profit_report_command") return report();
+  if (command === "gross_profit_operations_command") return operations(Array.from({ length: 20 }, (_, index) => operation(index + 1)), 1, 21);
+  exportCalls += 1; exportRequests.push((payload as { request: Record<string, unknown> }).request);
+  return new Promise(resolve => { finishExport = resolve; });
+ });
+ render(createElement(GrossProfitReportScreen));
+ await screen.findByRole("table", { name: /Operaciones del período aplicado:/ });
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-10" } });
+ fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2024-03-20" } });
+ fireEvent.click(screen.getByRole("button", { name: "Aplicar período" }));
+ await screen.findByRole("table", { name: "Operaciones del período aplicado: 2024-03-10 al 2024-03-20" });
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-15" } });
+ fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ assert.equal(exportCalls, 1);
+ assert.equal((exportRequests[0]?.from as Record<string, unknown>).local_date, "2024-03-10");
+ assert.equal((exportRequests[0]?.to_exclusive as Record<string, unknown>).local_date, "2024-03-21");
+ assert.ok(await screen.findByText("Guardando PDF…"));
+ assert.equal((screen.getByRole("button", { name: "Exportando PDF…" }) as HTMLButtonElement).disabled, true);
+ assert.ok(screen.getByText(/Operaciones del período aplicado:/));
+ await act(async () => { finishExport({ kind: "success" }); });
+ assert.ok(await screen.findByText("PDF guardado correctamente."));
+});
+test("range changes during an export keep the original request pending and block duplicates", async () => {
+ let finishExport!: (value: unknown) => void; const requests: Record<string, unknown>[] = []; let exportCalls = 0;
+ mockIPC((command, payload) => {
+  if (command === "gross_profit_report_command") return report();
+  if (command === "gross_profit_operations_command") return operations();
+  exportCalls += 1; requests.push((payload as { request: Record<string, unknown> }).request);
+  return new Promise(resolve => { finishExport = resolve; });
+ });
+ render(createElement(GrossProfitReportScreen));
+ await screen.findByRole("table", { name: /Operaciones del período aplicado:/ });
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-10" } });
+ fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2024-03-20" } });
+ fireEvent.click(screen.getByRole("button", { name: "Aplicar período" }));
+ await screen.findByRole("table", { name: "Operaciones del período aplicado: 2024-03-10 al 2024-03-20" });
+ fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" }));
+ assert.ok(await screen.findByText("Guardando PDF…"));
+ const originalFrom = (requests[0]!.from as Record<string, unknown>).local_date;
+ fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2024-03-15" } });
+ fireEvent.click(screen.getByRole("button", { name: "Aplicar período" }));
+ await screen.findByRole("table", { name: /2024-03-15/ });
+ assert.equal((screen.getByRole("button", { name: "Exportando PDF…" }) as HTMLButtonElement).disabled, true);
+ fireEvent.click(screen.getByRole("button", { name: "Exportando PDF…" }));
+ assert.equal(exportCalls, 1);
+ assert.equal(originalFrom, "2024-03-10");
+ await act(async () => { finishExport({ kind: "cancelled" }); });
+ assert.ok(await screen.findByText("Exportación cancelada."));
+ assert.equal((screen.getByRole("button", { name: "Exportar PDF" }) as HTMLButtonElement).disabled, false);
+});
+test("shows cancellation and bounded export failure feedback", async () => {
+ for (const result of [
+  { kind: "cancelled" },
+  { kind: "error", code: "export_failed", message: "No se pudo guardar el informe PDF." },
+  { kind: "error", code: "resource_limit", message: "El informe supera los límites de recursos y no se guardó." },
+ ]) {
+  mockIPC(command => command === "gross_profit_report_command" ? report() : command === "gross_profit_operations_command" ? operations() : result);
+  const mounted = render(createElement(GrossProfitReportScreen));
+  fireEvent.click(await screen.findByRole("button", { name: "Exportar PDF" }));
+  const expected = result.kind === "cancelled"
+   ? "Exportación cancelada."
+   : "code" in result && result.code === "resource_limit"
+    ? "El informe supera los límites de recursos y no se guardó. Ajustá el período e intentá de nuevo."
+    : "No se pudo guardar el PDF.";
+  assert.ok(await screen.findByText(expected));
+  mounted.unmount();
+ }
+});
 test("date fields stay drafts until apply and reversed ranges cannot be applied", async () => {
  const calls: string[] = [];
  mockIPC((command, payload) => { calls.push(command); return command === "gross_profit_report_command" ? report() : operations(); });

@@ -5,7 +5,7 @@ use crate::application::reporting::{
     DashboardReader, DashboardRecentSale, DashboardReport, DashboardStockAlert,
     GrossProfitReader, GrossProfitReport, GrossProfitCostState, GrossProfitOperationsPage,
     GrossProfitOperationsPagination, GrossProfitOperationsReader, GrossProfitOperationKind,
-    GrossProfitOperationRow, RealizedGrossProfit, ReportingError,
+    GrossProfitOperationRow, RealizedGrossProfit, ReportingError, GrossProfitOperationsExportReadError,
 };
 
 pub const DASHBOARD_TOP_PRODUCTS_LIMIT: i64 = 5;
@@ -272,8 +272,8 @@ impl<'connection> SqliteDashboardReader<'connection> {
 }
 
 const GROSS_PROFIT_OPERATION_EVENTS: &str = "
-    SELECT s.confirmed_at, 'sale', s.id, NULL, l.product_name_snapshot, l.sku_snapshot,
-           l.quantity, l.negotiated_unit_price_centavos, l.unit_cost_snapshot_centavos, l.id
+    SELECT s.confirmed_at AS occurred_at, 'sale', s.id, NULL, l.product_name_snapshot AS product_name, l.sku_snapshot AS sku,
+           l.quantity, l.negotiated_unit_price_centavos, l.unit_cost_snapshot_centavos, l.id AS sale_line_id
     FROM sale_lines l JOIN sales s ON s.id = l.sale_id
     WHERE s.status = 'confirmed' AND s.confirmed_at >= ?1 AND s.confirmed_at < ?2
       AND NOT EXISTS (SELECT 1 FROM sale_cancellations c WHERE c.sale_id = s.id)
@@ -354,6 +354,83 @@ impl GrossProfitOperationsReader for SqliteDashboardReader<'_> {
             rows: result, page: pagination.page, page_size: pagination.page_size,
             total, total_pages,
         })
+    }
+
+    fn read_all_gross_profit_operations(
+        &self,
+        range: &DashboardRange,
+    ) -> Result<Vec<GrossProfitOperationRow>, GrossProfitOperationsExportReadError> {
+        const MAX_EXPORT_OPERATIONS: i64 = 10_000;
+        const MAX_PRODUCT_NAME_CHARS: i64 = 512;
+        const MAX_SKU_CHARS: i64 = 128;
+        const MAX_OCCURRED_AT_CHARS: i64 = 64;
+        let snapshot = self.0.unchecked_transaction().map_err(|_| ReportingError::Persistence)?;
+        let (from, to) = range.bounds();
+        let count: i64 = snapshot.query_row(
+            &format!("SELECT COUNT(*) FROM ({GROSS_PROFIT_OPERATION_EVENTS})"),
+            params![from, to],
+            |row| row.get(0),
+        ).map_err(|_| ReportingError::Persistence)?;
+        if count < 0 { return Err(ReportingError::PersistedDataInvalid.into()); }
+        if count > MAX_EXPORT_OPERATIONS { return Err(GrossProfitOperationsExportReadError::LimitExceeded); }
+        let invalid_cumulative_returns: i64 = snapshot.query_row(
+            &format!("SELECT COUNT(*) FROM sale_lines l
+                     WHERE l.id IN (SELECT sale_line_id FROM ({GROSS_PROFIT_OPERATION_EVENTS}))
+                       AND COALESCE((SELECT SUM(rl.quantity) FROM sale_return_lines rl
+                                     WHERE rl.sale_line_id = l.id), 0) > l.quantity"),
+            params![from, to],
+            |row| row.get(0),
+        ).map_err(|_| ReportingError::Persistence)?;
+        if invalid_cumulative_returns > 0 { return Err(ReportingError::PersistedDataInvalid.into()); }
+        let oversized_text: i64 = snapshot.query_row(
+            &format!("SELECT COUNT(*) FROM ({GROSS_PROFIT_OPERATION_EVENTS}) WHERE length(COALESCE(product_name, '')) > ?3 OR length(COALESCE(sku, '')) > ?4 OR length(occurred_at) > ?5"),
+            params![from, to, MAX_PRODUCT_NAME_CHARS, MAX_SKU_CHARS, MAX_OCCURRED_AT_CHARS],
+            |row| row.get(0),
+        ).map_err(|_| ReportingError::Persistence)?;
+        if oversized_text > 0 { return Err(GrossProfitOperationsExportReadError::LimitExceeded); }
+        let mut statement = snapshot.prepare(&format!(
+            "SELECT * FROM ({GROSS_PROFIT_OPERATION_EVENTS})
+             ORDER BY 1 DESC, 3 DESC, 2 DESC, 4 DESC, 10 DESC"
+        )).map_err(|_| ReportingError::Persistence)?;
+        let rows = statement.query_map(params![from, to], |row| Ok((
+            row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?,
+            row.get::<_, Option<i64>>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?,
+            row.get::<_, i64>(6)?, row.get::<_, i64>(7)?, row.get::<_, Option<i64>>(8)?,
+        ))).map_err(|_| ReportingError::Persistence)?;
+        let mut result = Vec::with_capacity(count as usize);
+        for row in rows {
+            let (occurred_at, kind, sale_id, return_id, product_name, sku, quantity, price, cost) =
+                row.map_err(|_| ReportingError::Persistence)?;
+            let operation_kind = match kind.as_str() {
+                "sale" if return_id.is_none() && quantity > 0 => GrossProfitOperationKind::Sale,
+                "return" if return_id.is_some() && quantity < 0 => GrossProfitOperationKind::Return,
+                _ => return Err(ReportingError::PersistedDataInvalid.into()),
+            };
+            positive(sale_id)?;
+            if let Some(id) = return_id { positive(id)?; }
+            if price < 0 { return Err(ReportingError::PersistedDataInvalid.into()); }
+            let (cost_state, profit) = match cost {
+                Some(value) if value > 0 => (
+                    GrossProfitCostState::Known,
+                    Some(price.checked_sub(value).and_then(|margin| margin.checked_mul(quantity))
+                        .ok_or(ReportingError::PersistedDataInvalid)?),
+                ),
+                Some(_) => return Err(ReportingError::PersistedDataInvalid.into()),
+                None => (GrossProfitCostState::Unknown, None),
+            };
+            result.push(GrossProfitOperationRow {
+                occurred_at, operation_kind, sale_id, return_id, product_name, sku,
+                signed_quantity: quantity,
+                negotiated_unit_price_centavos: price,
+                unit_cost_snapshot_centavos: cost,
+                cost_state,
+                signed_gross_profit_centavos: profit,
+            });
+        }
+        drop(statement);
+        snapshot.commit().map_err(|_| ReportingError::Persistence)?;
+        if result.len() != count as usize { return Err(ReportingError::Persistence.into()); }
+        Ok(result)
     }
 }
 

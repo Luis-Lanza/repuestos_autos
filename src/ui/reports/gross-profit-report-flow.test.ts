@@ -44,6 +44,28 @@ test("a newly applied range supersedes an in-flight page request", () => {
  assert.equal(createGrossProfitReportFlow(state, { type: "operations_succeeded", range_id: 1, operations_request_id: 2, report: { ...page, page: 2 } }), state);
  assert.equal(state.operations, null);
 });
+test("permits one PDF export only after a range is applied and records bounded outcomes", () => {
+ let state = initialGrossProfitReportState(period);
+ assert.equal(createGrossProfitReportFlow(state, { type: "export_started" }), state);
+ state = createGrossProfitReportFlow(state, { type: "range_applied", period, range_id: 1, operations_request_id: 1 });
+ state = createGrossProfitReportFlow(state, { type: "export_started" });
+ assert.equal(state.export_status, "pending");
+ assert.equal(createGrossProfitReportFlow(state, { type: "export_started" }), state);
+ state = createGrossProfitReportFlow(state, { type: "export_completed", outcome: "cancelled" });
+ assert.equal(state.export_status, "cancelled");
+ state = createGrossProfitReportFlow(state, { type: "export_started" });
+ state = createGrossProfitReportFlow(state, { type: "export_completed", outcome: "resource_limit" });
+ assert.equal(state.export_status, "resource_limit");
+});
+test("an applied range cannot clear an export that is still pending", () => {
+ let state = createGrossProfitReportFlow(initialGrossProfitReportState(period), { type: "range_applied", period, range_id: 1, operations_request_id: 1 });
+ state = createGrossProfitReportFlow(state, { type: "export_started" });
+ state = createGrossProfitReportFlow(state, { type: "range_applied", period: { ...period, to: "2024-03-25" }, range_id: 2, operations_request_id: 2 });
+ assert.equal(state.export_status, "pending");
+ assert.equal(createGrossProfitReportFlow(state, { type: "export_started" }), state);
+ state = createGrossProfitReportFlow(state, { type: "export_completed", outcome: "error" });
+ assert.equal(state.export_status, "error");
+});
 test("keeps empty distinct from zero-profit activity and preserves retryable errors", () => {
  let state = createGrossProfitReportFlow(initialGrossProfitReportState(period), { type: "range_applied", period, range_id: 4, operations_request_id: 4 });
  state = createGrossProfitReportFlow(state, { type: "summary_succeeded", range_id: 4, report: { ...summary, activity_count: 0 } });

@@ -60,4 +60,45 @@ export function createGrossProfitOperationsCommands(command: Invoke) {
     catch { return Promise.resolve(failure()); }
   } };
 }
+export type GrossProfitOperationsExportResponse =
+  | { kind: "success" }
+  | { kind: "cancelled" }
+  | { kind: "error"; code: "invalid_request" | "export_failed" | "resource_limit"; message: string };
+
+export function decodeGrossProfitOperationsExport(value: unknown): GrossProfitOperationsExportResponse {
+  const response = obj(value);
+  if (!response || typeof response.kind !== "string") return { kind: "error", code: "export_failed", message: "No se pudo exportar el informe PDF." };
+  if ((response.kind === "success" || response.kind === "cancelled") && keysAre(response, ["kind"])) return { kind: response.kind };
+  if (response.kind === "error" && keysAre(response, ["kind", "code", "message"])) {
+    const allowedMessages = response.code === "invalid_request"
+      ? ["El período del informe no es válido."]
+      : response.code === "export_failed"
+        ? ["No se pudo generar el informe PDF.", "No se pudo guardar el informe PDF."]
+        : response.code === "resource_limit"
+          ? ["El informe supera los límites de recursos y no se guardó."]
+          : [];
+    if (allowedMessages.includes(response.message as string)) return { kind: "error", code: response.code as "invalid_request" | "export_failed" | "resource_limit", message: response.message as string };
+  }
+  return { kind: "error", code: "export_failed", message: "No se pudo exportar el informe PDF." };
+}
+
+function exportDateBound(localDate: string, utc: string, exclusiveDay = false) {
+  const [year, month, day] = localDate.split("-").map(Number);
+  const midnight = new Date(year!, month! - 1, day! + (exclusiveDay ? 1 : 0));
+  return { local_date: exclusiveDay ? `${midnight.getFullYear()}-${String(midnight.getMonth() + 1).padStart(2, "0")}-${String(midnight.getDate()).padStart(2, "0")}` : localDate, utc, utc_offset_minutes: midnight.getTimezoneOffset() };
+}
+export function createGrossProfitOperationsExportCommand(command: Invoke) {
+  return (from: string, to: string): Promise<GrossProfitOperationsExportResponse> => {
+    try {
+      const bounds = localDateRangeToUtc(from, to);
+      return command("export_gross_profit_operations_command", { request: { from: exportDateBound(from, bounds.from_utc), to_exclusive: exportDateBound(to, bounds.to_exclusive_utc, true) } })
+        .then(decodeGrossProfitOperationsExport)
+        .catch(() => ({ kind: "error", code: "export_failed", message: "No se pudo exportar el informe PDF." }));
+    } catch {
+      return Promise.resolve({ kind: "error", code: "invalid_request", message: "El período del informe no es válido." });
+    }
+  };
+}
+
 export const grossProfitOperationsCommands = createGrossProfitOperationsCommands(invoke as Invoke);
+export const exportGrossProfitOperationsCommand = createGrossProfitOperationsExportCommand(invoke as Invoke);
