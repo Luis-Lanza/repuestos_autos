@@ -7,6 +7,7 @@ import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { App } from "../app.ts";
 import { InventoryScreen } from "./inventory-screen.ts";
 
 const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
@@ -527,6 +528,37 @@ test("shows the assigned generated location in the selected product without chan
   assert.equal(screen.getByRole("button", { name: "Nueva operación" }).textContent, "Nueva operación");
   await user.click(screen.getByRole("button", { name: "Nueva operación" }));
   assert.equal(screen.queryByText("Ubicación principal: A1-SHELF2"), null);
+});
+
+test("uses All Stock for normal Inventory entry and stock-alert cue navigation", async () => {
+  const browseRequests: unknown[] = [];
+  let cueVisible = false;
+  mockIPC((command, payload) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: cueVisible ? [{ product_id: 2, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] : [] };
+    if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "browse_products_command") { browseRequests.push(payload); return browse(); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(App));
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
+  const inventory = within(navigation).getByRole("button", { name: /^Inventario/ });
+  await user.click(inventory);
+  const stockFilter = await screen.findByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement;
+  assert.equal(stockFilter.value, "all");
+  assert.ok(await screen.findByRole("region", { name: "Alertas de stock" }));
+  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
+
+  cueVisible = true;
+  await user.click(within(navigation).getByRole("button", { name: "Métricas" }));
+  await screen.findByRole("heading", { name: "Métricas" });
+  await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
+  await user.click(inventory);
+  const returnedFilter = await screen.findByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement;
+  assert.equal(returnedFilter.value, "all");
+  assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
+  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
 });
 
 test("clears the public stock cue while alerts load or are unavailable", async () => {
