@@ -19,5 +19,14 @@
         "minHeight": 640
       }
     ]
+  },
+  "bundle": {
+    "icon": ["icons/windows-executable/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon-installer.ico",
+        "uninstallerIcon": "icons/icon-installer.ico"
+      }
+    }
   }
 }
