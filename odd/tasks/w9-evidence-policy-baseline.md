@@ -15,7 +15,7 @@ Restore a trustworthy W9 evidence audit: determine the intended baseline for his
 
 ## Tasks
 - [x] W1 Map W9 audit inputs, historical evidence, and intended protected-path policy. — The strict policy predates recent candidate checks (`adc2ed5d`); exact pre-existing ODD exclusions were added in `a4fdc39c`, while backup/gross-profit/Catalog checks were introduced or updated by `d6de33e`, `219c890`, and `e4e4183`.
-- [~] W2 Define and test the narrow policy update for legitimate ODD task tracking and stale evidence refresh. — Implemented and independently verified: `npm test` excludes only W9 and passes 412/412; `npm run test:w9` remains intentionally strict and red outside its historical candidate. Awaiting local-commit authorization.
+- [x] W2 Define and test the narrow policy update for legitimate ODD task tracking and stale evidence refresh. — Implemented in `0276623` (`test(w9): separate strict audit from general suite`); `npm test` excludes only W9 and passes 412/412; `npm run test:w9` remains intentionally strict and red outside its historical candidate. Native review preflight stopped because RDD is disabled.
 - [ ] W3 Run focused/full audit verification and record how Inventory I4 can resume.
 
 ## Acceptance criteria
