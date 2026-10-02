@@ -12,7 +12,8 @@ pub struct StockEntryRequest {
     pub request_id: String,
     pub product_id: i64,
     pub quantity: i64,
-    pub unit_purchase_price_centavos: i64,
+    #[serde(default)]
+    pub unit_purchase_price_centavos: Option<i64>,
     #[serde(default)]
     pub sale_price_centavos: Option<i64>,
     #[serde(default)]

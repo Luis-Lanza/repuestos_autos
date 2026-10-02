@@ -9,11 +9,26 @@ fn entry(request_id: &str) -> StockEntryRequest {
         request_id: request_id.into(),
         product_id: 1,
         quantity: 2,
-        unit_purchase_price_centavos: 1_250,
+        unit_purchase_price_centavos: Some(1_250),
         sale_price_centavos: None,
         minimum_sale_price_centavos: None,
         note: Some("delivery".into()),
     }
+}
+
+#[test]
+fn omitted_stock_entry_prices_are_accepted_and_preserved() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("UPDATE products SET purchase_price_centavos = NULL WHERE id = 1", []).unwrap();
+    let request: StockEntryRequest = serde_json::from_value(serde_json::json!({
+        "request_id": "550e8400-e29b-41d4-a716-446655440230",
+        "product_id": 1,
+        "quantity": 2,
+        "note": null
+    })).unwrap();
+    assert!(matches!(confirm_stock_entry_command(&mut connection, request).unwrap(), InventoryCommandResponse::Success(_)));
+    let prices = connection.query_row("SELECT purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1", [], |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))).unwrap();
+    assert_eq!(prices, (None, 2_500, 2_500));
 }
 
 #[test]

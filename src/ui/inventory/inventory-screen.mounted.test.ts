@@ -494,6 +494,25 @@ test("retries an exact inventory envelope and replaces its identity after edits 
   assert.notEqual(requests[3].request_id, requests[2].request_id);
 });
 
+test("omits blank optional prices from the stock-entry IPC request", async () => {
+  let request: Record<string, unknown> | undefined;
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") { request = payload?.request as Record<string, unknown>; return success(String(request.request_id)); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByText("Operación guardada. Stock actual: 11.");
+  assert.ok(request);
+  assert.equal("unit_purchase_price_centavos" in request, false);
+  assert.equal("sale_price_centavos" in request, false);
+  assert.equal("minimum_sale_price_centavos" in request, false);
+});
+
 test("shows a specific neutral message for reused inventory requests", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };

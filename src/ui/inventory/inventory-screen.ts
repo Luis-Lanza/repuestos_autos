@@ -104,7 +104,7 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     const request_id = state.request_id ?? crypto.randomUUID();
     dispatch({ type: "confirmation_started", request_id });
     const response: InventoryResponse = state.operation === "stock_entry"
-      ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), unit_purchase_price_centavos: stockEntryPrices(state).purchase ?? 0, ...(stockEntryPrices(state).sale === undefined ? {} : { sale_price_centavos: stockEntryPrices(state).sale! }), ...(stockEntryPrices(state).minimum === undefined ? {} : { minimum_sale_price_centavos: stockEntryPrices(state).minimum! }), note: state.note || null })
+      ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), ...(stockEntryPrices(state).purchase === undefined ? {} : { unit_purchase_price_centavos: stockEntryPrices(state).purchase! }), ...(stockEntryPrices(state).sale === undefined ? {} : { sale_price_centavos: stockEntryPrices(state).sale! }), ...(stockEntryPrices(state).minimum === undefined ? {} : { minimum_sale_price_centavos: stockEntryPrices(state).minimum! }), note: state.note || null })
       : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason });
     if (!mounted.current) return;
     confirmLocked.current = false;
