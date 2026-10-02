@@ -17,7 +17,7 @@ Permitir consultar y exportar un reporte de ganancia bruta por período que mues
 ## Tareas
 - [x] R1 Mapear el exportador PDF existente, el detalle de ventas/devoluciones y los límites de paginación/impresión.
 - [x] R2 Crear la consulta y contrato IPC sin rutas del detalle de operaciones de ganancia por período, con paginación validada y pruebas de persistencia/IPC. Verificado con `cargo test --manifest-path src-tauri/Cargo.toml --test gross_profit_operations` y `cargo test --manifest-path src-tauri/Cargo.toml`.
-- [ ] R3 Integrar la tabla accesible y el estado de carga/error/exportación en Reportes.
+- [x] R3 Integrar el contrato paginado de operaciones y la tabla accesible con estados de carga/error y paginación en Reportes (sin implementar exportación PDF). Corrección de auditoría: paginación disponible mientras el resumen carga/falla; la tabla y el foco del paginador se conservan durante la carga de página; se rechazan solicitudes duplicadas y respuestas obsoletas. Verificado con `npx tsx --test --import ./test/react-dom.ts src/ui/reports/gross-profit-report-flow.test.ts src/ui/reports/gross-profit-report-screen.mounted.test.ts src/ui/w9-evidence-audit.test.ts`.
 - [ ] R4 Generar y guardar el PDF en español con totales, advertencias y operaciones paginadas.
 - [ ] R5 Verificar contabilidad, PDF, UI, límites y exportación en Windows.
 

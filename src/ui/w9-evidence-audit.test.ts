@@ -816,7 +816,7 @@ const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "e2be820d50eebb4a27d1153677f46e8188540eaf4948d5f507a72e53ec6425a6",
+  "src/ui/w9-evidence-audit.test.ts": "cfe269333bb30b3fc97c38e6db8b610f9d5fdfd916ef31b9d57556e5ac47353d",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -894,6 +894,39 @@ function assertGrossProfitReportCandidate(changedPaths: string[]) {
   assert.equal(sha256(grossProfitReportCandidateDiff()), grossProfitReportCandidateDiffSha256, "unexpected T3 candidate diff or file bytes");
 }
 
+const grossProfitOperationsR3CandidatePaths = [
+  "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+  "src/commands/gross-profit-operations.ts",
+  "src/commands/gross-profit-operations.test.ts",
+  "src/ui/reports/gross-profit-report-flow.ts",
+  "src/ui/reports/gross-profit-report-flow.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+const grossProfitOperationsR3TaskBytesSha256 = "f9fbe3f3055903382ab8c25dd74d92488ea68e3e46757cb4b9ad01d4e4865c98";
+const grossProfitOperationsR3CandidateDiffSha256 = "d18c074173b55dbce142559d10486f4fa25aaa88d546955ccd48187276eea060";
+function grossProfitOperationsR3CandidateDiff() {
+  return grossProfitOperationsR3CandidatePaths.map((path) => {
+    const value = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path), "utf8");
+    const normalized = path === "src/ui/w9-evidence-audit.test.ts"
+      ? value
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])const grossProfitOperationsR3TaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3TaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3CandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3CandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_W9_HASH>$3')
+      : value;
+    return `${path}\0${normalized}`;
+  }).join("\0");
+}
+function assertGrossProfitOperationsR3Candidate(changedPaths: string[]) {
+  assert.deepEqual(changedPaths.filter((path) => grossProfitOperationsR3CandidatePaths.includes(path)), [...grossProfitOperationsR3CandidatePaths].sort());
+  assert.equal(sha256(read("odd/tasks/reporte-ganancia-operaciones-pdf.md")), grossProfitOperationsR3TaskBytesSha256, "unexpected R3 task document bytes");
+  assert.equal(sha256(grossProfitOperationsR3CandidateDiff()), grossProfitOperationsR3CandidateDiffSha256, "unexpected R3 candidate diff or file bytes");
+}
+
 const catalogResponsiveTableCandidatePaths = [
   "odd/tasks/catalog-access-and-profit-report.md",
   "src/ui/styles.css",
@@ -926,7 +959,7 @@ const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
   "src-tauri/src/lib.rs": "42db0ab1b23a27786df7d03d1ea2d0eb18d774d197cca95bef361590fa45d0cc",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "e2be820d50eebb4a27d1153677f46e8188540eaf4948d5f507a72e53ec6425a6",
+  "src/ui/w9-evidence-audit.test.ts": "cfe269333bb30b3fc97c38e6db8b610f9d5fdfd916ef31b9d57556e5ac47353d",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -964,6 +997,8 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
           .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
           .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
           .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3TaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3TaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3CandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3CandidateDiffSha256 = "<SELF_DIFF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
   }
@@ -986,6 +1021,8 @@ function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buf
           .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
           .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
           .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3TaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3TaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3CandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3CandidateDiffSha256 = "<SELF_DIFF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected Windows desktop-fix diff content: ${path}`);
   }
@@ -1075,8 +1112,12 @@ function assertW9ProtectedDiffPolicy(
     "odd/tasks/reporte-ganancia-operaciones-pdf.md",
     "src/commands/gross-profit.ts",
     "src/commands/gross-profit.test.ts",
+    "src/commands/gross-profit-operations.ts",
+    "src/commands/gross-profit-operations.test.ts",
     "src/commands/sales-history.ts",
     "src/commands/sales-history.test.ts",
+    "src/ui/reports/gross-profit-report-flow.ts",
+    "src/ui/reports/gross-profit-report-flow.test.ts",
     "src/ui/reports/gross-profit-report-screen.ts",
     "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
     "src-tauri/tests/dashboard_reporting.rs",
@@ -1461,12 +1502,11 @@ test("W9 allows only the bounded owned-Result Windows picker-command diff", () =
   );
 });
 
-test("W9 binds the exact T3 gross-profit candidate paths, diff, and task bytes", () => {
+test("W9 binds the exact R3 gross-profit operations paths, diff, and task bytes", () => {
   const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
   const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
-  const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
-  if (t3Sources.length > 0 && !changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) assertGrossProfitReportCandidate(changedPaths);
+  assertGrossProfitOperationsR3Candidate(changedPaths);
 });
 
 test("W9 binds the exact Catalog access candidate diff and untracked task bytes", () => {
