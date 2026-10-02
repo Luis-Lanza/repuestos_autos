@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { mockIPC as mockNativeIPC } from "@tauri-apps/api/mocks";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { mockIPC as registerNativeIPC } from "@tauri-apps/api/mocks";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { SaleScreen } from "./sale-screen.ts";
@@ -22,6 +22,28 @@ const products = [
 const browse = (items: typeof products) => ({ kind: "success", products: items, categories: [{ category_id: 1, name: "Filtros" }], page: 1, page_size: 20, total: items.length, total_pages: items.length ? 1 : 0 });
 const success = { kind: "success", sale_id: 9, request_id: UUID, status: "confirmed", confirmed_at: "2026-01-02T10:00:00Z", outcome: "confirmed", lines: [], payments: [], total_centavos: 8550 };
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+const mockNativeIPC: typeof registerNativeIPC = (handler) => {
+  let recentSalesProducts: Array<Record<string, unknown>> = [];
+  return registerNativeIPC((command, payload) => {
+  if (command === "sales_product_image_thumbnail_command") {
+    const request = (payload as { request: { product_id: number } }).request;
+    const value = handler("catalog_product_image_thumbnail_command", { request: { product_id: request.product_id } });
+    const project = (response: unknown) => response && typeof response === "object" && (response as { kind?: string }).kind === "success"
+      ? { kind: "success", product_id: (response as { product_id: number }).product_id, mime_type: "image/jpeg", encoding: "base64", bytes: (response as { bytes: string }).bytes }
+      : { kind: "unavailable" };
+    return Promise.resolve(value).then(project);
+  }
+  const result = handler(command === "browse_sale_products_command" ? "browse_products_command" : command, payload);
+  if (command !== "browse_sale_products_command") return result;
+  const project = (value: unknown) => {
+    if (!value || typeof value !== "object" || !Array.isArray((value as { products?: unknown }).products) || !Array.isArray((value as { categories?: unknown }).categories)) return value;
+    const page = value as { products: Array<Record<string, unknown>>; categories: Array<Record<string, unknown>> };
+    recentSalesProducts = page.products;
+    return { ...page, products: page.products.map(({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, attribute_values }) => ({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, attribute_values: attribute_values ?? [] })), categories: page.categories.map(({ category_id, name }) => ({ category_id, name })) };
+  };
+  return Promise.resolve(result).then(project);
+  });
+};
 const mockIPC = (handler: Parameters<typeof mockNativeIPC>[0]) => mockNativeIPC((command, payload) => command === "catalog_product_image_thumbnail_command" ? { kind: "error", code: "image_unavailable", message: "No product image is available." } : handler(command, payload));
 const user = () => userEvent.setup({ document });
 async function searchFor(value = "filtro") { const u = user(); await u.type(screen.getByRole("searchbox", { name: "Buscar en el catálogo" }), `${value}{Enter}`); return u; }
@@ -111,16 +133,16 @@ test("Sales and checkout consume canonical sale price without changing submitted
   const dialog = screen.getByRole("dialog", { name: "Revisar y cobrar" });
   const line = within(dialog).getByRole("listitem");
   assert.equal(within(line).getByText("Venta: Bs 90,00").textContent, "Venta: Bs 90,00");
-  assert.equal(within(line).getByText("Compra: Bs 45,00").textContent, "Compra: Bs 45,00");
+  assert.equal(within(line).queryByText(/Compra:/), null);
   assert.equal(within(line).getByText("Precio de venta: Bs 90,00").className, "sale-price-fact-accessible");
-  assert.equal(within(line).getByText("Precio de compra (referencia): Bs 45,00").className, "sale-price-fact-accessible");
+  assert.equal(within(line).queryByText(/Precio de compra/), null);
   assert.equal((within(line).getByRole("textbox", { name: "Precio de venta (Bs)" }) as HTMLInputElement).value, "90,00");
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
-  assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 9_000, captured_revision: 2, final_unit_price_centavos: 9_000 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
+  assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 9_000, final_unit_price_centavos: 9_000 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
 });
 
-test("Sales loads revision-checked page thumbnails and offers a persisted Sales-only gallery", async () => {
+test("Sales loads revision-free page thumbnails and offers a persisted Sales-only gallery", async () => {
   const calls: Array<{ command: string; payload: unknown }> = [];
   mockNativeIPC((command, payload) => {
     calls.push({ command, payload });
@@ -133,7 +155,7 @@ test("Sales loads revision-checked page thumbnails and offers a persisted Sales-
   const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
   await within(list).findByRole("img", { name: "Filtro aceite" });
   assert.deepEqual(calls.filter((call) => call.command === "catalog_product_image_thumbnail_command").map((call) => call.payload), [
-    { request: { product_id: 1, expected_revision: 2 } },
+    { request: { product_id: 1 } },
   ]);
   const galleryButton = within(catalog).getByRole("button", { name: "Vista de galería" });
   await user().click(galleryButton);
@@ -164,7 +186,7 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
 });
 
-test("Sales product details show the generated primary location while the cart remains location-agnostic", async () => {
+test("Sales product details omit Catalog-only location data while the cart remains operational", async () => {
   const located = { ...products[0], primary_location_code: "A1-SHELF2" };
   mockNativeIPC((command) => command === "browse_products_command" ? browse([located]) : command === "catalog_product_image_thumbnail_command" ? { kind: "error", code: "image_unavailable", message: "Unavailable" } : Promise.reject(new Error(`Unexpected command: ${command}`)));
   render(createElement(SaleScreen));
@@ -172,7 +194,8 @@ test("Sales product details show the generated primary location while the cart r
   await user().type(within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }), "filtro{Enter}");
   await user().click(await within(catalog).findByRole("button", { name: "Ver detalles", exact: true }));
   const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
-  assert.equal(within(detail).getByText("A1-SHELF2").previousElementSibling?.textContent, "Ubicación principal");
+  assert.equal(within(detail).queryByText("A1-SHELF2"), null);
+  assert.equal(within(detail).queryByText("Ubicación principal"), null);
   await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
   const summary = screen.getByRole("region", { name: "Resumen de venta" });
@@ -199,7 +222,11 @@ test("quick product detail uses the browse snapshot without changing browse or A
     await user().click(trigger);
     const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
     assert.equal(detail.getAttribute("data-ui-density"), "compact");
-    assert.deepEqual(Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent), ["Acero", "Sin dato"]);
+    assert.equal(detail.querySelectorAll("[data-ui-sales-product-detail-attributes]").length, 1);
+    assert.ok(within(detail).getByText("Material"));
+    assert.ok(within(detail).getByText("Acero"));
+    assert.ok(within(detail).getByText("Largo"));
+    assert.ok(within(detail).getByText("Sin dato"));
     assert.equal(calls.filter((command) => command === "browse_products_command").length, before);
     assert.equal(calls.includes("catalog_metadata_detail_command"), false);
     const zoomTrigger = within(detail).getByRole("button", { name: "Ampliar imagen del producto Filtro aceite" });
@@ -264,13 +291,13 @@ test("ignores stale and mismatched thumbnails while retaining the missing-image 
   assert.equal(within(list).getByRole("img", { name: "Sin imagen" }).textContent, "Sin imagen");
 });
 
-test("rejects a thumbnail for the correct product when its revision does not match", async () => {
+test("rejects a thumbnail whose product identity does not match", async () => {
   const thumbnailRequests: unknown[] = [];
   mockNativeIPC((command, payload) => {
     if (command === "browse_products_command") return browse([products[0]]);
     if (command === "catalog_product_image_thumbnail_command") {
       thumbnailRequests.push(payload);
-      return { kind: "success", product_id: 1, revision: 3, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+      return { kind: "success", product_id: 2, revision: 2, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
     }
     throw new Error(`unexpected command: ${command}`);
   });
@@ -280,9 +307,28 @@ test("rejects a thumbnail for the correct product when its revision does not mat
   const list = within(catalog).getByRole("list", { name: "Resultados del catálogo" });
   await within(list).findByRole("img", { name: "Sin imagen" });
 
-  assert.deepEqual(thumbnailRequests, [{ request: { product_id: 1, expected_revision: 2 } }]);
+  assert.deepEqual(thumbnailRequests, [{ request: { product_id: 1 } }]);
   assert.equal(within(list).queryByRole("img", { name: "Filtro aceite" }), null);
   assert.equal(within(list).getByRole("img", { name: "Sin imagen" }).textContent, "Sin imagen");
+});
+
+test("reproduces locked-Catalog Sales initialization, search, and category filtering with a safe projection", async () => {
+  const calls: unknown[] = [];
+  mockIPC((command, payload) => {
+    calls.push({ command, payload });
+    if (command !== "browse_products_command") throw new Error(`Unexpected command: ${command}`);
+    return browse([products[0]]);
+  });
+  render(createElement(SaleScreen));
+  const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
+  assert.ok(await within(catalog).findByText("Filtro aceite"));
+  const category = within(catalog).getByRole("combobox", { name: "Categoría" });
+  await user().selectOptions(category, "1");
+  await user().click(within(catalog).getByRole("button", { name: "Buscar" }));
+  await waitFor(() => assert.equal(calls.filter((call) => (call as { command: string }).command === "browse_products_command").length, 2));
+  assert.ok(within(catalog).getByRole("button", { name: "Agregar" }));
+  assert.doesNotMatch(catalog.textContent ?? "", /Precio de compra|Ubicación principal|Material/);
+  assert.doesNotMatch(catalog.textContent ?? "", /Bs 32,00/);
 });
 
 test("automatically loads the active first page once on mount", async () => {
@@ -460,12 +506,10 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     assert.deepEqual(actions.map((button) => button.textContent), ["Ver detalles", "Quitar"]);
     const salePrice = `Bs ${product.sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
     const minimumPrice = `Bs ${product.minimum_sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
-    const purchasePrice = product.purchase_price_centavos === null ? "No registrado" : "Bs 32,00";
     assert.equal(row.querySelector("[data-ui-sales-list-price] > [aria-hidden='true']")?.textContent, `Venta: ${salePrice}`);
     assert.equal(row.querySelector("[data-ui-sales-minimum-price] > [aria-hidden='true']")?.textContent, `Mín.: ${minimumPrice}`);
-    assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference] > [aria-hidden='true']")?.textContent, `Compra: ${purchasePrice}`);
+    assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]"), null);
     for (const fullFact of [
-      `Precio de compra (referencia): ${purchasePrice}`,
       `Precio de venta: ${salePrice}`,
       `Precio mínimo de venta: ${minimumPrice}`,
     ]) {
@@ -476,10 +520,10 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     }
     assert.deepEqual(
       Array.from(row.querySelectorAll("[data-ui-sale-price-facts] [aria-hidden='true']"), (node) => node.textContent),
-      [`Compra: ${purchasePrice}`, " · ", `Venta: ${salePrice}`, " · ", `Mín.: ${minimumPrice}`],
+      [`Venta: ${salePrice}`, " · ", `Mín.: ${minimumPrice}`],
     );
-    assert.equal(row.querySelector("[data-ui-sale-price-facts]")?.querySelectorAll(".sale-price-fact-accessible").length, 3);
-    assert.equal(row.querySelectorAll("[data-ui-sale-price-facts] > [data-ui-sales-purchase-price-reference], [data-ui-sale-price-facts] > [data-ui-sales-list-price], [data-ui-sale-price-facts] > [data-ui-sales-minimum-price]").length, 3);
+    assert.equal(row.querySelector("[data-ui-sale-price-facts]")?.querySelectorAll(".sale-price-fact-accessible").length, 2);
+    assert.equal(row.querySelectorAll("[data-ui-sale-price-facts] > [data-ui-sales-list-price], [data-ui-sale-price-facts] > [data-ui-sales-minimum-price]").length, 2);
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
     assert.ok(within(row).getByRole("textbox", { name: "Precio de venta (Bs)" }));
@@ -517,7 +561,10 @@ test("opens the full browse snapshot detail above checkout and hands focus and d
   assert.ok(checkout.isConnected);
   assert.ok(checkout.contains(detail), "the detail overlay must be nested within checkout for focus ownership");
   assert.ok(within(detail).getByRole("img", { name: "Filtro aceite" }));
-  for (const fact of ["SKU", "FIL-1", "Categoría", "Filtros", "Ubicación principal", "A1-SHELF2", "Stock", "Disponible: 8", "Precio de compra", "Bs 32,00", "Precio de venta", "Precio mínimo de venta", "Material", "Acero"]) within(detail).getByText(fact);
+  for (const fact of ["SKU", "FIL-1", "Categoría", "Filtros", "Stock", "Disponible: 8", "Precio de venta", "Precio mínimo de venta"]) within(detail).getByText(fact);
+  for (const forbidden of ["Ubicación principal", "A1-SHELF2", "Precio de compra", "Bs 32,00"]) assert.equal(within(detail).queryByText(forbidden), null);
+  assert.ok(within(detail).getByText("Material"));
+  assert.ok(within(detail).getByText("Acero"));
   assert.equal(within(detail).getAllByText("Bs 85,50").length, 2);
   assert.equal(document.activeElement, within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   assert.equal(calls.length, requestsBeforeDetails, "opening browse-backed detail must not issue another native request");
@@ -584,7 +631,7 @@ test("retains checkout thumbnails across browse pages without changing the confi
   await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   await user().click(within(checkout).getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
-  assert.deepEqual(confirmationEnvelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
+  assert.deepEqual(confirmationEnvelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
 });
 
 test("preserves Sales checkout dismissal, focus return, and backdrop no-op", async () => {
@@ -629,7 +676,7 @@ test("parses cash-only, QR-only and mixed Bs values into the exact command envel
     if (cash) await u.type(screen.getByRole("textbox", { name: "Efectivo recibido" }), cash);
     if (qr) await u.type(screen.getByRole("textbox", { name: "Pago QR" }), qr);
     await u.click(screen.getByRole("button", { name: "Confirmar venta" })); await screen.findByRole("heading", { name: "Venta confirmada" });
-    assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: expected[0], qr_applied_centavos: expected[1] } } });
+    assert.deepEqual(envelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: expected[0], qr_applied_centavos: expected[1] } } });
     view.unmount();
   }
 });
@@ -704,7 +751,7 @@ test("locks every draft mutation and submitted intent during deferred confirmati
   assert.ok(controls.every((control) => (control as HTMLInputElement).disabled)); assert.equal(screen.getByRole("main").getAttribute("aria-busy"), "true");
   fireEvent.change(controls[0], { target: { value: "otro" } }); fireEvent.click(controls[1]); fireEvent.click(controls[2]); fireEvent.change(controls[3], { target: { value: "2" } }); fireEvent.click(controls[4]); fireEvent.click(controls[5]); fireEvent.click(controls[6]); fireEvent.change(controls[7], { target: { value: "1" } }); fireEvent.change(controls[8], { target: { value: "2" } }); fireEvent.click(controls[9]);
   assert.equal(confirms, 1); assert.equal(searches, 2); assert.equal((screen.getByRole("searchbox") as HTMLInputElement).value, "filtro"); assert.equal((screen.getByRole("spinbutton") as HTMLInputElement).value, "1"); assert.equal((screen.getByRole("textbox", { name: "Pago QR" }) as HTMLInputElement).value, "85,50");
-  assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, captured_revision: 2, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
+  assert.deepEqual(submitted, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 8550 } } });
   await act(() => { pending.resolve({ kind: "error", code: "insufficient_stock", message: "Insufficient stock is available." }); return pending.promise; }); screen.getByText("No hay stock suficiente para completar la venta.");
 });
 

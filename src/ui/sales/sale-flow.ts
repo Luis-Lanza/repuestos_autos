@@ -1,4 +1,4 @@
-import type { ProductBrowseResult, ProductSearchResult } from "../../commands/catalog.ts";
+import type { ProductSearchResult, SalesBrowseProduct } from "../../commands/catalog.ts";
 import type { PersistedSaleSummary } from "../../commands/confirm-sale.ts";
 
 const INVALID_BS_CORRECTION = "Ingresá un monto válido en Bs, con hasta dos decimales.";
@@ -19,22 +19,18 @@ export function parseOptionalBs(value: string): number | null {
 export type DraftLine = {
   product_id: number; sku: string; product_name: string; quantity: number;
   /** Immutable presentation snapshot from the browse result; never submitted as sale authority. */
-  product_snapshot: ProductBrowseResult;
-  captured_unit_price_centavos: number; captured_revision: number;
+  product_snapshot: SalesBrowseProduct;
+  captured_unit_price_centavos: number;
   sale_price_centavos: number; minimum_price_centavos: number;
-  /** Presentation-only current purchase price; never part of sale intent. */
-  purchase_price_centavos?: number | null;
   /** The controlled Spanish input, kept as text so malformed edits remain visible. */
   final_price_input: string;
-  /** Legacy acknowledgement fields remain readable for old flow callers only. */
-  acknowledged_price_centavos?: number; acknowledged_revision?: number;
 };
 const UNSAFE_DRAFT_TOTAL = "Draft money must remain within the safe integer range.";
 function checkedDraftCentavos(value: number): number { if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(UNSAFE_DRAFT_TOTAL); return value; }
 export function finalPriceCentavos(line: DraftLine): number | null { try { return parseOptionalBs(line.final_price_input); } catch { return null; } }
 export function effectiveDraftUnitPriceCentavos(line: DraftLine): number {
   const explicit = finalPriceCentavos(line);
-  return checkedDraftCentavos(explicit ?? line.acknowledged_price_centavos ?? line.captured_unit_price_centavos);
+  return checkedDraftCentavos(explicit ?? line.captured_unit_price_centavos);
 }
 export function draftLineSubtotalCentavos(line: DraftLine): number {
   if (!Number.isSafeInteger(line.quantity) || line.quantity < 1) throw new RangeError(UNSAFE_DRAFT_TOTAL);
@@ -59,17 +55,15 @@ export type SaleState = {
   search_results: ProductSearchResult[]; catalog_discovery: CatalogDiscoveryState; lines: DraftLine[]; payment: DraftPayment;
   feedback: string | null; request_id: string | null; confirmation: "idle" | "pending" | "error" | "confirmed";
   persisted_summary: PersistedSaleSummary | null; price_errors: Record<number, string>; focus_price_product_id: number | null;
-  /** Legacy response state retained for compatibility; the current screen never offers acknowledgement. */
-  stale_price: { product_id: number; current_unit_price_centavos: number; current_revision: number } | null;
 };
-export const initialSaleState: SaleState = { search_results: [], catalog_discovery: { status: "initial", query: "", request_id: 0, results: [], error: null }, lines: [], payment: { amount_tendered_centavos: "", qr_applied_centavos: "" }, feedback: null, request_id: null, confirmation: "idle", persisted_summary: null, price_errors: {}, focus_price_product_id: null, stale_price: null };
+export const initialSaleState: SaleState = { search_results: [], catalog_discovery: { status: "initial", query: "", request_id: 0, results: [], error: null }, lines: [], payment: { amount_tendered_centavos: "", qr_applied_centavos: "" }, feedback: null, request_id: null, confirmation: "idle", persisted_summary: null, price_errors: {}, focus_price_product_id: null };
 
 export type SaleAction =
   | { type: "search_succeeded"; results: ProductSearchResult[] }
   | { type: "catalog_search_started"; query: string; request_id: number }
   | { type: "catalog_search_succeeded"; request_id: number; results: ProductSearchResult[] }
   | { type: "catalog_search_failed"; request_id: number; message: string }
-  | { type: "add_product"; product: ProductBrowseResult }
+  | { type: "add_product"; product: SalesBrowseProduct }
   | { type: "remove_product"; product_id: number }
   | { type: "line_quantity_changed"; product_id: number; value: string }
   | { type: "line_final_price_changed"; product_id: number; value: string }
@@ -79,8 +73,6 @@ export type SaleAction =
   | { type: "confirmation_failed"; message: string }
   | { type: "final_price_validation_failed"; message: string }
   | { type: "minimum_price_violation"; product_id: number; current_minimum_unit_price_centavos: number }
-  | { type: "stale_price_detected"; product_id: number; current_unit_price_centavos: number; current_revision: number }
-  | { type: "acknowledge_stale_price"; product_id: number; current_unit_price_centavos: number; current_revision: number }
   | { type: "discard" };
 function positiveWhole(value: string): number | null { const parsed = Number(value); return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null; }
 function priceError(value: string, minimum: number): string | undefined {
@@ -109,11 +101,11 @@ export function createSaleFlow(state: SaleState, action: SaleAction): SaleState 
       if (action.product.available_quantity < 1 || state.lines.some((line) => line.product_id === action.product.product_id)) return state;
       { const salePrice = action.product.sale_price_centavos ?? action.product.list_price_centavos ?? action.product.catalog_unit_price_centavos;
         const minimumPrice = Number.isSafeInteger(action.product.minimum_sale_price_centavos) ? action.product.minimum_sale_price_centavos : salePrice;
-        return { ...resetIntent(state), lines: [...state.lines, { product_id: action.product.product_id, sku: action.product.sku, product_name: action.product.name, quantity: 1, product_snapshot: { ...action.product, attribute_values: action.product.attribute_values.map((attribute) => ({ ...attribute })) }, captured_unit_price_centavos: salePrice, captured_revision: action.product.revision, sale_price_centavos: salePrice, minimum_price_centavos: minimumPrice, purchase_price_centavos: action.product.purchase_price_centavos, final_price_input: formatBsInput(salePrice) }], feedback: null }; }
+        return { ...resetIntent(state), lines: [...state.lines, { product_id: action.product.product_id, sku: action.product.sku, product_name: action.product.name, quantity: 1, product_snapshot: { ...action.product, attribute_values: action.product.attribute_values.map((attribute) => ({ ...attribute })) }, captured_unit_price_centavos: salePrice, sale_price_centavos: salePrice, minimum_price_centavos: minimumPrice, final_price_input: formatBsInput(salePrice) }], feedback: null }; }
     case "remove_product": {
       if (!state.lines.some((line) => line.product_id === action.product_id)) return state;
       const price_errors = { ...state.price_errors }; delete price_errors[action.product_id];
-      return { ...resetIntent(state), lines: state.lines.filter((line) => line.product_id !== action.product_id), price_errors, stale_price: state.stale_price?.product_id === action.product_id ? null : state.stale_price };
+      return { ...resetIntent(state), lines: state.lines.filter((line) => line.product_id !== action.product_id), price_errors };
     }
     case "line_quantity_changed": {
       const quantity = positiveWhole(action.value);
@@ -127,7 +119,7 @@ export function createSaleFlow(state: SaleState, action: SaleAction): SaleState 
       if (!line) return state;
       const error = priceError(action.value, line.minimum_price_centavos);
       if (line.final_price_input === action.value) return { ...state, price_errors: withPriceError(state, action.product_id, error), focus_price_product_id: error ? action.product_id : null, feedback: null };
-      return { ...resetIntent(state), stale_price: null, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, final_price_input: action.value, acknowledged_price_centavos: undefined, acknowledged_revision: undefined } : line), price_errors: withPriceError(state, action.product_id, error) };
+      return { ...resetIntent(state), lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, final_price_input: action.value } : line), price_errors: withPriceError(state, action.product_id, error) };
     }
     case "payment_changed": if (state.payment[action.field] === action.value) return { ...state, feedback: null }; return { ...resetIntent(state), payment: { ...state.payment, [action.field]: action.value } };
     case "confirmation_started": return { ...state, request_id: state.request_id ?? action.request_id, confirmation: "pending", feedback: null };
@@ -144,10 +136,6 @@ export function createSaleFlow(state: SaleState, action: SaleAction): SaleState 
       const message = `El precio mínimo actual es ${formatBs(action.current_minimum_unit_price_centavos)}. Ajustá el precio de venta para continuar.`;
       return { ...resetIntent(state), confirmation: "error", lines: state.lines.map((candidate) => candidate.product_id === action.product_id ? { ...candidate, minimum_price_centavos: action.current_minimum_unit_price_centavos } : candidate), price_errors: { ...withPriceError(state, action.product_id, priceError(line.final_price_input, action.current_minimum_unit_price_centavos)), [action.product_id]: message }, focus_price_product_id: action.product_id, feedback: message };
     }
-    case "stale_price_detected": return { ...resetIntent(state), confirmation: "error", stale_price: action, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, final_price_input: "", acknowledged_price_centavos: undefined, acknowledged_revision: undefined } : line) };
-    case "acknowledge_stale_price":
-      if (state.stale_price?.product_id !== action.product_id || state.stale_price.current_unit_price_centavos !== action.current_unit_price_centavos || state.stale_price.current_revision !== action.current_revision) return state;
-      return { ...resetIntent(state), stale_price: null, lines: state.lines.map((line) => line.product_id === action.product_id ? { ...line, final_price_input: "", acknowledged_price_centavos: action.current_unit_price_centavos, acknowledged_revision: action.current_revision } : line), feedback: "Precio actual aceptado. Confirmá nuevamente para continuar." };
     case "discard": return initialSaleState;
   }
 }

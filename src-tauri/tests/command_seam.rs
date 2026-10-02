@@ -1,7 +1,7 @@
 use repuestos_autos::application::catalog::{
     AttributeValueInput, CategoryFieldInput, CreateCategoryInput, CreateProductInput,
 };
-use repuestos_autos::commands::catalog::{browse_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};
+use repuestos_autos::commands::catalog::{browse_products, browse_sale_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};
 use repuestos_autos::commands::confirm_sale::{
     confirm_sale, ConfirmSaleRequest, ConfirmSaleResponse, PaymentInputRequest, RequestedLine,
 };
@@ -47,6 +47,28 @@ fn browse_command_serializes_the_complete_ordered_attribute_projection_without_d
     assert_eq!(serialized["products"][0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec![
         "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "purchase_price_centavos", "revision", "sale_price_centavos", "sku"
     ]);
+}
+
+#[test]
+fn sales_browse_command_serializes_only_bounded_safe_product_attributes() {
+    let connection = open_seeded_catalog().unwrap();
+    connection.execute("UPDATE products SET purchase_price_centavos = 7777, revision = 9 WHERE id = 1", []).unwrap();
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (7, 1, 'Material', 'text', 0)", []).unwrap();
+    connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 7, 'Paper', 'Paper')", []).unwrap();
+    let page = browse_sale_products(&connection, BrowseProductsRequest {
+        query: Some("filtro".into()), category_id: Some(1), stock_state: "all".into(), activity: "all".into(), page: 1, page_size: 20,
+    }).unwrap();
+    let value = serde_json::to_value(&page).unwrap();
+    assert_eq!(value["products"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), vec![
+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "product_id", "sale_price_centavos", "sku"
+    ]);
+    assert_eq!(value["products"][0]["attribute_values"], serde_json::json!([
+        { "definition_id": 7, "label": "Material", "value": "Paper" }
+    ]));
+    assert!(!value.to_string().contains("7777"));
+    assert!(!value.to_string().contains("revision"));
+    assert!(!value.to_string().contains("location"));
+    assert!(!value.to_string().contains("activity"));
 }
 
 #[test]

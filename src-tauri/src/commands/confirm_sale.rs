@@ -21,14 +21,17 @@ pub struct RequestedLine {
     pub product_id: i64,
     pub quantity: i64,
     pub captured_unit_price_centavos: i64,
-    pub captured_revision: i64,
-    /// Explicit negotiated-price route. `None` preserves legacy decoding.
+    /// Explicit negotiated-price route. The backend compares it with current state transactionally.
     #[serde(default)]
     pub final_unit_price_centavos: Option<i64>,
-    /// Legacy stale-price acknowledgement, retained for compatibility only.
-    #[serde(default)]
+    /// Ignored in serialized IPC; retained only for existing in-process constructors.
+    #[serde(skip)]
+    pub captured_revision: i64,
+    /// Ignored in serialized IPC; stale checks are backend-owned.
+    #[serde(skip)]
     pub acknowledged_price_centavos: Option<i64>,
-    #[serde(default)]
+    /// Ignored in serialized IPC; stale checks are backend-owned.
+    #[serde(skip)]
     pub acknowledged_revision: Option<i64>,
 }
 
@@ -52,7 +55,6 @@ pub enum ConfirmSaleResponse {
 pub struct StaleCatalogPrice {
     pub product_id: i64,
     pub current_unit_price_centavos: i64,
-    pub current_revision: i64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -102,14 +104,9 @@ pub fn confirm_sale(
     let repository = SqliteSaleRepository;
     Ok(match ConfirmSaleUseCase::new(connection, &repository).confirm(request) {
         Ok(summary) => ConfirmSaleResponse::Success(map_summary(summary)),
-        Err(ConfirmSaleError::StaleCatalogPrice {
-            product_id,
-            current_unit_price,
-            current_revision,
-        }) => ConfirmSaleResponse::StaleCatalogRecord(StaleCatalogPrice {
+        Err(ConfirmSaleError::StaleCatalogPrice { product_id, current_unit_price, .. }) => ConfirmSaleResponse::StaleCatalogRecord(StaleCatalogPrice {
             product_id,
             current_unit_price_centavos: current_unit_price.value(),
-            current_revision,
         }),
         Err(ConfirmSaleError::FinalPriceBelowMinimum {
             product_id,
@@ -125,24 +122,19 @@ pub fn confirm_sale(
 fn parse_request(request: ConfirmSaleRequest) -> Result<ApplicationConfirmSaleRequest, CommandError> {
     let request_id = RequestId::parse(&request.request_id).map_err(|_| invalid_request())?;
     let lines = request.lines.into_iter().map(|line| {
-        let (acknowledged_price, acknowledged_revision) = match (line.acknowledged_price_centavos, line.acknowledged_revision) {
-            (None, None) => (None, None),
-            (Some(price), Some(revision)) if revision >= 0 => (Some(MoneyCentavos::new(price).map_err(|_| invalid_request())?), Some(revision)),
-            _ => return Err(invalid_request()),
-        };
         Ok(ApplicationRequestedLine {
             product_id: line.product_id,
             quantity: Quantity::new(line.quantity).map_err(|_| invalid_quantity())?,
             captured_unit_price: MoneyCentavos::new(line.captured_unit_price_centavos).map_err(|_| invalid_request())?,
-            captured_revision: (line.captured_revision >= 0).then_some(line.captured_revision).ok_or_else(invalid_request)?,
+            captured_revision: line.captured_revision,
             final_unit_price: line.final_unit_price_centavos.map(|price| {
                 if price <= 0 {
                     return Err(invalid_final_price());
                 }
                 MoneyCentavos::new(price).map_err(|_| invalid_request())
             }).transpose()?,
-            acknowledged_price,
-            acknowledged_revision,
+            acknowledged_price: line.acknowledged_price_centavos.map(|price| MoneyCentavos::new(price).map_err(|_| invalid_request())).transpose()?,
+            acknowledged_revision: line.acknowledged_revision,
         })
     }).collect::<Result<Vec<_>, _>>()?;
     Ok(ApplicationConfirmSaleRequest {

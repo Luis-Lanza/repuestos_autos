@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProductBrowseResult } from "../../commands/catalog.ts";
+import type { SalesBrowseProduct } from "../../commands/catalog.ts";
 import {
   createSaleFlow,
   draftLineSubtotalCentavos,
@@ -33,50 +33,34 @@ test("rejects malformed and unsafe Bs input with the public correction", () => {
   }
 });
 
-const brakePad: ProductBrowseResult = {
+const brakePad: SalesBrowseProduct = {
   product_id: 1,
   category_id: 2,
-  primary_location_code: "A1-02",
   attribute_values: [{ definition_id: 1, label: "Material", value: "Cerámica" }],
   sku: "BP-100",
   name: "Brake Pad",
   category_name: "Brakes",
   available_quantity: 4,
   catalog_unit_price_centavos: 2_500,
-  purchase_price_centavos: 1_250,
   sale_price_centavos: 2_500,
   list_price_centavos: 2_500,
   minimum_sale_price_centavos: 2_500,
-  revision: 0,
 };
 
 test("derives checked draft prices and totals while preserving captured facts", () => {
   const captured = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
-  const stale = createSaleFlow(captured, {
-    type: "stale_price_detected",
-    product_id: 1,
-    current_unit_price_centavos: 2_750,
-    current_revision: 2,
-  });
-  const acknowledged = createSaleFlow(stale, {
-    type: "acknowledge_stale_price",
-    product_id: 1,
-    current_unit_price_centavos: 2_750,
-    current_revision: 2,
-  });
-  const quantityTwo = createSaleFlow(acknowledged, {
+  const quantityTwo = createSaleFlow(captured, {
     type: "line_quantity_changed",
     product_id: 1,
     value: "2",
   });
 
-  assert.equal(effectiveDraftUnitPriceCentavos(quantityTwo.lines[0]), 2_750);
-  assert.equal(draftLineSubtotalCentavos(quantityTwo.lines[0]), 5_500);
-  assert.equal(draftTotalCentavos(quantityTwo.lines), 5_500);
+  assert.equal(effectiveDraftUnitPriceCentavos(quantityTwo.lines[0]), 2_500);
+  assert.equal(draftLineSubtotalCentavos(quantityTwo.lines[0]), 5_000);
+  assert.equal(draftTotalCentavos(quantityTwo.lines), 5_000);
   assert.equal(draftTotalUnits(quantityTwo.lines), 2);
   assert.equal(draftTotalUnits([quantityTwo.lines[0], { ...quantityTwo.lines[0], product_id: 2, quantity: 3 }]), 5);
   assert.equal(quantityTwo.lines[0].captured_unit_price_centavos, 2_500);
-  assert.equal(quantityTwo.lines[0].captured_revision, 0);
   assert.equal(quantityTwo.lines[0].product_snapshot.available_quantity, 4);
   assert.deepEqual(quantityTwo.lines[0].product_snapshot, brakePad);
 });
@@ -116,10 +100,8 @@ test("adds active search results as quantity-only sale intent", () => {
       quantity: 1,
       product_snapshot: brakePad,
       captured_unit_price_centavos: 2_500,
-      captured_revision: 0,
       sale_price_centavos: 2_500,
       minimum_price_centavos: 2_500,
-      purchase_price_centavos: 1_250,
       final_price_input: "25,00",
     },
   ]);
@@ -131,10 +113,6 @@ test("uses canonical sale price for a draft and falls back to legacy prices", ()
   assert.equal(canonicalDraft.lines[0].captured_unit_price_centavos, 3_000);
   assert.equal(canonicalDraft.lines[0].sale_price_centavos, 3_000);
   assert.equal(canonicalDraft.lines[0].final_price_input, "30,00");
-  assert.equal(canonicalDraft.lines[0].purchase_price_centavos, 1_250);
-
-  const withoutPurchasePrice = createSaleFlow(initialSaleState, { type: "add_product", product: { ...brakePad, purchase_price_centavos: null } });
-  assert.equal(withoutPurchasePrice.lines[0].purchase_price_centavos, null);
 
   const legacy = { ...brakePad, sale_price_centavos: undefined, list_price_centavos: 2_700 } as unknown as ProductSearchResult;
   const legacyDraft = createSaleFlow(initialSaleState, { type: "add_product", product: legacy });
@@ -224,28 +202,19 @@ test("maps backend non-positive final price to the focused field error", () => {
   assert.equal(invalid.feedback, "El precio de venta debe ser mayor que cero.");
 });
 
-test("requires acknowledgement for the exact current stale price and revision", () => {
+test("sale draft carries no client-owned catalog revision", () => {
   const drafted = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
-  const stale = createSaleFlow(drafted, { type: "stale_price_detected", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 });
-  const acknowledged = createSaleFlow(stale, { type: "acknowledge_stale_price", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 });
-  const changedAgain = createSaleFlow(acknowledged, { type: "stale_price_detected", product_id: 1, current_unit_price_centavos: 2800, current_revision: 3 });
-  assert.equal(acknowledged.lines[0].acknowledged_revision, 2);
-  assert.equal(changedAgain.lines[0].acknowledged_revision, undefined);
-  assert.equal(changedAgain.confirmation, "error");
+  assert.equal(drafted.lines[0].captured_unit_price_centavos, 2_500);
+  assert.equal("captured_revision" in drafted.lines[0], false);
+  assert.equal("revision" in drafted.lines[0].product_snapshot, false);
 });
 
-test("removing the stale-price line clears its obsolete confirmation block", () => {
+test("removing a drafted line clears its intent and confirmation state", () => {
   const drafted = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
-  const stale = createSaleFlow(drafted, {
-    type: "stale_price_detected",
-    product_id: 1,
-    current_unit_price_centavos: 2_700,
-    current_revision: 3,
-  });
-  const removed = createSaleFlow(stale, { type: "remove_product", product_id: 1 });
+  const failed = createSaleFlow(drafted, { type: "confirmation_failed", message: "The product price changed." });
+  const removed = createSaleFlow(failed, { type: "remove_product", product_id: 1 });
 
   assert.deepEqual(removed.lines, []);
-  assert.equal(removed.stale_price, null);
   assert.equal(removed.confirmation, "idle");
   assert.equal(removed.feedback, null);
 });
@@ -381,20 +350,4 @@ test("replaces request identity for every changed sale payload", () => {
   const removedLine = createSaleFlow(failedAdd, { type: "remove_product", product_id: 2 });
   assert.equal(removedLine.request_id, null);
 
-  const stale = createSaleFlow(
-    createSaleFlow(withLine, { type: "confirmation_started", request_id: firstRequestId }),
-    { type: "stale_price_detected", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 },
-  );
-  const acknowledged = createSaleFlow(stale, {
-    type: "acknowledge_stale_price",
-    product_id: 1,
-    current_unit_price_centavos: 2700,
-    current_revision: 2,
-  });
-  assert.equal(stale.request_id, null);
-  assert.equal(acknowledged.request_id, null);
-  assert.equal(
-    createSaleFlow(acknowledged, { type: "confirmation_started", request_id: secondRequestId }).request_id,
-    secondRequestId,
-  );
 });

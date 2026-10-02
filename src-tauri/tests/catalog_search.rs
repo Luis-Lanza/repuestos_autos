@@ -19,6 +19,83 @@ fn finds_active_seeded_products_by_every_searchable_catalog_field() {
 }
 
 #[test]
+fn sale_search_contract_contains_only_safe_sale_facts() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("UPDATE products SET purchase_price_centavos = 7777 WHERE id = 1", []).unwrap();
+    let result = repuestos_autos::application::catalog::search_active_sale_products(&connection, "filtro").unwrap();
+    let value = serde_json::to_value(&result[0]).unwrap();
+    assert_eq!(value.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), [
+        "available_quantity", "category_name", "minimum_sale_price_centavos", "name", "product_id", "sale_price_centavos", "sku",
+    ]);
+    assert!(!value.to_string().contains("7777"));
+}
+
+#[test]
+fn sales_browse_projection_contains_only_active_filter_and_sale_facts() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("UPDATE products SET purchase_price_centavos = 7777, revision = 9 WHERE id = 1", []).unwrap();
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required, active) VALUES (9001, 1, 'Material', 'text', 0, 1), (9002, 1, 'Retired field', 'text', 0, 0)", []).unwrap();
+    connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9001, 'Acero', 'Acero'), (1, 9002, 'Hidden', 'Hidden')", []).unwrap();
+    let page = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &repuestos_autos::application::catalog::BrowseProductsInput {
+        query: Some("filtro".into()), category_id: Some(1), stock_filter: repuestos_autos::application::catalog::ProductStockFilter::Available,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
+    }).unwrap();
+    assert_eq!(page.categories.len(), 2);
+    assert_eq!(page.products.len(), 1);
+    let value = serde_json::to_value(&page.products[0]).unwrap();
+    assert_eq!(value.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), [
+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "product_id", "sale_price_centavos", "sku",
+    ]);
+    assert_eq!(value["attribute_values"], serde_json::json!([
+        { "definition_id": 9001, "label": "Material", "value": "Acero" }
+    ]));
+    assert_eq!(value["minimum_sale_price_centavos"], 2_500);
+    assert!(!value.to_string().contains("Hidden"));
+    assert!(!value.to_string().contains("7777"));
+    assert!(!value.to_string().contains("revision"));
+    assert!(!value.to_string().contains("location"));
+    assert!(!value.to_string().contains("active"));
+    connection.execute("UPDATE categories SET active = 0 WHERE id = 1", []).unwrap();
+    let page = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &repuestos_autos::application::catalog::BrowseProductsInput {
+        query: None, category_id: None, stock_filter: repuestos_autos::application::catalog::ProductStockFilter::Available,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
+    }).unwrap();
+    assert!(page.products.is_empty());
+    assert!(!page.categories.iter().any(|category| category.category_id == 1));
+}
+
+#[test]
+fn sales_browse_rejects_attribute_facts_over_the_projection_bounds() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (9002, 1, 'Material', 'text', 0)", []).unwrap();
+    connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9002, ?1, ?1)", ["x".repeat(257)]).unwrap();
+    let result = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &repuestos_autos::application::catalog::BrowseProductsInput {
+        query: Some("filtro".into()), category_id: Some(1), stock_filter: repuestos_autos::application::catalog::ProductStockFilter::Available,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
+    });
+    assert!(result.is_err(), "oversized persisted attribute text must fail closed");
+}
+
+#[test]
+fn inventory_browse_is_bounded_to_operational_facts() {
+    let connection = open_seeded_catalog().expect("a disposable catalog database");
+    connection.execute("UPDATE products SET purchase_price_centavos = 7777, revision = 9 WHERE id = 1", []).unwrap();
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required, active) VALUES (9001, 1, 'Retired secret', 'text', 0, 0)", []).unwrap();
+    connection.execute("INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 9001, 'hidden-attribute', 'hidden-attribute')", []).unwrap();
+    let page = repuestos_autos::application::catalog::browse_active_inventory_products(&connection, &repuestos_autos::application::catalog::BrowseProductsInput {
+        query: Some("filtro".into()), category_id: Some(1), stock_filter: repuestos_autos::application::catalog::ProductStockFilter::All,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active, page: 1, page_size: 20,
+    }).unwrap();
+    let value = serde_json::to_value(&page).unwrap();
+    assert_eq!(value["products"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), [
+        "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "sale_price_centavos", "sku",
+    ]);
+    for forbidden in ["purchase_price_centavos", "revision", "attribute_values", "hidden-attribute", "7777", "active"] {
+        assert!(!value.to_string().contains(forbidden), "unexpected Inventory projection field {forbidden}: {value}");
+    }
+}
+
+#[test]
 fn exposes_sale_minimum_and_purchase_prices_separately() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     connection

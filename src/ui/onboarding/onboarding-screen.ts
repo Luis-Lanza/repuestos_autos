@@ -1,6 +1,6 @@
 import { createElement as h, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createCategory, createProduct, FIELD_TYPE, listCategories, type Category, type CategoryFieldInput, type FieldType } from "../../commands/onboarding.ts";
-import { CATALOG_TARGET, catalogMaintenanceCommands, productLocationCommands, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
+import { onboardingProductLocationCommands, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { LocationPicker } from "../visual-system/location-picker.ts";
 import { Panel } from "../visual-system/structure.ts";
@@ -47,7 +47,7 @@ export function OnboardingScreen({ onBack }: Props) {
     } catch { if (mounted.current && id === request.current) dispatch({ type: "categories_failed", requestId: id }); }
   };
   const loadProductLocations = async () => {
-    const [response, schema] = await Promise.all([productLocationCommands.list(false), productLocationCommands.schema()]);
+    const [response, schema] = await Promise.all([onboardingProductLocationCommands.list(), onboardingProductLocationCommands.schema()]);
     if (!mounted.current) return;
     if (response.kind === "locations_success") { setProductLocations(response.locations.filter((location) => location.active)); setLocationsStatus("ready"); }
     else { setProductLocations([]); setLocationsStatus("error"); }
@@ -107,10 +107,7 @@ export function OnboardingScreen({ onBack }: Props) {
         if (primaryLocationId) {
           locationMessage = " No se pudo asignar la ubicación principal; podés corregirla desde el Catálogo.";
           try {
-            const detail = await catalogMaintenanceCommands.detail({ target: CATALOG_TARGET.PRODUCT, entity_id: response.product_id });
-            const assignment = detail.kind === "success" && detail.detail.target === CATALOG_TARGET.PRODUCT && detail.detail.entity_id === response.product_id
-              ? await productLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: detail.detail.revision, location_id: Number(primaryLocationId) })
-              : null;
+            const assignment = await onboardingProductLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: 0, location_id: Number(primaryLocationId) });
             const location = productLocations.find((item) => item.location_id === Number(primaryLocationId));
             if (assignment?.kind === "assignment_success" && assignment.product_id === response.product_id && assignment.location_id === Number(primaryLocationId) && location) {
               locationMessage = ` Ubicación principal: ${location.code}.`;

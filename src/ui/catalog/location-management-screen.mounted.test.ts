@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
+
+const mockIPC: typeof nativeMockIPC = (handler) => nativeMockIPC((command, payload) => command === "catalog_access_status_command" ? { kind: "status", status: "unlocked" } : handler(command, payload));
 
 const schema = { revision: 0, segments: [] as { id: number; label: string; position: number }[] };
 const row = { location_id: 8, code: "PB-12", values: ["PB", "12"], active: true, revision: 2 };

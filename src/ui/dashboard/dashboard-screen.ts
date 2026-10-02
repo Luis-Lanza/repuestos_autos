@@ -86,7 +86,7 @@ export function DashboardScreen({ onOpenInventoryAlerts }: { onOpenInventoryAler
 
   return createElement("main", { "aria-labelledby": "dashboard-heading", "data-ui-dashboard": true, "aria-busy": state.status === "loading" || undefined },
     createElement("header", { "data-ui-dashboard-header": true },
-      createElement("h1", { id: "dashboard-heading" }, "Dashboard"),
+      createElement("h1", { id: "dashboard-heading" }, "Métricas"),
       createElement("p", null, "Resumen operativo de ventas e inventario.")),
     state.status === "loading" ? createElement(Feedback, { kind: "loading" }, "Cargando dashboard…") : null,
     state.status === "error" ? createElement(Feedback, { kind: "error" }, createElement("span", null, "No se pudo cargar el dashboard. ", createElement(Action, { variant: "tertiary", onClick: load }, "Reintentar"))) : null,

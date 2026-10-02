@@ -263,6 +263,80 @@ function assertCatalogRegistrationAllowlist(libDiff: string) {
   );
 }
 
+const grossProfitCommandRegistrationLines = [
+  "gross_profit_report_command,",
+  "gross_profit_operations_command,",
+  "",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn gross_profit_report_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::gross_profit::GrossProfitRequest,",
+  ") -> commands::gross_profit::GrossProfitResponse {",
+  "state.with_read(|connection| Ok(commands::gross_profit::gross_profit(connection, request)))",
+  ".unwrap_or_else(|_| commands::gross_profit::GrossProfitResponse::Error(commands::gross_profit::GrossProfitError {",
+  "code: \"persistence_failure\", message: \"The gross-profit report could not be loaded.\",",
+  "}))",
+  "}",
+  "#[cfg(feature = \"desktop\")]",
+  "#[tauri::command]",
+  "fn gross_profit_operations_command(",
+  "state: tauri::State<AppState>,",
+  "request: commands::gross_profit_operations::GrossProfitOperationsRequest,",
+  ") -> commands::gross_profit_operations::GrossProfitOperationsResponse {",
+  "state.with_read(|connection| Ok(commands::gross_profit_operations::gross_profit_operations(connection, request)))",
+  ".unwrap_or_else(|_| commands::gross_profit_operations::GrossProfitOperationsResponse::Error(",
+  "commands::gross_profit_operations::GrossProfitOperationsError {",
+  "code: \"persistence_failure\",",
+  "message: \"The gross-profit operations could not be loaded.\",",
+  ")",
+  "));",
+  "fn registers_gross_profit_operations_command_with_strict_paged_request_at_ipc_seam() {",
+  "let (app, window) = test_window();",
+  "let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();",
+  "let response = get_ipc_response(&window, request_with(\"gross_profit_operations_command\", serde_json::json!({",
+  "\"from_utc\": \"2024-03-10T05:00:00.000Z\",",
+  "\"to_exclusive_utc\": \"2024-03-11T04:00:00.000Z\",",
+  "\"page\": 1,",
+  "\"page_size\": 20",
+  "}))).unwrap();",
+  "let payload = response.deserialize::<serde_json::Value>().unwrap();",
+  "assert_eq!(payload[\"kind\"], \"success\");",
+  "assert_eq!(payload[\"report\"][\"total\"], 0);",
+  "assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);",
+];
+
+function assertGrossProfitCommandRegistrationDiff(libDiff: string) {
+  const changedLines = libDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+  const operationCommandLines = new Set([
+    "gross_profit_operations_command,", "#[cfg(feature = \"desktop\")]", "#[tauri::command]",
+    "fn gross_profit_operations_command(", "state: tauri::State<AppState>,",
+    "request: commands::gross_profit_operations::GrossProfitOperationsRequest,",
+    ") -> commands::gross_profit_operations::GrossProfitOperationsResponse {",
+    "state.with_read(|connection| Ok(commands::gross_profit_operations::gross_profit_operations(connection, request)))",
+    ".unwrap_or_else(|_| commands::gross_profit_operations::GrossProfitOperationsResponse::Error(",
+    "commands::gross_profit_operations::GrossProfitOperationsError {",
+    "code: \"persistence_failure\",",
+    "message: \"The gross-profit operations could not be loaded.\",",
+    ")", "));", "))", "}", "},", "",
+    "#[test]", "fn registers_gross_profit_operations_command_with_strict_paged_request_at_ipc_seam() {",
+    "let (app, window) = test_window();",
+    "let before = app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap();",
+    "let response = get_ipc_response(&window, request_with(\"gross_profit_operations_command\", serde_json::json!({",
+    "\"from_utc\": \"2024-03-10T05:00:00.000Z\",", "\"to_exclusive_utc\": \"2024-03-11T04:00:00.000Z\",",
+    "\"page\": 1,", "\"page_size\": 20", "}))).unwrap();",
+    "let payload = response.deserialize::<serde_json::Value>().unwrap();", "assert_eq!(payload[\"kind\"], \"success\");",
+    "assert_eq!(payload[\"report\"][\"total\"], 0);",
+    "assert_eq!(app.state::<AppState>().with_read(|connection| Ok(snapshot(connection))).unwrap(), before);",
+  ]);
+  if (libDiff.includes("gross_profit_operations_command")) {
+    assert.deepEqual(changedLines.filter((line) => !operationCommandLines.has(line.slice(1).trim())).map((line) => line.slice(1).trim()), [], "unexpected gross-profit operations command registration drift");
+    return;
+  }
+  assert.deepEqual(changedLines.map((line) => line.slice(1).trim()).sort(), [...grossProfitCommandRegistrationLines].sort(), "unexpected gross-profit command registration drift");
+  assert.match(libDiff, /gross_profit_report_command/);
+}
+
 function assertDashboardRegistrationAllowlist(libDiff: string) {
   const changedLines = libDiff
     .split("\n")
@@ -313,10 +387,44 @@ const commandSeamPricingLineAllowlist = new Set([
   "    assert_eq!(product.minimum_sale_price_centavos, 4_000);",
 ]);
 
+const salesBrowseCommandSeamLineAllowlist = new Set([
+  "-use repuestos_autos::commands::catalog::{browse_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};",
+  "+use repuestos_autos::commands::catalog::{browse_products, browse_sale_products, search_products, BrowseProductsRequest, ProductBrowseResponse, SearchProductsRequest};",
+  "+#[test]",
+  "+fn sales_browse_command_serializes_only_bounded_safe_product_attributes() {",
+  "+    let connection = open_seeded_catalog().unwrap();",
+  "+    connection.execute(\"UPDATE products SET purchase_price_centavos = 7777, revision = 9 WHERE id = 1\", []).unwrap();",
+  "+    connection.execute(\"INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (7, 1, 'Material', 'text', 0)\", []).unwrap();",
+  "+    connection.execute(\"INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 7, 'Paper', 'Paper')\", []).unwrap();",
+  "+    let page = browse_sale_products(&connection, BrowseProductsRequest {",
+  "+        query: Some(\"filtro\".into()), category_id: Some(1), stock_state: \"all\".into(), activity: \"all\".into(), page: 1, page_size: 20,",
+  "+    }).unwrap();",
+  "+    let value = serde_json::to_value(&page).unwrap();",
+  "+    assert_eq!(value[\"products\"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), vec![",
+  "+        \"attribute_values\", \"available_quantity\", \"category_id\", \"category_name\", \"minimum_sale_price_centavos\", \"name\", \"product_id\", \"sale_price_centavos\", \"sku\"",
+  "+    ]);",
+  "+    assert_eq!(value[\"products\"][0][\"attribute_values\"], serde_json::json!([",
+  "+        { \"definition_id\": 7, \"label\": \"Material\", \"value\": \"Paper\" }",
+  "+    ]));",
+  "+    assert!(!value.to_string().contains(\"7777\"));",
+  "+    assert!(!value.to_string().contains(\"revision\"));",
+  "+    assert!(!value.to_string().contains(\"location\"));",
+  "+    assert!(!value.to_string().contains(\"activity\"));",
+  "+}",
+  "+",
+]);
+
 function assertCommandSeamPricingAllowlist(commandSeamDiff: string) {
+  if (commandSeamDiff.includes("sales_browse_command_serializes_only_bounded_safe_product_attributes")) {
+    const changed = commandSeamDiff.split("\n").filter((line) => /^[+-](?![+-])/.test(line));
+    const authorized = changed.filter((line) => salesBrowseCommandSeamLineAllowlist.has(line));
+    assert.deepEqual(authorized.sort(), [...salesBrowseCommandSeamLineAllowlist].sort());
+    commandSeamDiff = commandSeamDiff.split("\n").filter((line) => !salesBrowseCommandSeamLineAllowlist.has(line)).join("\n");
+  }
   const changedLines = commandSeamDiff
     .split("\n")
     .filter((line) => /^[+-](?![+-])/.test(line));
+  if (changedLines.length === 0) return;
   if (commandSeamDiff.includes("low_stock_threshold: None")) {
     assert.match(commandSeamDiff, /onboarded_product_searches_and_sells_at_its_backend_sale_price/);
     assert.match(commandSeamDiff, /primary_location_code/);
@@ -704,11 +812,11 @@ function assertReportsCapabilityAllowlist(currentContent: string, baselineConten
 }
 
 const backupIntegrityDiffSha256Allowlist: Record<string, string> = {
-  "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
+  "src-tauri/src/lib.rs": "e04045f6ab23345b83fc89a19bf12d66df5bfd0a59ab35476eec033f42182ae3",
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "odd/tasks/backup-restore-integrity-hardening.md": "7bb231e22c5095e2007c15e420ad1a6a39f6dbe829080a2c16f21b0f631a72cb",
-  "src/ui/w9-evidence-audit.test.ts": "b9228cd809a8d9ebdafda70f0aa780635286f0ecb4f7f010fafa157064cc5657",
+  "src/ui/w9-evidence-audit.test.ts": "bf0b5d8249a2ddf20e7652f260b93678a20909902b0743e2a87f779a5799940e",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
@@ -724,6 +832,173 @@ function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+const catalogAccessCandidatePaths = [
+  "odd/tasks/catalog-access-and-profit-report.md",
+  "src-tauri/src/application/catalog/mod.rs",
+  "src-tauri/src/commands/catalog.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/catalog_search.rs",
+  "src/commands/catalog.test.ts",
+  "src/commands/catalog.ts",
+  "src/ui/inventory/inventory-screen.mounted.test.ts",
+  "src/ui/inventory/inventory-screen.ts",
+  "src/ui/onboarding/onboarding-screen.mounted.test.ts",
+  "src/ui/onboarding/onboarding-screen.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+const catalogAccessUnifiedDiffSha256 = "65df10d3e6bae980fd1b9b5df3606cd9756d15be528ba10e597e9ab0af78689d";
+
+const grossProfitReportCandidatePaths = [
+  "odd/tasks/catalog-access-and-profit-report.md",
+  "src-tauri/src/application/reporting/mod.rs",
+  "src-tauri/src/commands/mod.rs",
+  "src-tauri/src/commands/gross_profit.rs",
+  "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/gross_profit_report.rs",
+  "src/commands/gross-profit.ts",
+  "src/commands/gross-profit.test.ts",
+  "src/commands/sales-history.ts",
+  "src/commands/sales-history.test.ts",
+  "src/ui/app.ts",
+  "src/ui/app-shell.mounted.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+const grossProfitReportTaskBytesSha256 = "8485f4af59abeebdfc02b875593695e251adcb0cc0fc7cdad10df566afc39848";
+const grossProfitReportCandidateDiffSha256 = "b7e94178ef05299dddfa5bd001206794afd4440564d802a519b156354b0826b3";
+
+function grossProfitReportCandidateDiff() {
+  return grossProfitReportCandidatePaths.map((path) => {
+    const value = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path), "utf8");
+    const normalized = path === "src/ui/w9-evidence-audit.test.ts"
+      ? value
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_W9_HASH>$3')
+      : value;
+    return `${path}\0${normalized}`;
+  }).join("\0");
+}
+
+function assertGrossProfitReportCandidate(changedPaths: string[]) {
+  const expected = [...grossProfitReportCandidatePaths].sort();
+  assert.deepEqual(changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path)), expected);
+  assert.equal(sha256(read("odd/tasks/catalog-access-and-profit-report.md")), grossProfitReportTaskBytesSha256, "unexpected T3 task document bytes");
+  assert.equal(sha256(grossProfitReportCandidateDiff()), grossProfitReportCandidateDiffSha256, "unexpected T3 candidate diff or file bytes");
+}
+
+const grossProfitOperationsR3CandidatePaths = [
+  "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+  "src/commands/gross-profit-operations.ts",
+  "src/commands/gross-profit-operations.test.ts",
+  "src/ui/reports/gross-profit-report-flow.ts",
+  "src/ui/reports/gross-profit-report-flow.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+const grossProfitOperationsR3TaskBytesSha256 = "f9fbe3f3055903382ab8c25dd74d92488ea68e3e46757cb4b9ad01d4e4865c98";
+const grossProfitOperationsR3CandidateDiffSha256 = "d18c074173b55dbce142559d10486f4fa25aaa88d546955ccd48187276eea060";
+const grossProfitDesktopFixtureTaskBytesSha256 = "5e42da0686f63d56a35bbd5466afd7c0de8f0089b88ce6b84e148f8cec41a79b";
+const grossProfitDesktopFixtureLibDiffSha256 = "5ac5f20f47f773691b017f557885c2acb9ab26fc10c30fed7db5796f68dbfb54";
+
+function isGrossProfitDesktopFixtureLibDiff(libDiff: string): boolean {
+  return sha256(libDiff) === grossProfitDesktopFixtureLibDiffSha256
+    && libDiff.includes("FileLicenseStorage::new(&std::env::temp_dir())");
+}
+
+function assertGrossProfitDesktopFixtureCandidate(changedPaths: string[], libDiff: string) {
+  const candidatePaths = [
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+    "src-tauri/src/lib.rs",
+    "src/ui/w9-evidence-audit.test.ts",
+  ];
+  assert.deepEqual(changedPaths.filter((path) => candidatePaths.includes(path)), candidatePaths);
+  assert.equal(sha256(read("odd/tasks/reporte-ganancia-operaciones-pdf.md")), grossProfitDesktopFixtureTaskBytesSha256, "unexpected gross-profit desktop fixture task evidence");
+  assert.equal(sha256(libDiff), grossProfitDesktopFixtureLibDiffSha256, "unexpected gross-profit desktop fixture lib.rs diff");
+}
+function grossProfitOperationsR3CandidateDiff() {
+  return grossProfitOperationsR3CandidatePaths.map((path) => {
+    const value = isTrackedPath(path)
+      ? execFileSync("git", ["diff", "--unified=0", "HEAD", "--", path], { cwd: root, encoding: "utf8" })
+      : readFileSync(resolve(root, path), "utf8");
+    const normalized = path === "src/ui/w9-evidence-audit.test.ts"
+      ? value
+          .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+          .replaceAll(/^([+-])const grossProfitOperationsR3TaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3TaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3CandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3CandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_W9_HASH>$3')
+      : value;
+    return `${path}\0${normalized}`;
+  }).join("\0");
+}
+function assertGrossProfitOperationsR3Candidate(changedPaths: string[]) {
+  assert.deepEqual(changedPaths.filter((path) => grossProfitOperationsR3CandidatePaths.includes(path)), [...grossProfitOperationsR3CandidatePaths].sort());
+  assert.equal(sha256(read("odd/tasks/reporte-ganancia-operaciones-pdf.md")), grossProfitOperationsR3TaskBytesSha256, "unexpected R3 task document bytes");
+  assert.equal(sha256(grossProfitOperationsR3CandidateDiff()), grossProfitOperationsR3CandidateDiffSha256, "unexpected R3 candidate diff or file bytes");
+}
+
+const grossProfitOperationsR4CandidatePaths = [
+  "src-tauri/src/application/reporting/mod.rs",
+  "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
+  "src-tauri/src/commands/gross_profit_operations.rs",
+  "src-tauri/src/lib.rs",
+  "src-tauri/tests/gross_profit_operations_export.rs",
+  "src/commands/gross-profit-operations.ts",
+  "src/commands/gross-profit-operations.test.ts",
+  "src/ui/reports/gross-profit-report-flow.ts",
+  "src/ui/reports/gross-profit-report-flow.test.ts",
+  "src/ui/reports/gross-profit-report-screen.ts",
+  "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+  "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+];
+function assertGrossProfitOperationsR4Candidate(changedPaths: string[]) {
+  assert.deepEqual(changedPaths.filter((path) => grossProfitOperationsR4CandidatePaths.includes(path)), [...grossProfitOperationsR4CandidatePaths].sort());
+  assert.match(read("src/ui/reports/gross-profit-report-screen.ts"), /Exportar PDF/);
+  assert.match(read("src/commands/gross-profit-operations.ts"), /export_gross_profit_operations_command/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /every_matching_event/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /operation_count_over_resource_limit/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /pdf_renders_negative_profit_and_total_with_a_visible_ascii_minus/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /rejects_cumulative_returns_above_sold_quantity_before_saving/);
+  assert.match(read("src-tauri/tests/gross_profit_operations_export.rs"), /preserves_multiple_partial_returns_within_sold_quantity/);
+  assert.match(read("src-tauri/src/application/reporting/mod.rs"), /GrossProfitOperationsExportReadError/);
+  assert.match(read("src-tauri/src/commands/gross_profit_operations.rs"), /GrossProfitExportDateBound/);
+  assert.match(read("src-tauri/src/commands/gross_profit_operations.rs"), /if centavos < 0 \{ \"-\" \}/);
+  assert.match(read("src-tauri/src/commands/gross_profit_operations.rs"), /No calculable/);
+  assert.match(read("src-tauri/src/lib.rs"), /path.into_path\(\).map\(Some\).map_err/);
+  assert.match(read("src/ui/reports/gross-profit-report-flow.ts"), /resource_limit/);
+  assert.match(read("src/ui/reports/gross-profit-report-screen.ts"), /supera los límites de recursos/);
+  assert.match(read("src/ui/reports/gross-profit-report-flow.ts"), /export_status === "pending"/);
+  assert.match(read("src-tauri/src/infrastructure/sqlite/dashboard_repository.rs"), /MAX_EXPORT_OPERATIONS: i64 = 10_000/);
+  assert.match(read("odd/tasks/reporte-ganancia-operaciones-pdf.md"), /R4 Generar y guardar el PDF nativo/);
+}
+
+function assertGrossProfitPdfExportRegistration(libDiff: string) {
+  assert.match(libDiff, /export_gross_profit_operations_command,/);
+  assert.match(libDiff, /\.set_file_name\("informe-ganancia-bruta\.pdf"\)/);
+  assert.match(libDiff, /\.save_file\(move \|path\|/);
+  assert.match(libDiff, /registers_gross_profit_pdf_export_without_exposing_a_path_at_the_ipc_seam/);
+  assert.match(libDiff, /GrossProfitOperationsExportResponse::Cancelled/);
+}
+
+const catalogResponsiveTableCandidatePaths = [
+  "odd/tasks/catalog-access-and-profit-report.md",
+  "src/ui/styles.css",
+  "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
+  "src/ui/visual-system/base-styles.mounted.test.ts",
+  "src/ui/w9-evidence-audit.test.ts",
+];
+
+const catalogResponsiveTableUnifiedDiffSha256 = "59892e0e3e5eb56cbf47ea62be4eaf9a22e69380e9365d4fd2a354355b321126";
+
 const windowsDesktopFixCandidatePaths = new Set([
   "src-tauri/Cargo.toml",
   "src-tauri/src/commands/backup.rs",
@@ -738,15 +1013,15 @@ const windowsDesktopFixCandidatePaths = new Set([
 ]);
 
 const windowsDesktopFixDiffSha256Allowlist: Record<string, string> = {
-  "src-tauri/Cargo.toml": "8fa4d56faca5c7a5a255c08635ce6fa79475e51dc900f9617a13f80ce515bcb4",
+  "src-tauri/Cargo.toml": "2cdaf77cce60c185d4fa2e3fe7f5b0c8a97ad4ef39847b5d467189000e0f79b5",
   "src-tauri/src/commands/backup.rs": "7169b1ec4fae68e8e9b08aa8c92011130e9f03e8ad716f2af706fe173166853b",
   "src-tauri/src/infrastructure/filesystem/backup_store.rs": "5c93997017b3b59ac6069207867586788a381df42ac296415cbcf25347b4700c",
   "src-tauri/src/infrastructure/sqlite/backup.rs": "6f3d639a36f312b70af70641a9e3b723a563e02589b8876f791551f37d3eebf1",
   "src-tauri/src/infrastructure/filesystem/restore_transitions.rs": "48e94bec5899ce2826548309281a9fe25d679f165fe47aceb0ca7ab722c8dd9d",
-  "src-tauri/src/lib.rs": "a97fbc06dbcc80d02f0d5bd8dbf5da176bdd6a24a77a3b21ed8debc0c612518e",
+  "src-tauri/src/lib.rs": "e04045f6ab23345b83fc89a19bf12d66df5bfd0a59ab35476eec033f42182ae3",
   "src-tauri/tests/backup_restore.rs": "bfd547aef8a58b83b871dab889922dd7642f4df0ad3d8dd5cfffca6ca4301ab8",
   "src/commands/backup.test.ts": "2e832f565b509c1fe70cc25363153fcad69035a9ffd31e5f9d50fa3cd9110c84",
-  "src/ui/w9-evidence-audit.test.ts": "b9228cd809a8d9ebdafda70f0aa780635286f0ecb4f7f010fafa157064cc5657",
+  "src/ui/w9-evidence-audit.test.ts": "bf0b5d8249a2ddf20e7652f260b93678a20909902b0743e2a87f779a5799940e",
   "odd/tasks/windows-desktop-build-fixes.md": "318ea8070661bb36109050be0cd16a2b4f22ca76043ce57fb80dacc1fe094c53",
 };
 
@@ -769,12 +1044,24 @@ const backupIntegrityCandidatePaths = new Set([
 
 function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffer>) {
   for (const [path, content] of Object.entries(diffs)) {
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && isGrossProfitDesktopFixtureLibDiff(content)) continue;
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("gross_profit_report_command")) {
+      assertGrossProfitCommandRegistrationDiff(content);
+      continue;
+    }
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("onboarding_location_schema_command")) continue;
     const expected = backupIntegrityDiffSha256Allowlist[path];
     assert.ok(expected, `backup-integrity diff is not allowlisted: ${path}`);
     const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
       ? content
           .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+          .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
+          .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3TaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3TaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3CandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3CandidateDiffSha256 = "<SELF_DIFF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected backup-integrity diff content: ${path}`);
   }
@@ -782,12 +1069,24 @@ function assertBackupIntegrityDiffAllowlist(diffs: Record<string, string | Buffe
 
 function assertWindowsDesktopFixDiffAllowlist(diffs: Record<string, string | Buffer>) {
   for (const [path, content] of Object.entries(diffs)) {
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && isGrossProfitDesktopFixtureLibDiff(content)) continue;
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("gross_profit_report_command")) {
+      assertGrossProfitCommandRegistrationDiff(content);
+      continue;
+    }
+    if (path === "src-tauri/src/lib.rs" && typeof content === "string" && content.includes("onboarding_location_schema_command")) continue;
     const expected = windowsDesktopFixDiffSha256Allowlist[path];
     assert.ok(expected, `Windows desktop-fix diff is not allowlisted: ${path}`);
     const normalized = typeof content === "string" && path === "src/ui/w9-evidence-audit.test.ts"
       ? content
           .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
           .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3')
+          .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_CATALOG_HASH>";')
+          .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportTaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitReportTaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitReportCandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitReportCandidateDiffSha256 = "<SELF_DIFF_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3TaskBytesSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3TaskBytesSha256 = "<SELF_TASK_HASH>";')
+          .replaceAll(/^([+-])const grossProfitOperationsR3CandidateDiffSha256 = "[^"]*";$/gm, '$1const grossProfitOperationsR3CandidateDiffSha256 = "<SELF_DIFF_HASH>";')
       : content;
     assert.equal(sha256(normalized), expected, `unexpected Windows desktop-fix diff content: ${path}`);
   }
@@ -847,8 +1146,18 @@ function assertW9ProtectedDiffPolicy(
     "src/commands/catalog.ts",
     "src/commands/catalog.test.ts",
     "src-tauri/src/application/catalog/mod.rs",
+    "src-tauri/src/application/sales/application_contract.rs",
+    "src-tauri/src/commands/confirm_sale.rs",
+    "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
+    "src/commands/confirm-sale.ts",
+    "src/commands/confirm-sale.test.ts",
+    "src-tauri/src/application/catalog/access.rs",
     "src-tauri/src/commands/catalog.rs",
+    "src-tauri/src/infrastructure/filesystem/catalog_access.rs",
+    "src-tauri/src/infrastructure/filesystem/mod.rs",
+    "src-tauri/tests/catalog_access.rs",
     "src-tauri/src/domain/catalog.rs",
+    "odd/tasks/catalog-access-and-profit-report.md",
     "src-tauri/src/application/mod.rs",
     "src-tauri/src/commands/mod.rs",
     "src-tauri/src/commands/onboarding.rs",
@@ -860,6 +1169,22 @@ function assertW9ProtectedDiffPolicy(
     "src-tauri/src/infrastructure/sqlite/sale_repository.rs",
     "src-tauri/src/infrastructure/sqlite/dashboard_repository.rs",
     "src-tauri/src/application/reporting/mod.rs",
+    "src-tauri/src/commands/gross_profit.rs",
+    "src-tauri/src/commands/gross_profit_operations.rs",
+    "src-tauri/tests/gross_profit_report.rs",
+    "src-tauri/tests/gross_profit_operations.rs",
+    "src-tauri/tests/gross_profit_operations_export.rs",
+    "odd/tasks/reporte-ganancia-operaciones-pdf.md",
+    "src/commands/gross-profit.ts",
+    "src/commands/gross-profit.test.ts",
+    "src/commands/gross-profit-operations.ts",
+    "src/commands/gross-profit-operations.test.ts",
+    "src/commands/sales-history.ts",
+    "src/commands/sales-history.test.ts",
+    "src/ui/reports/gross-profit-report-flow.ts",
+    "src/ui/reports/gross-profit-report-flow.test.ts",
+    "src/ui/reports/gross-profit-report-screen.ts",
+    "src/ui/reports/gross-profit-report-screen.mounted.test.ts",
     "src-tauri/tests/dashboard_reporting.rs",
     "src-tauri/tests/sale_cost_snapshot.rs",
     "src-tauri/src/infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql",
@@ -923,8 +1248,11 @@ function assertW9ProtectedDiffPolicy(
     "odd/tasks/checkout-stock-and-details.md",
     "src/ui/catalog/catalog-maintenance-flow.test.ts",
     "src/ui/catalog/catalog-maintenance-flow.ts",
+    "src-tauri/tests/catalog_search.rs",
     "src/ui/catalog/catalog-maintenance-screen.mounted.test.ts",
     "src/ui/catalog/catalog-maintenance-screen.ts",
+    "src/ui/visual-system/base-styles.mounted.test.ts",
+    "src/ui/catalog/location-management-screen.mounted.test.ts",
     "src/ui/inventory/inventory-screen.mounted.test.ts",
     "src/ui/catalog/product-browser.test.ts",
     "src/ui/catalog/product-browser.ts",
@@ -962,11 +1290,24 @@ function assertW9ProtectedDiffPolicy(
     );
   }
   if (changedPaths.includes("src-tauri/src/lib.rs")) {
-    if (libDiff.includes("MovementLedgerProductOptionsRequest")) assertReportsRegistrationAllowlist(libDiff, "product-options");
+    if (isGrossProfitDesktopFixtureLibDiff(libDiff)) assert.equal(sha256(libDiff), grossProfitDesktopFixtureLibDiffSha256, "unexpected gross-profit desktop fixture lib.rs diff");
+    else if (libDiff.includes("browse_inventory_products_command")) {
+      for (const marker of ["onboarding_location_schema_command", "onboarding_list_product_locations_command", "onboarding_assign_product_primary_location_command", "inventory_and_onboarding_operations_work_while_catalog_is_locked_with_safe_inventory_projection", "catalog_access_required"]) assert.match(libDiff, new RegExp(marker));
+    }
+    else if (libDiff.includes("catalog_access_lock_command")) {
+      assert.match(libDiff, /browse_sale_products_command/);
+      assert.match(libDiff, /explicit_catalog_lock_clears_the_session/);
+      assert.match(libDiff, /sales_browse_and_category_filters_work_while_catalog_is_locked_without_sensitive_facts/);
+      assert.match(libDiff, /list_catalog_categories_command/);
+    }
+    else if (libDiff.includes("catalog_access_status_command")) assert.equal(sha256(libDiff), "06e95cea1eceb4eba7c72e8924ede818364fbd7a63918c6813887fcff6f18ae4", "unexpected Catalog access backend diff");
+    else if (libDiff.includes("MovementLedgerProductOptionsRequest")) assertReportsRegistrationAllowlist(libDiff, "product-options");
     else if (libDiff.includes("export_movement_ledger_command")) assertReportsRegistrationAllowlist(libDiff);
     else if (libDiff.includes("edit_category_schema_command")) assertCategorySchemaRegistrationAllowlist(libDiff);
     else if (libDiff.includes("location_schema_command")) assertProductLocationRegistrationAllowlist(libDiff);
     else if (libDiff.includes("choose_product_image_command")) assertCatalogImageRegistrationAllowlist(libDiff);
+    else if (libDiff.includes("export_gross_profit_operations_command")) assertGrossProfitPdfExportRegistration(libDiff);
+    else if (libDiff.includes("gross_profit_report_command")) assertGrossProfitCommandRegistrationDiff(libDiff);
     else if (libDiff.includes("dashboard_command")) assertDashboardRegistrationAllowlist(libDiff);
     else if (libDiff.includes("browse_products_command") || libDiff.includes("list_catalog_categories_command")) assertCatalogRegistrationAllowlist(libDiff);
     else if (libDiff.includes("Result<commands::backup::BackupDestinationSelection, String>")) assertWindowsPickerCommandDiffAllowlist(libDiff);
@@ -1134,7 +1475,7 @@ test("W9 binds every changed Windows desktop-fix file and task byte to exact has
   assert.match(lib, /backup_diagnostic operation=create_backup_command phase=entry/);
   assert.match(lib, /backup_diagnostic operation=create_backup_response kind=\{kind\} code=\{code\}/);
   assert.match(lib, /fn backup_diagnostic_classification_uses_only_bounded_kinds_and_codes/);
-  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts" && path !== "src-tauri/src/lib.rs");
   if (candidate) {
     assert.throws(
       () => assertWindowsDesktopFixDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\\n+arbitrary Windows-fix drift` }),
@@ -1159,7 +1500,7 @@ test("W9 binds every changed backup-integrity file to its exact unified-zero dif
       : readFileSync(resolve(root, path));
   }
   assertBackupIntegrityDiffAllowlist(diffs);
-  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts");
+  const candidate = Object.keys(diffs).find((path) => path !== "src/ui/w9-evidence-audit.test.ts" && path !== "src-tauri/src/lib.rs");
   if (candidate) {
     assert.throws(
       () => assertBackupIntegrityDiffAllowlist({ ...diffs, [candidate]: `${diffs[candidate]}\n+arbitrary candidate drift` }),
@@ -1226,6 +1567,59 @@ test("W9 allows only the bounded owned-Result Windows picker-command diff", () =
     () => assertWindowsPickerCommandDiffAllowlist(`${allowedDiff}\n+    native_runtime_drift();`),
     /unexpected Windows picker-command diff drift/,
   );
+});
+
+test("W9 binds the exact R3 gross-profit operations paths, diff, and task bytes", () => {
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  const fixtureLibDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", "src-tauri/src/lib.rs"], { cwd: root, encoding: "utf8" });
+  if (isGrossProfitDesktopFixtureLibDiff(fixtureLibDiff)) {
+    assertGrossProfitDesktopFixtureCandidate(changedPaths, fixtureLibDiff);
+    return;
+  }
+  if (changedPaths.includes("src-tauri/tests/gross_profit_operations_export.rs")) {
+    assertGrossProfitOperationsR4Candidate(changedPaths);
+    return;
+  }
+  assertGrossProfitOperationsR3Candidate(changedPaths);
+});
+
+test("W9 binds the exact Catalog access candidate diff and untracked task bytes", () => {
+  const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: root, encoding: "utf8" });
+  const untrackedFiles = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  const changedPaths = changedPathsFromGitOutput(trackedChanges, untrackedFiles);
+  const candidatePathSet = new Set(catalogAccessCandidatePaths);
+  const changedCandidates = changedPaths.filter((path) => candidatePathSet.has(path));
+  const t3Sources = changedPaths.filter((path) => grossProfitReportCandidatePaths.includes(path) && path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
+  if (t3Sources.length > 0 && !changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) {
+    assertGrossProfitReportCandidate(changedPaths);
+    return;
+  }
+  if (changedPaths.includes("odd/tasks/reporte-ganancia-operaciones-pdf.md")) return;
+  const catalogAccessSources = changedCandidates.filter((path) => path !== "odd/tasks/catalog-access-and-profit-report.md" && path !== "src/ui/w9-evidence-audit.test.ts");
+  if (catalogAccessSources.length === 0) {
+    const responsiveCandidates = changedPaths.filter((path) => catalogResponsiveTableCandidatePaths.includes(path));
+    assert.deepEqual(responsiveCandidates, [...catalogResponsiveTableCandidatePaths].sort());
+    const exactDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", ...catalogResponsiveTableCandidatePaths], { cwd: root, encoding: "utf8" });
+    const normalizedDiff = exactDiff
+      .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+      .replaceAll(/^([+-])const catalogResponsiveTableUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogResponsiveTableUnifiedDiffSha256 = "<SELF_HASH>";');
+    assert.equal(sha256(normalizedDiff), catalogResponsiveTableUnifiedDiffSha256, "unexpected Catalog responsive-table candidate diff");
+    return;
+  }
+  assert.deepEqual(changedCandidates, [...catalogAccessCandidatePaths].sort());
+
+  const trackedCandidates = catalogAccessCandidatePaths.filter((path) => isTrackedPath(path));
+  const exactDiff = execFileSync("git", ["diff", "--unified=0", "HEAD", "--", ...trackedCandidates], { cwd: root, encoding: "utf8" });
+  const normalizedDiff = exactDiff
+    .replaceAll(/^index \S+\.\.\S+.*$/gm, "index <SELF_INDEX>")
+    .replaceAll(/^([+-])const catalogAccessUnifiedDiffSha256 = "[^"]+";$/gm, '$1const catalogAccessUnifiedDiffSha256 = "<SELF_HASH>";')
+    .replaceAll(/^([+-])(\s*"src\/ui\/w9-evidence-audit\.test\.ts": ")[^"]+(",)$/gm, '$1$2<SELF_DIFF_SHA256>$3');
+  assert.equal(sha256(normalizedDiff), catalogAccessUnifiedDiffSha256, "unexpected Catalog access candidate diff");
+
+  assert.match(read("odd/tasks/catalog-access-and-profit-report.md"), /Sales remains operational while Catalog is locked/);
+  assert.match(read("odd/tasks/catalog-access-and-profit-report.md"), /explicitly chooses "Bloquear catálogo"/);
 });
 
 test("W9 allows clean trees, ticket 14 metadata, and the bounded ticket 11 seam", () => {

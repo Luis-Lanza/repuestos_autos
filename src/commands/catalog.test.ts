@@ -1,16 +1,65 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createCatalogMaintenanceCommands, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands } from "./catalog.ts";
+import { CATALOG_INTENT, CATALOG_TARGET, createBrowseProductsCommand, createInventoryBrowseProductsCommand, createCatalogAccessCommands, createCatalogMaintenanceCommands, createSalesBrowseProductsCommand, createSearchProductsCommand, createCatalogProductImageCommands, createProductLocationCommands, createOnboardingProductLocationCommands } from "./catalog.ts";
 
-const searchProduct = { product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500, revision: 2 };
-const browsePage = { kind: "success", products: [{ ...searchProduct, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+const searchProduct = { product_id: 1, revision: 2, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2500 };
+const browsePage = { kind: "success", products: [{ ...searchProduct, revision: 2, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("decodes the paged browse contract and sends optional filters in its request envelope", async () => {
   const calls: unknown[] = [];
   const browse = createBrowseProductsCommand(async (command, payload) => { calls.push({ command, payload }); return { ...browsePage, products: [{ ...browsePage.products[0], original_image_base64: "/9j/secret", source_path: "/private/image.jpg" }] }; });
   assert.deepEqual(await browse({ query: "  filter ", category_id: 9, stock_state: "low_stock", page: 2, page_size: 20 }), { products: [{ ...searchProduct, category_id: 9, primary_location_code: null, attribute_values: [] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 });
   assert.deepEqual(calls, [{ command: "browse_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "low_stock", activity: "active", page: 2, page_size: 20 } } }]);
+});
+
+test("decodes Inventory browse without purchase cost, revision, or attributes", async () => {
+  const calls: unknown[] = [];
+  const browse = createInventoryBrowseProductsCommand(async (command, payload) => {
+    calls.push({ command, payload });
+    return { products: [{ product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1" }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+  });
+  const result = await browse({ query: " filter " });
+  assert.deepEqual(result.products[0], { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1" });
+  assert.deepEqual(calls, [{ command: "browse_inventory_products_command", payload: { request: { query: "filter", category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } } }]);
+  for (const unsafe of [{ purchase_price_centavos: 1 }, { revision: 1 }, { attribute_values: [] }, { activity: "active" }]) {
+    await assert.rejects(createInventoryBrowseProductsCommand(async () => ({ ...result, products: [{ ...result.products[0], ...unsafe }] }))());
+  }
+});
+
+test("decodes locked-Sales browse with bounded attributes and no Catalog or revision fields", async () => {
+  const calls: unknown[] = [];
+  const browse = createSalesBrowseProductsCommand(async (command, payload) => {
+    calls.push({ command, payload });
+    return { products: [{ product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+  });
+  const result = await browse({ query: " filter ", category_id: 9 });
+  assert.deepEqual(calls, [
+    { command: "browse_sale_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
+  ]);
+  assert.deepEqual(result.products[0], { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2000, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] });
+  assert.deepEqual(result.categories, [{ category_id: 9, name: "Engine" }]);
+});
+
+test("rejects unsafe Sales browse projections rather than falling back to Catalog browse", async () => {
+  const safeFacts = { product_id: 1, category_id: 1, sku: "A", name: "A", category_name: "A", available_quantity: 1, sale_price_centavos: 1, minimum_sale_price_centavos: 1, attribute_values: [] };
+  for (const product of [{ product_id: 1 }, { ...safeFacts, revision: 0 }, { ...safeFacts, purchase_price_centavos: 1 }, { ...safeFacts, primary_location_code: "A1" }, { ...safeFacts, activity: "active" }]) {
+    const browse = createSalesBrowseProductsCommand(async () => ({ products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 }));
+    await assert.rejects(browse(), /product catalog/);
+  }
+});
+
+test("rejects oversized or metadata-bearing Sales attribute projections", async () => {
+  const product = { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] };
+  for (const attribute_values of [
+    [{ definition_id: 4, label: "Material", value: "Paper", revision: 1 }],
+    [{ definition_id: 4, label: "L".repeat(129), value: "Paper" }],
+    [{ definition_id: 4, label: "Material", value: "V".repeat(257) }],
+    Array.from({ length: 33 }, (_, definition_id) => ({ definition_id: definition_id + 1, label: "Field", value: "Value" })),
+  ]) {
+    const browse = createSalesBrowseProductsCommand(async () => ({ products: [{ ...product, attribute_values }], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 }));
+    await assert.rejects(browse(), /product catalog/);
+  }
 });
 
 test("decodes ordered compact browse attributes including empty values without projection drift", async () => {
@@ -27,21 +76,23 @@ test("rejects malformed paged browse responses without exposing native details",
   }
 });
 
-test("projects search products and strips native fields", async () => {
+test("projects sale-search products without purchase cost or catalog-management fields", async () => {
   const calls: unknown[] = [];
   const search = createSearchProductsCommand(async (command, payload) => { calls.push({ command, payload }); return [{ ...searchProduct, internal: "hidden" }]; });
-  assert.deepEqual(await search("filter"), [searchProduct]);
+  const [result] = await search("filter");
+  assert.equal(result.purchase_price_centavos, null);
+  assert.equal("internal" in result, false);
   assert.deepEqual(calls, [{ command: "search_products_command", payload: { request: { query: "filter" } } }]);
 });
 
-test("decodes legacy list-price aliases as sale prices and projects purchase cost", async () => {
+test("decodes legacy list-price aliases as sale prices without projecting purchase cost", async () => {
   const search = createSearchProductsCommand(async () => [{
     product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4,
     catalog_unit_price_centavos: 5000, list_price_centavos: 5000, purchase_price_centavos: 2_000, minimum_sale_price_centavos: 2500, revision: 2,
   }]);
   assert.deepEqual(await search("filter"), [{
     product_id: 1, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4,
-    purchase_price_centavos: 2_000, sale_price_centavos: 5_000, list_price_centavos: 5_000, catalog_unit_price_centavos: 5_000, minimum_sale_price_centavos: 2500, revision: 2,
+    purchase_price_centavos: null, sale_price_centavos: 5_000, list_price_centavos: 5_000, catalog_unit_price_centavos: 5_000, minimum_sale_price_centavos: 2500, revision: 2,
   }]);
 });
 
@@ -181,6 +232,24 @@ test("location command contracts send narrow request envelopes and decode stable
   ]);
 });
 
+test("uses onboarding-only location reads and assignment contracts", async () => {
+  const calls: unknown[] = [];
+  const onboarding = createOnboardingProductLocationCommands(async (name, payload) => {
+    calls.push({ name, payload });
+    if (name === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [] } };
+    if (name === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [] };
+    return { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 };
+  });
+  assert.deepEqual(await onboarding.schema(), { kind: "schema_success", schema: { revision: 1, segments: [] } });
+  assert.deepEqual(await onboarding.list(), { kind: "locations_success", locations: [] });
+  assert.deepEqual(await onboarding.assignPrimary({ product_id: 2, expected_revision: 0, location_id: 8 }), { kind: "assignment_success", product_id: 2, location_id: 8, revision: 1 });
+  assert.deepEqual(calls, [
+    { name: "onboarding_location_schema_command", payload: undefined },
+    { name: "onboarding_list_product_locations_command", payload: undefined },
+    { name: "onboarding_assign_product_primary_location_command", payload: { request: { product_id: 2, expected_revision: 0, location_id: 8 } } },
+  ]);
+});
+
 test("sends explicit null for authorized unassignment and retains revision-checked response decoding", async () => {
   const calls: unknown[] = [];
   const locations = createProductLocationCommands(async (name, payload) => {
@@ -209,6 +278,34 @@ test("rejects malformed location contracts and hides native failure details", as
   }
   const rejected = createProductLocationCommands(async () => { throw new Error("SQL path /private"); });
   assert.deepEqual(await rejected.create(["A"]), { kind: "error", code: "persistence_failure", message: "The location change could not be completed." });
+});
+
+test("decodes path-free catalog access status and one-time recovery-code responses", async () => {
+  const calls: unknown[] = [];
+  const responses: unknown[] = [
+    { kind: "status", status: "setup_required" },
+    { kind: "recovery_code", recovery_code: "A".repeat(48) },
+    { kind: "success", source_path: "/private" },
+    { kind: "error", code: "invalid_credentials", message: "private backend text" },
+  ];
+  const access = createCatalogAccessCommands(async (command, payload) => { calls.push({ command, payload }); return responses.shift(); });
+  assert.deepEqual(await access.status(), { kind: "status", status: "setup_required" });
+  assert.deepEqual(await access.beginSetup("secret"), { kind: "recovery_code", recovery_code: "A".repeat(48) });
+  assert.deepEqual(await access.finishSetup(), { kind: "error", code: "access_unavailable", message: "No se pudo acceder a la configuración local del catálogo." });
+  assert.deepEqual(await access.unlock("secret"), { kind: "error", code: "invalid_credentials", message: "No se pudo completar la solicitud de acceso al catálogo." });
+  assert.deepEqual(calls, [
+    { command: "catalog_access_status_command", payload: undefined },
+    { command: "catalog_access_begin_setup_command", payload: { request: { password: "secret" } } },
+    { command: "catalog_access_finish_setup_command", payload: { request: { confirmed: true } } },
+    { command: "catalog_access_unlock_command", payload: { request: { password: "secret" } } },
+  ]);
+});
+
+test("rejects malformed access codes and path-bearing access responses", async () => {
+  for (const response of [null, { kind: "status", status: "unknown" }, { kind: "status", status: "locked", path: "/private" }, { kind: "recovery_code", recovery_code: "short" }, { kind: "recovery_code", recovery_code: "A".repeat(48), path: "/private" }]) {
+    const access = createCatalogAccessCommands(async () => response);
+    assert.deepEqual(await access.status(), { kind: "error", code: "access_unavailable", message: "No se pudo acceder a la configuración local del catálogo." });
+  }
 });
 
 test("rejects unsafe, nonpositive, and inconsistent catalog facts", async () => {

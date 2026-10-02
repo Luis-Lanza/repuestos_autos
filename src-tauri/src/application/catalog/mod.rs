@@ -11,6 +11,7 @@ use crate::domain::catalog::{
 use crate::infrastructure::sqlite::catalog_repository::SqliteCatalogRepository;
 
 pub(crate) mod bootstrap_demo;
+pub mod access;
 pub mod locations;
 pub mod repository;
 
@@ -522,6 +523,34 @@ pub fn remove_product_image(
     Ok(next_revision)
 }
 
+pub fn read_sales_product_image_thumbnail(
+    connection: &Connection,
+    product_id: i64,
+) -> std::result::Result<Option<ProductImageThumbnail>, ProductImagePersistenceError> {
+    if product_id <= 0 {
+        return Err(ProductImagePersistenceError::MissingProduct);
+    }
+    let row = connection.query_row(
+        "SELECT thumbnail_mime_type, thumbnail_bytes FROM product_images WHERE product_id = ?1",
+        [product_id],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
+    ).optional().map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    let Some((Some(mime_type), Some(bytes))) = row else { return Ok(None); };
+    if mime_type != "image/jpeg" || bytes.is_empty() || bytes.len() > MAX_PRODUCT_IMAGE_BYTES {
+        return Err(ProductImagePersistenceError::PersistenceFailure);
+    }
+    let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format().map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    if reader.format() != Some(image::ImageFormat::Jpeg) {
+        return Err(ProductImagePersistenceError::PersistenceFailure);
+    }
+    let decoded = reader.decode().map_err(|_| ProductImagePersistenceError::PersistenceFailure)?;
+    if decoded.width() > MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION || decoded.height() > MAX_PRODUCT_IMAGE_THUMBNAIL_DIMENSION {
+        return Err(ProductImagePersistenceError::PersistenceFailure);
+    }
+    Ok(Some(ProductImageThumbnail { bytes }))
+}
+
 pub fn read_product_image_thumbnail(
     connection: &Connection,
     product_id: i64,
@@ -625,7 +654,18 @@ pub struct ProductSearchResult {
     pub purchase_price_centavos: Option<i64>,
     pub sale_price_centavos: i64,
     pub minimum_sale_price_centavos: i64,
-    pub revision: i64,
+}
+
+/// Minimal product facts needed to build a sale; excludes catalog-management data and cost.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct SaleProductSearchResult {
+    pub product_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_name: String,
+    pub available_quantity: i64,
+    pub sale_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -687,6 +727,60 @@ pub struct ProductBrowseCategory {
 pub struct ProductBrowsePage {
     pub products: Vec<ProductBrowseResult>,
     pub categories: Vec<ProductBrowseCategory>,
+    pub page: i64,
+    pub page_size: i64,
+    pub total: i64,
+    pub total_pages: i64,
+}
+
+/// Operational Inventory facts only; Catalog pricing cost and management metadata stay private.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct InventoryBrowseProduct {
+    pub product_id: i64,
+    pub category_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_name: String,
+    pub available_quantity: i64,
+    pub sale_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
+    pub primary_location_code: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct InventoryBrowsePage {
+    pub products: Vec<InventoryBrowseProduct>,
+    pub categories: Vec<ProductBrowseCategory>,
+    pub page: i64,
+    pub page_size: i64,
+    pub total: i64,
+    pub total_pages: i64,
+}
+
+/// Bounded Sales facts without purchase cost, location, revision, or maintenance metadata.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct SaleBrowseProduct {
+    pub product_id: i64,
+    pub category_id: i64,
+    pub sku: String,
+    pub name: String,
+    pub category_name: String,
+    pub available_quantity: i64,
+    pub sale_price_centavos: i64,
+    pub minimum_sale_price_centavos: i64,
+    pub attribute_values: Vec<ProductBrowseAttribute>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct SaleBrowseCategory {
+    pub category_id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct SaleBrowsePage {
+    pub products: Vec<SaleBrowseProduct>,
+    pub categories: Vec<SaleBrowseCategory>,
     pub page: i64,
     pub page_size: i64,
     pub total: i64,
@@ -832,6 +926,122 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
         total,
         total_pages,
     })
+}
+
+struct InventoryBrowseRepository;
+
+impl CatalogBrowseRepository for InventoryBrowseRepository {
+    fn load_page_attributes(&self, _: &Connection, _: &[i64]) -> Result<Vec<(i64, ProductBrowseAttribute)>> {
+        Ok(Vec::new())
+    }
+}
+
+pub fn browse_active_inventory_products(connection: &Connection, input: &BrowseProductsInput) -> Result<InventoryBrowsePage> {
+    let page = browse_active_products(connection, &InventoryBrowseRepository, input)?;
+    Ok(InventoryBrowsePage {
+        products: page.products.into_iter().map(|product| InventoryBrowseProduct {
+            product_id: product.product_id,
+            category_id: product.category_id,
+            sku: product.sku,
+            name: product.name,
+            category_name: product.category_name,
+            available_quantity: product.available_quantity,
+            sale_price_centavos: product.sale_price_centavos,
+            minimum_sale_price_centavos: product.minimum_sale_price_centavos,
+            primary_location_code: product.primary_location_code,
+        }).collect(),
+        categories: page.categories,
+        page: page.page,
+        page_size: page.page_size,
+        total: page.total,
+        total_pages: page.total_pages,
+    })
+}
+
+pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProductsInput) -> Result<SaleBrowsePage> {
+    const MAX_PAGE_SIZE: i64 = 50;
+    if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE || input.category_id.is_some_and(|id| id <= 0) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let query = input.query.as_deref().and_then(normalized_search_query);
+    let search_clause = if query.is_some() { "search.content MATCH ?1" } else { "1 = 1" };
+    let category_clause = if input.category_id.is_some() {
+        if query.is_some() { "AND p.category_id = ?2" } else { "AND p.category_id = ?1" }
+    } else { "" };
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id JOIN categories c ON c.id = p.category_id
+         JOIN stock_balances s ON s.product_id = p.id
+         WHERE {search_clause} {category_clause} AND p.active = 1 AND c.active = 1"
+    );
+    let mut args: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(ref query) = query { args.push(query); }
+    if let Some(ref category_id) = input.category_id { args.push(category_id); }
+    let total = connection.query_row(&count_sql, rusqlite::params_from_iter(args), |row| row.get::<_, i64>(0))?;
+    let total_pages = (total + input.page_size - 1) / input.page_size;
+    let offset = (input.page - 1).checked_mul(input.page_size).ok_or(rusqlite::Error::InvalidQuery)?;
+    let limit_index = 1 + query.is_some() as usize + input.category_id.is_some() as usize;
+    let offset_index = limit_index + 1;
+    let products_sql = format!(
+        "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
+                p.list_price_centavos, p.minimum_unit_price_centavos
+         FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id JOIN categories c ON c.id = p.category_id
+         JOIN stock_balances s ON s.product_id = p.id
+         WHERE {search_clause} {category_clause} AND p.active = 1 AND c.active = 1
+         ORDER BY lower(p.name), p.id LIMIT ?{limit_index} OFFSET ?{offset_index}"
+    );
+    let mut args: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(ref query) = query { args.push(query); }
+    if let Some(ref category_id) = input.category_id { args.push(category_id); }
+    args.push(&input.page_size);
+    args.push(&offset);
+    let mut products = connection.prepare(&products_sql)?.query_map(rusqlite::params_from_iter(args), |row| Ok(SaleBrowseProduct {
+        product_id: row.get(0)?, category_id: row.get(1)?, sku: row.get(2)?, name: row.get(3)?,
+        category_name: row.get(4)?, available_quantity: row.get(5)?, sale_price_centavos: row.get(6)?,
+        minimum_sale_price_centavos: row.get(7)?, attribute_values: Vec::new(),
+    }))?.collect::<Result<Vec<_>>>()?;
+    const MAX_SALES_ATTRIBUTES_PER_PRODUCT: i64 = 32;
+    const MAX_SALES_ATTRIBUTE_LABEL_CHARS: i64 = 128;
+    const MAX_SALES_ATTRIBUTE_VALUE_CHARS: i64 = 256;
+    if !products.is_empty() {
+        let product_ids = products.iter().map(|product| product.product_id).collect::<Vec<_>>();
+        let placeholders = (1..=product_ids.len()).map(|index| format!("?{index}")).collect::<Vec<_>>().join(", ");
+        let attributes_sql = format!(
+            "WITH bounded_attributes AS (
+                SELECT p.id AS product_id, d.id AS definition_id,
+                       CASE WHEN length(d.label) <= {MAX_SALES_ATTRIBUTE_LABEL_CHARS} THEN d.label ELSE '' END AS label,
+                       CASE WHEN length(COALESCE(v.searchable_value, '')) <= {MAX_SALES_ATTRIBUTE_VALUE_CHARS} THEN COALESCE(v.searchable_value, '') ELSE '' END AS value,
+                       length(d.label) AS label_length,
+                       length(COALESCE(v.searchable_value, '')) AS value_length,
+                       ROW_NUMBER() OVER (PARTITION BY p.id ORDER BY d.id) AS position
+                FROM products p
+                JOIN attribute_definitions d ON d.category_id = p.category_id AND d.active = 1
+                LEFT JOIN product_attribute_values v ON v.product_id = p.id AND v.definition_id = d.id
+                WHERE p.id IN ({placeholders})
+             )
+             SELECT product_id, definition_id, label, value, label_length, value_length
+             FROM bounded_attributes WHERE position <= {MAX_SALES_ATTRIBUTES_PER_PRODUCT}
+             ORDER BY product_id, definition_id"
+        );
+        let mut attribute_statement = connection.prepare(&attributes_sql)?;
+        let attributes = attribute_statement.query_map(rusqlite::params_from_iter(product_ids.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, ProductBrowseAttribute {
+                definition_id: row.get(1)?, label: row.get(2)?, value: row.get(3)?,
+            }, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?))
+        })?.collect::<Result<Vec<_>>>()?;
+        for (product_id, attribute, label_length, value_length) in attributes {
+            if label_length > MAX_SALES_ATTRIBUTE_LABEL_CHARS || value_length > MAX_SALES_ATTRIBUTE_VALUE_CHARS {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            if let Some(product) = products.iter_mut().find(|product| product.product_id == product_id) {
+                product.attribute_values.push(attribute);
+            }
+        }
+    }
+    let mut statement = connection.prepare("SELECT id, name FROM categories WHERE active = 1 ORDER BY lower(name), id")?;
+    let categories = statement.query_map([], |row| Ok(SaleBrowseCategory { category_id: row.get(0)?, name: row.get(1)? }))?.collect::<Result<Vec<_>>>()?;
+    Ok(SaleBrowsePage { products, categories, page: input.page, page_size: input.page_size, total, total_pages })
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1381,6 +1591,31 @@ fn map_product_validation(error: CatalogValidationError) -> CreateProductError {
     }
 }
 
+pub fn search_active_sale_products(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<SaleProductSearchResult>> {
+    let Some(query) = normalized_search_query(query) else {
+        return Ok(Vec::new());
+    };
+    let mut statement = connection.prepare(
+        "SELECT p.id, p.sku, p.name, c.name, s.quantity,
+         p.list_price_centavos, p.minimum_unit_price_centavos
+         FROM catalog_product_search search
+         JOIN products p ON p.id = search.product_id
+         JOIN categories c ON c.id = p.category_id
+         JOIN stock_balances s ON s.product_id = p.id
+         WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
+         ORDER BY p.name LIMIT 20",
+    )?;
+    let results = statement.query_map([query], |row| Ok(SaleProductSearchResult {
+        product_id: row.get(0)?, sku: row.get(1)?, name: row.get(2)?,
+        category_name: row.get(3)?, available_quantity: row.get(4)?,
+        sale_price_centavos: row.get(5)?, minimum_sale_price_centavos: row.get(6)?,
+    }))?.collect();
+    results
+}
+
 pub fn search_active_products(
     connection: &Connection,
     query: &str,
@@ -1391,7 +1626,7 @@ pub fn search_active_products(
     let mut statement = connection.prepare(
         "SELECT p.id, p.sku, p.name, c.name, s.quantity,
          p.purchase_price_centavos, p.list_price_centavos,
-         p.minimum_unit_price_centavos, p.revision
+         p.minimum_unit_price_centavos
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
@@ -1411,7 +1646,6 @@ pub fn search_active_products(
                 purchase_price_centavos: row.get(5)?,
                 sale_price_centavos: row.get(6)?,
                 minimum_sale_price_centavos: row.get(7)?,
-                revision: row.get(8)?,
             })
         })?
         .collect();

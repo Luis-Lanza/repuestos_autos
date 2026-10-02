@@ -34,7 +34,7 @@ test("sends only the reduced confirmation payload", async () => {
       payload: {
         request: {
           request_id: "550e8400-e29b-41d4-a716-446655440050",
-          lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+          lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2_500 }],
           payment: {
             amount_tendered_centavos: 3_000,
             qr_applied_centavos: 2_000,
@@ -45,19 +45,19 @@ test("sends only the reduced confirmation payload", async () => {
   ]);
 });
 
-test("forwards captured facts and an exact stale-price acknowledgement", async () => {
+test("forwards only captured business facts and decodes stale price without a revision", async () => {
   const calls: unknown[] = [];
   const confirmSale = createConfirmSaleCommand(async (command, payload) => {
     calls.push({ command, payload });
-    return { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 };
+    return { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2700 };
   });
   const result = await confirmSale({
     request_id: "550e8400-e29b-41d4-a716-446655440057",
-    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0, acknowledged_price_centavos: 2700, acknowledged_revision: 2 }],
+    lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500 }],
     payment: { amount_tendered_centavos: null, qr_applied_centavos: 2700 },
   });
-  assert.deepEqual(result, { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2700, current_revision: 2 });
-  assert.deepEqual(calls, [{ command: "confirm_sale_command", payload: { request: { request_id: "550e8400-e29b-41d4-a716-446655440057", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500, captured_revision: 0, acknowledged_price_centavos: 2700, acknowledged_revision: 2 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2700 } } } }]);
+  assert.deepEqual(result, { kind: "stale_catalog_record", product_id: 1, current_unit_price_centavos: 2700 });
+  assert.deepEqual(calls, [{ command: "confirm_sale_command", payload: { request: { request_id: "550e8400-e29b-41d4-a716-446655440057", lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2500 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: 2700 } } } }]);
 });
 
 test("preserves nullable payment inputs for cash, QR, and mixed confirmation", async () => {
@@ -91,21 +91,21 @@ test("preserves nullable payment inputs for cash, QR, and mixed confirmation", a
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440051",
-        lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+        lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500 }],
         payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
       },
     },
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440052",
-        lines: [{ product_id: 2, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+        lines: [{ product_id: 2, quantity: 1, captured_unit_price_centavos: 2_500 }],
         payment: { amount_tendered_centavos: null, qr_applied_centavos: 2_500 },
       },
     },
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440053",
-        lines: [{ product_id: 3, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+        lines: [{ product_id: 3, quantity: 1, captured_unit_price_centavos: 2_500 }],
         payment: {
           amount_tendered_centavos: 1_500,
           qr_applied_centavos: 1_000,
@@ -117,7 +117,7 @@ test("preserves nullable payment inputs for cash, QR, and mixed confirmation", a
 
 test("projects complete sale summaries and both payment variants", async () => {
   const confirmSale = createConfirmSaleCommand(async () => ({ kind: "success", sale_id: 7, request_id: "550e8400-e29b-41d4-a716-446655440054", status: "confirmed", confirmed_at: "2026-03-08T12:00:00Z", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU-1", product_name: "Filter", quantity: 2, unit_price_centavos: 2750, line_total_centavos: 5500, internal: "hidden" }], payments: [{ method: "cash", amount_applied_centavos: 3000, amount_tendered_centavos: 3500, change_given_centavos: 500, internal: "hidden" }, { method: "qr", amount_applied_centavos: 2500, internal: "hidden" }], total_centavos: 5500, internal: "hidden" }));
-  const result = await confirmSale({ request_id: "550e8400-e29b-41d4-a716-446655440054", lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2500, captured_revision: 0 }], payment: { amount_tendered_centavos: 3500, qr_applied_centavos: 2500 } });
+  const result = await confirmSale({ request_id: "550e8400-e29b-41d4-a716-446655440054", lines: [{ product_id: 1, quantity: 2, captured_unit_price_centavos: 2500 }], payment: { amount_tendered_centavos: 3500, qr_applied_centavos: 2500 } });
   assert.deepEqual(result, { kind: "success", sale_id: 7, request_id: "550e8400-e29b-41d4-a716-446655440054", status: "confirmed", confirmed_at: "2026-03-08T12:00:00Z", outcome: "confirmed", lines: [{ product_id: 1, sku: "SKU-1", product_name: "Filter", quantity: 2, unit_price_centavos: 2750, line_total_centavos: 5500 }], payments: [{ method: "cash", amount_applied_centavos: 3000, amount_tendered_centavos: 3500, change_given_centavos: 500 }, { method: "qr", amount_applied_centavos: 2500 }], total_centavos: 5500 });
 });
 
@@ -243,7 +243,7 @@ test("reconstructs the IPC payload from allowlisted request fields", async () =>
     {
       request: {
         request_id: "550e8400-e29b-41d4-a716-446655440056",
-        lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500, captured_revision: 0 }],
+        lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 2_500 }],
         payment: { amount_tendered_centavos: 2_500, qr_applied_centavos: null },
       },
     },

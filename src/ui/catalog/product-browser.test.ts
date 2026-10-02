@@ -239,7 +239,7 @@ test("Sales product identity opens an accessible read-only detail with every ord
     const closeButton = within(detail).getByRole("button", { name: "Cerrar detalle del producto" });
     assert.equal(detail.getAttribute("data-ui-density"), "compact");
     const detailContent = detail.querySelector('[data-ui-sales-detail-content="true"]')!;
-    assert.deepEqual(Array.from(detailContent.children, (child) => child.hasAttribute("data-ui-sales-detail-image-trigger") ? "image" : child.hasAttribute("data-ui-sales-product-detail-facts") ? "facts" : "unexpected"), ["image", "facts"]);
+    assert.deepEqual(Array.from(detailContent.children, (child) => child.hasAttribute("data-ui-sales-detail-image-trigger") ? "image" : child.hasAttribute("data-ui-sales-product-detail-facts") ? "facts" : child.hasAttribute("data-ui-sales-product-detail-attributes") ? "attributes" : "unexpected"), ["image", "facts", "attributes"]);
     assert.equal(document.activeElement, closeButton);
     const zoomTrigger = within(detail).getByRole("button", { name: "Ampliar imagen del producto Filter" });
     await userEvent.keyboard("{Tab}");
@@ -250,7 +250,8 @@ test("Sales product identity opens an accessible read-only detail with every ord
     assert.ok(detail.contains(document.activeElement));
     assert.equal(zoomTrigger.querySelector("img")?.getAttribute("alt"), "Filter");
     assert.ok(zoomTrigger.querySelector('[data-ui-sales-image-zoom-icon="true"]'));
-    for (const fact of ["SKU", "FLT", "Categoría", "Filters", "Stock", "Disponible: 4", "Precio de compra", "No registrado", "Precio de venta", "Bs 25,00", "Precio mínimo de venta", "Bs 15,00"]) within(detail).getByText(fact);
+    for (const fact of ["SKU", "FLT", "Categoría", "Filters", "Stock", "Disponible: 4", "Precio de venta", "Bs 25,00", "Precio mínimo de venta", "Bs 15,00"]) within(detail).getByText(fact);
+    assert.equal(within(detail).queryByText("Precio de compra"), null);
     const values = Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dt, [data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent);
     assert.deepEqual(values, ["Diámetro", "50 mm", "Material", "Sin dato", "Marca", "Bosch"]);
     zoomTrigger.focus();

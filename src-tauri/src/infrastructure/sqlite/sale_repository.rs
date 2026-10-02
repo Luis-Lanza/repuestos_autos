@@ -110,6 +110,9 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
                             .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
                         let minimum = MoneyCentavos::new(minimum_price)
                             .map_err(|_| ConfirmSaleError::PersistedDataInvalid)?;
+                        if minimum.value() > list.value() {
+                            return Err(ConfirmSaleError::PersistedDataInvalid);
+                        }
                         if let Some(final_price) = line.final_unit_price {
                             return SaleLine::agreed(
                                 line.product_id,
@@ -131,11 +134,12 @@ impl ConfirmSaleRepository for SqliteSaleRepository {
                                 _ => ConfirmSaleError::PersistedDataInvalid,
                             });
                         }
-                        if (line.captured_unit_price != minimum || line.captured_revision != revision)
-                            && (line.acknowledged_price != Some(minimum) || line.acknowledged_revision != Some(revision)) {
-                            return Err(ConfirmSaleError::StaleCatalogPrice { product_id: line.product_id, current_unit_price: minimum, current_revision: revision });
+                        if line.captured_unit_price != list
+                            && (line.acknowledged_price != Some(list) || line.acknowledged_revision != Some(revision))
+                        {
+                            return Err(ConfirmSaleError::StaleCatalogPrice { product_id: line.product_id, current_unit_price: list, current_revision: revision });
                         }
-                        SaleLine::priced(line.product_id, line.quantity, minimum).map_err(|_| ConfirmSaleError::MoneyOverflow)
+                        SaleLine::priced(line.product_id, line.quantity, list).map_err(|_| ConfirmSaleError::MoneyOverflow)
                     }
                     Some(_) => Err(ConfirmSaleError::ProductInactive),
                     None => Err(ConfirmSaleError::ProductMissing),

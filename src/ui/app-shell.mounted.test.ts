@@ -10,7 +10,7 @@ import { App, NAVIGATION_ACTION, SCREEN, screenAfter } from "./app.ts";
 import { AppShell } from "./app-shell.ts";
 
 const destinations = [
-  ["Dashboard", SCREEN.DASHBOARD, NAVIGATION_ACTION.OPEN_DASHBOARD],
+  ["Métricas", SCREEN.DASHBOARD, NAVIGATION_ACTION.OPEN_DASHBOARD],
   ["Ventas", SCREEN.SALES, NAVIGATION_ACTION.RETURN_TO_SALES],
   ["Inventario", SCREEN.INVENTORY, NAVIGATION_ACTION.OPEN_INVENTORY],
   ["Catálogo", SCREEN.CATALOG, NAVIGATION_ACTION.OPEN_CATALOG],
@@ -43,7 +43,7 @@ test("AppShell exposes identity and the dashboard-first Spanish navigation", asy
   const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
   const buttons = within(navigation).getAllByRole("button");
   assert.deepEqual(buttons.map((button) => button.textContent), destinations.map(([label]) => label));
-  assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.textContent), ["Dashboard"]);
+  assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-current") === "page").map((button) => button.textContent), ["Métricas"]);
 
   for (const [label, , action] of destinations) {
     await user.click(within(navigation).getByRole("button", { name: label }));
@@ -84,11 +84,12 @@ test("App keeps the global Inventory alert count across screens and opens the al
   assert.equal((screen.getByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement).value, "alerts");
 });
 
-test("opens Reports directly to the Movement Ledger and keeps sidebar focus and active state", async () => {
+test("opens the unified Reports interface and keeps sidebar focus and active state", async () => {
   mockIPC((command) => {
     if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "gross_profit_report_command") return { kind: "success", report: { amount_centavos: 0, missing_cost_line_count: 0 } };
     if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
     if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
     throw new Error(`Unexpected command: ${command}`);
@@ -97,7 +98,10 @@ test("opens Reports directly to the Movement Ledger and keeps sidebar focus and 
   const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
   const reports = within(navigation).getByRole("button", { name: "Reportes" });
   await user.click(reports);
-  assert.ok(await screen.findByRole("heading", { level: 1, name: "Registro de movimientos" }));
+  assert.ok(await screen.findByRole("heading", { level: 1, name: "Reportes" }));
+  assert.ok(await screen.findByRole("combobox", { name: "Tipo de movimiento" }));
+  assert.equal(screen.queryByRole("region", { name: "Ganancia bruta" }), null);
+  assert.equal(document.querySelectorAll("main").length, 1);
   assert.equal(reports.getAttribute("aria-current"), "page");
   assert.equal(document.activeElement, reports);
   assert.equal(screen.queryByText(/Próximamente|Otros informes/), null);
@@ -135,6 +139,7 @@ test("App keeps one shell mounted while safe navigation changes content, active 
     if (command === "license_status_command") return { kind: "status", code: "active" };
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
     if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "gross_profit_report_command") return { kind: "success", report: { amount_centavos: 0, missing_cost_line_count: 0 } };
     if (command === "list_movement_ledger_product_options_command") return { kind: "success", products: [] };
     if (command === "list_movement_ledger_command") return { kind: "success", rows: [], page: 1, page_size: 50, has_more: false };
     if (command === "choose_backup_destination_command") return { kind: "cancelled" };
@@ -144,8 +149,8 @@ test("App keeps one shell mounted while safe navigation changes content, active 
   render(createElement(App));
 
   const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
-  assert.ok(screen.getByRole("heading", { level: 1, name: "Dashboard" }));
-  assert.equal(within(navigation).getByRole("button", { name: "Dashboard" }).getAttribute("aria-current"), "page");
+  assert.ok(screen.getByRole("heading", { level: 1, name: "Métricas" }));
+  assert.equal(within(navigation).getByRole("button", { name: "Métricas" }).getAttribute("aria-current"), "page");
 
   const backup = within(navigation).getByRole("button", { name: "Copia y restauración" });
   await user.click(backup);
@@ -200,7 +205,7 @@ test("unlicensed startup defaults to activation and recovery exposes only safe n
   assert.ok(await screen.findByRole("heading", { name: "Activá Repuestos Autos" }));
   await user.click(screen.getByRole("button", { name: "Continuar en modo de recuperación" }));
   const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
-  assert.deepEqual(within(navigation).getAllByRole("button").map((button) => button.textContent), ["Dashboard", "Historial de ventas", "Reportes", "Copia y restauración"]);
+  assert.deepEqual(within(navigation).getAllByRole("button").map((button) => button.textContent), ["Métricas", "Historial de ventas", "Reportes", "Copia y restauración"]);
   await user.click(within(navigation).getByRole("button", { name: "Copia y restauración" }));
   const restore = screen.getByRole("button", { name: "Elegir archivo de respaldo" }) as HTMLButtonElement;
   assert.equal(restore.disabled, true);

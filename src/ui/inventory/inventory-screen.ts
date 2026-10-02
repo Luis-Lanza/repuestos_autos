@@ -1,6 +1,6 @@
 import { createElement, type FormEvent, useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
-import { browseProducts, type ProductBrowseResult, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
+import { browseInventoryProducts, type InventoryBrowsePage, type ProductBrowseResult, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
@@ -10,6 +10,19 @@ import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } 
 export const inventoryScreenDescription = "Operaciones de entrada de stock y conteo físico.";
 type Product = ProductBrowseResult;
 type LoadState = "initial" | "loading" | "ready" | "unavailable";
+
+function inventoryBrowserPage(page: InventoryBrowsePage) {
+  return {
+    ...page,
+    products: page.products.map((product) => ({
+      ...product,
+      purchase_price_centavos: null,
+      revision: 0,
+      primary_location_code: product.primary_location_code,
+      attribute_values: [],
+    })),
+  } as import("../../commands/catalog.ts").ProductBrowsePage;
+}
 
 export function inventoryProductLabel(product: Product) { return `${product.sku} — ${product.name} (${product.available_quantity})`; }
 
@@ -66,7 +79,8 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
     searchAttempt.current = attempt;
     browserDispatch({ type: "browse_started", query, category_id, stock_state, activity: "active", page, request_id: attempt });
     try {
-      const result = await browseProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
+      const safe = await browseInventoryProducts({ query, category_id, stock_state, activity: "active", page, page_size: 20 });
+      const result = inventoryBrowserPage(safe);
       if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_succeeded", request_id: attempt, result });
     } catch { if (mounted.current && attempt === searchAttempt.current) browserDispatch({ type: "browse_failed", request_id: attempt, message: "No se pudo buscar en el catálogo local. Reintentá." }); }
   }

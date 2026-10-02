@@ -12,7 +12,7 @@ interface AppShellProps {
 }
 
 const items = [
-  ["Dashboard", "dashboard", "open_dashboard"],
+  ["Métricas", "dashboard", "open_dashboard"],
   ["Ventas", "sales", "return_to_sales"],
   ["Inventario", "inventory", "open_inventory"],
   ["Catálogo", "catalog", "open_catalog"],
