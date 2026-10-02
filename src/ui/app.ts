@@ -69,7 +69,7 @@ export function App() {
   };
   const openInventoryAlerts = () => {
     if (accessMode === "recovery") return;
-    setInventoryFilter("alerts");
+    setInventoryFilter("all");
     setScreen(SCREEN.INVENTORY);
     refreshInventoryCount();
   };

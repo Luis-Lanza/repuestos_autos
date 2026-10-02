@@ -7,6 +7,7 @@ import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { App } from "../app.ts";
 import { InventoryScreen } from "./inventory-screen.ts";
 
 const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
@@ -382,6 +383,7 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   assert.equal(screen.queryByText("Saldo proyectado: 0"), null);
   assert.equal((screen.getByRole("button", { name: "Confirmar operación" }) as HTMLButtonElement).disabled, true);
   await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
+  await user.type(screen.getByLabelText("Contraseña del catálogo"), "current-password");
   assert.ok(screen.getByText("Saldo proyectado: 0"));
   assert.ok(within(screen.getByRole("region", { name: "Operación de inventario" })).getByRole("textbox", { name: "Motivo" }));
   assert.ok(within(screen.getByRole("region", { name: "Alertas de stock" })).getByText("Correa"));
@@ -391,6 +393,54 @@ test("shows loading/no-results, physical-count validation, and exact prioritized
   const items = within(screen.getByRole("region", { name: "Alertas de stock" })).getAllByRole("listitem");
   assert.match(items[0].textContent ?? "", /Sin stock: 0.*Correa/);
   assert.match(items[1].textContent ?? "", /Stock bajo: 1.*Bujía/);
+});
+
+test("requires an accessible Catalog password for physical counts and never exposes the secret", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  let attempts = 0;
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_physical_count_command") {
+      requests.push(payload?.request as Record<string, unknown>);
+      attempts += 1;
+      return attempts === 1 ? { kind: "error", code: "catalog_password_invalid", message: "native secret" } : success("authorized-count");
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
+  await user.type(screen.getByRole("textbox", { name: "Motivo" }), "Recuento");
+  const submit = screen.getByRole("button", { name: "Confirmar operación" });
+  assert.equal((submit as HTMLButtonElement).disabled, true);
+  const password = screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement;
+  assert.equal(password.type, "password");
+  await user.type(password, "catalog-secret");
+  assert.equal((submit as HTMLButtonElement).disabled, false);
+  await user.click(screen.getByRole("radio", { name: /Entrada de stock/ }));
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  assert.equal((screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
+  await user.type(screen.getByLabelText("Contraseña del catálogo"), "catalog-secret");
+  await user.click(submit);
+  const error = await screen.findByRole("alert");
+  assert.match(error.textContent ?? "", /La contraseña del catálogo no es correcta/);
+  assert.doesNotMatch(document.body.textContent ?? "", /catalog-secret|native secret/);
+  assert.equal(password.value, "");
+  await user.type(password, "current-secret");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByText("Operación guardada. Stock actual: 11.");
+  assert.equal(password.value, "");
+  assert.deepEqual(requests.map(({ catalog_password, ...rest }) => rest), [
+    { request_id: requests[0].request_id, product_id: 1, count: 0, reason: "Recuento" },
+    { request_id: requests[1].request_id, product_id: 1, count: 0, reason: "Recuento" },
+  ]);
+  assert.deepEqual(requests.map((request) => request.catalog_password), ["catalog-secret", "current-secret"]);
+  await user.click(screen.getByRole("button", { name: "Nueva operación" }));
+  await user.click(await screen.findByRole("button", { name: "Seleccionar Filter (SKU: FLT)" }));
+  await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
+  assert.equal((screen.getByLabelText("Contraseña del catálogo") as HTMLInputElement).value, "");
 });
 
 test("locks both operation cards while a physical count is pending", async () => {
@@ -406,6 +456,7 @@ test("locks both operation cards while a physical count is pending", async () =>
   await user.click(screen.getByRole("radio", { name: /Conteo físico/ }));
   await user.type(screen.getByRole("spinbutton", { name: "Conteo físico (unidades enteras)" }), "0");
   await user.type(screen.getByRole("textbox", { name: "Motivo" }), "Recuento de depósito");
+  await user.type(screen.getByLabelText("Contraseña del catálogo"), "current-password");
   assert.ok(screen.getByText("Saldo proyectado: 0"));
   await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
   assert.equal((screen.getByRole("radio", { name: /Entrada de stock/ }) as HTMLInputElement).disabled, true);
@@ -493,6 +544,25 @@ test("retries an exact inventory envelope and replaces its identity after edits 
   assert.notEqual(requests[3].request_id, requests[2].request_id);
 });
 
+test("omits blank optional prices from the stock-entry IPC request", async () => {
+  let request: Record<string, unknown> | undefined;
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") { request = payload?.request as Record<string, unknown>; return success(String(request.request_id)); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(InventoryScreen));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await screen.findByText("Operación guardada. Stock actual: 11.");
+  assert.ok(request);
+  assert.equal("unit_purchase_price_centavos" in request, false);
+  assert.equal("sale_price_centavos" in request, false);
+  assert.equal("minimum_sale_price_centavos" in request, false);
+});
+
 test("shows a specific neutral message for reused inventory requests", async () => {
   mockIPC((command) => {
     if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
@@ -527,6 +597,37 @@ test("shows the assigned generated location in the selected product without chan
   assert.equal(screen.getByRole("button", { name: "Nueva operación" }).textContent, "Nueva operación");
   await user.click(screen.getByRole("button", { name: "Nueva operación" }));
   assert.equal(screen.queryByText("Ubicación principal: A1-SHELF2"), null);
+});
+
+test("uses All Stock for normal Inventory entry and stock-alert cue navigation", async () => {
+  const browseRequests: unknown[] = [];
+  let cueVisible = false;
+  mockIPC((command, payload) => {
+    if (command === "license_status_command") return { kind: "status", code: "active" };
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: cueVisible ? [{ product_id: 2, product_name: "Correa", quantity: 0, classification: "out_of_stock" }] : [] };
+    if (command === "dashboard_command") return { kind: "error", code: "persistence_failure", message: "unavailable" };
+    if (command === "browse_products_command") { browseRequests.push(payload); return browse(); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup({ document });
+  render(createElement(App));
+  const navigation = await screen.findByRole("navigation", { name: "Navegación principal" });
+  const inventory = within(navigation).getByRole("button", { name: /^Inventario/ });
+  await user.click(inventory);
+  const stockFilter = await screen.findByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement;
+  assert.equal(stockFilter.value, "all");
+  assert.ok(await screen.findByRole("region", { name: "Alertas de stock" }));
+  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
+
+  cueVisible = true;
+  await user.click(within(navigation).getByRole("button", { name: "Métricas" }));
+  await screen.findByRole("heading", { name: "Métricas" });
+  await waitFor(() => assert.match(inventory.textContent ?? "", /⚠ 1 alerta de stock/));
+  await user.click(inventory);
+  const returnedFilter = await screen.findByRole("combobox", { name: "Estado del stock" }) as HTMLSelectElement;
+  assert.equal(returnedFilter.value, "all");
+  assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
+  assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
 });
 
 test("clears the public stock cue while alerts load or are unavailable", async () => {

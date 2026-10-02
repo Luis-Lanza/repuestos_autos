@@ -29,6 +29,13 @@ test("allowlists inventory payloads and maps malformed responses to opaque error
   assert.deepEqual(calls, [{ command: "confirm_stock_entry_command", payload: { request: { request_id: "550e8400-e29b-41d4-a716-446655440211", product_id: 1, quantity: 2, unit_purchase_price_centavos: 1800, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, note: "delivery" } } }]);
 });
 
+test("omits unspecified stock-entry prices from the IPC payload", async () => {
+  const calls: unknown[] = [];
+  const commands = createInventoryCommands(async (command, payload) => { calls.push({ command, payload }); return { kind: "success", request_id: "request", product_id: 1, previous_quantity: 8, quantity_delta: 2, resulting_quantity: 10, occurred_at: "now", note: null }; });
+  await commands.confirmStockEntry({ request_id: "request", product_id: 1, quantity: 2, note: null } as never);
+  assert.deepEqual(calls, [{ command: "confirm_stock_entry_command", payload: { request: { request_id: "request", product_id: 1, quantity: 2, note: null } } }]);
+});
+
 test("requires positive safe prices and validates optional minimum against sale before IPC", async () => {
   let calls = 0;
   const commands = createInventoryCommands(async () => { calls += 1; return { kind: "success" }; });
@@ -57,6 +64,18 @@ test("bounds alert error variants and rejects unknown top-level kinds", async ()
     const commands = createInventoryCommands(async () => response);
     assert.deepEqual(await commands.listAlerts(), { kind: "error", code: "persistence_failure", message: "The inventory operation could not be completed." });
   }
+});
+
+test("sends only the Catalog credential with physical-count IPC and decodes bounded authorization errors", async () => {
+  const calls: unknown[] = [];
+  const commands = createInventoryCommands(async (command, payload) => {
+    calls.push({ command, payload });
+    return { kind: "error", code: "catalog_password_invalid", message: "secret native details" };
+  });
+  const result = await commands.confirmPhysicalCount({ request_id: "request", product_id: 1, count: 0, reason: "counted", catalog_password: "catalog-secret" });
+  assert.deepEqual(calls, [{ command: "confirm_physical_count_command", payload: { request: { request_id: "request", product_id: 1, count: 0, reason: "counted", catalog_password: "catalog-secret" } } }]);
+  assert.deepEqual(result, { kind: "error", code: "catalog_password_invalid", message: "The inventory operation could not be completed." });
+  assert.doesNotMatch(JSON.stringify(result), /catalog-secret|secret native details/);
 });
 
 test("rejects fractional inventory quantities before invoking IPC", async () => {

@@ -79,6 +79,17 @@ fn inventory_identity_is_stable_and_excludes_request_id() {
 }
 
 #[test]
+fn omitted_prices_have_distinct_new_identity_from_explicit_values() {
+    let omitted = InventoryOperation::stock_entry_with_prices(1, request_id(), 2, None, None, None, None)
+        .unwrap().identity();
+    let supplied = InventoryOperation::stock_entry_with_prices(1, request_id(), 2, Some(1_250), None, None, None)
+        .unwrap().identity();
+    assert_ne!(omitted, supplied);
+    assert_eq!(omitted.payload_version(), 3);
+    assert_eq!(supplied.payload_version(), 2);
+}
+
+#[test]
 fn inventory_identity_preserves_optional_note_state_and_normalizes_reason() {
     let request_id = request_id();
     let without_note = InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, 1_250, None, None, None)

@@ -81,9 +81,9 @@ test("replaces request identity for every changed inventory payload", () => {
   }
 });
 
-test("requires positive purchase price and checks optional prices against existing or updated sale price", () => {
+test("allows omitted prices and checks supplied values against effective product prices", () => {
   let state = createInventoryFlow(initialInventoryState, { type: "product_selected", product: { product_id: 1, name: "Filter", available_quantity: 8, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000 } });
-  assert.equal(stockEntryPrices(state).valid, false);
+  assert.equal(stockEntryPrices(state).valid, true);
   state = createInventoryFlow(state, { type: "purchase_price_changed", value: "18,00" });
   assert.equal(stockEntryPrices(state).valid, true);
   state = createInventoryFlow(state, { type: "minimum_sale_price_changed", value: "26,00" });

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::application::catalog::access::{CatalogAccessError, CatalogAccessSession};
 use crate::application::inventory::{confirm_physical_count, confirm_stock_entry};
 use crate::commands::confirm_sale::CommandError;
 use crate::domain::inventory::{AlertClassification, InventoryError};
@@ -12,7 +13,8 @@ pub struct StockEntryRequest {
     pub request_id: String,
     pub product_id: i64,
     pub quantity: i64,
-    pub unit_purchase_price_centavos: i64,
+    #[serde(default)]
+    pub unit_purchase_price_centavos: Option<i64>,
     #[serde(default)]
     pub sale_price_centavos: Option<i64>,
     #[serde(default)]
@@ -21,13 +23,28 @@ pub struct StockEntryRequest {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhysicalCountRequest {
     pub request_id: String,
     pub product_id: i64,
     pub count: i64,
     pub reason: String,
+    #[serde(default)]
+    pub catalog_password: String,
+}
+
+impl std::fmt::Debug for PhysicalCountRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PhysicalCountRequest")
+            .field("request_id", &self.request_id)
+            .field("product_id", &self.product_id)
+            .field("count", &self.count)
+            .field("reason", &self.reason)
+            .field("catalog_password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -90,8 +107,22 @@ pub fn confirm_stock_entry_command(
 
 pub fn confirm_physical_count_command(
     connection: &mut rusqlite::Connection,
+    access: &CatalogAccessSession,
     request: PhysicalCountRequest,
 ) -> Result<InventoryCommandResponse, String> {
+    if let Err(error) = access.verify_password(&request.catalog_password) {
+        let (code, message) = match error {
+            CatalogAccessError::Unauthorized | CatalogAccessError::NotConfigured => (
+                "catalog_password_invalid",
+                "The Catalog password is incorrect.",
+            ),
+            _ => (
+                "persistence_failure",
+                "The inventory operation could not be completed.",
+            ),
+        };
+        return Ok(InventoryCommandResponse::Error(CommandError { code, message }));
+    }
     let request_id = match RequestId::parse(&request.request_id) {
         Ok(value) => value,
         Err(_) => return Ok(InventoryCommandResponse::Error(invalid_request())),

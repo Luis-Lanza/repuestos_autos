@@ -57,7 +57,7 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
                 None,
                 None,
                 note,
-                Some(unit_purchase_price.value()),
+                unit_purchase_price.map(|price| price.value()),
                 sale_price_centavos,
                 minimum_sale_price_centavos,
             ),
@@ -159,10 +159,18 @@ impl InventoryRepository for SqliteInventoryRepository<'_> {
             return Err(InventoryError::PERSISTENCE_FAILURE);
         }
         if kind == OperationKind::StockEntry {
-            if transaction.execute(
-                "UPDATE products SET purchase_price_centavos = ?1, list_price_centavos = ?2, minimum_unit_price_centavos = ?3 WHERE id = ?4",
-                params![purchase_price, resulting_sale, resulting_minimum, product_id],
-            ).map_err(|_| InventoryError::PERSISTENCE_FAILURE)? != 1 {
+            let update = if purchase_price.is_some() {
+                transaction.execute(
+                    "UPDATE products SET purchase_price_centavos = ?1, list_price_centavos = ?2, minimum_unit_price_centavos = ?3 WHERE id = ?4",
+                    params![purchase_price, resulting_sale, resulting_minimum, product_id],
+                )
+            } else {
+                transaction.execute(
+                    "UPDATE products SET list_price_centavos = ?1, minimum_unit_price_centavos = ?2 WHERE id = ?3",
+                    params![resulting_sale, resulting_minimum, product_id],
+                )
+            }.map_err(|_| InventoryError::PERSISTENCE_FAILURE)?;
+            if update != 1 {
                 return Err(InventoryError::PERSISTENCE_FAILURE);
             }
         }

@@ -42,7 +42,7 @@ export function createInventoryFlow(state: InventoryState, action: InventoryActi
 }
 
 export function stockEntryPrices(state: InventoryState) {
-  const purchase = parseBsToCentavos(state.purchase_price);
+  const purchase = state.purchase_price.trim() === "" ? undefined : parseBsToCentavos(state.purchase_price);
   const sale = state.sale_price.trim() === "" ? undefined : parseBsToCentavos(state.sale_price);
   const minimum = state.minimum_sale_price.trim() === "" ? undefined : parseBsToCentavos(state.minimum_sale_price);
   const effectiveSale = sale ?? state.product?.sale_price_centavos;
@@ -51,7 +51,7 @@ export function stockEntryPrices(state: InventoryState) {
     purchase,
     sale,
     minimum,
-    valid: purchase !== null && (state.sale_price.trim() === "" || sale !== null) && (state.minimum_sale_price.trim() === "" || minimum !== null)
+    valid: (purchase === undefined || purchase !== null) && (state.sale_price.trim() === "" || sale !== null) && (state.minimum_sale_price.trim() === "" || minimum !== null)
       && (effectiveSale === undefined || effectiveMinimum === undefined || effectiveMinimum <= effectiveSale),
   };
 }

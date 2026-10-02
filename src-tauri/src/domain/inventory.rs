@@ -101,10 +101,10 @@ pub struct InventoryIdentity {
 }
 
 impl InventoryIdentity {
-    pub const PAYLOAD_VERSION: i64 = 2;
+    pub const PAYLOAD_VERSION: i64 = 3;
 
     fn new(operation_kind: OperationKind, payload: Vec<u8>) -> Self {
-        let payload_version = if payload.starts_with(b"12:inventory/v2") { 2 } else { 1 };
+        let payload_version = if payload.starts_with(b"12:inventory/v3") { 3 } else if payload.starts_with(b"12:inventory/v2") { 2 } else { 1 };
         Self {
             operation_kind: operation_kind.as_str().into(),
             payload_version,
@@ -168,6 +168,7 @@ impl InventoryIdentity {
         let version_marker_matches = match payload_version {
             1 => canonical_payload.starts_with(b"12:inventory/v1"),
             2 => canonical_payload.starts_with(b"12:inventory/v2"),
+            3 => canonical_payload.starts_with(b"12:inventory/v3"),
             _ => false,
         };
         if !version_marker_matches
@@ -200,7 +201,7 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
         .ok()?
         .parse::<i64>()
         .ok()?;
-    if (marker != b"inventory/v1" && marker != b"inventory/v2") || stored_kind != kind.as_str().as_bytes() {
+    if (marker != b"inventory/v1" && marker != b"inventory/v2" && marker != b"inventory/v3") || stored_kind != kind.as_str().as_bytes() {
         return None;
     }
 
@@ -209,14 +210,14 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
             if requested_value <= 0 {
                 return None;
             }
-            let (purchase, sale, minimum) = if marker == b"inventory/v2" {
-                let purchase = read_number(payload, &mut cursor)?;
-                if purchase <= 0 || purchase > 9_007_199_254_740_991 { return None; }
+            let (purchase, sale, minimum) = if marker == b"inventory/v2" || marker == b"inventory/v3" {
+                let purchase = if marker == b"inventory/v3" { read_optional_number(payload, &mut cursor)? } else { Some(read_number(payload, &mut cursor)?) };
+                if purchase.is_some_and(|value| value <= 0 || value > 9_007_199_254_740_991) { return None; }
                 let sale = read_optional_number(payload, &mut cursor)?;
                 let minimum = read_optional_number(payload, &mut cursor)?;
                 if sale.into_iter().chain(minimum).any(|price| price <= 0 || price > 9_007_199_254_740_991)
                     || matches!((sale, minimum), (Some(sale), Some(minimum)) if minimum > sale) { return None; }
-                (Some(purchase), sale, minimum)
+                (purchase, sale, minimum)
             } else { (None, None, None) };
             let note_state = read_field(payload, &mut cursor)?;
             let note = match note_state {
@@ -234,6 +235,7 @@ fn canonical_payload_from_persisted(payload: &[u8], kind: OperationKind) -> Opti
                 sale,
                 minimum,
                 note,
+                version: if marker == b"inventory/v1" { 1 } else if marker == b"inventory/v2" { 2 } else { 3 },
             }
         }
         OperationKind::PhysicalCount => {
@@ -263,6 +265,7 @@ enum InventoryPayload<'a> {
         sale: Option<i64>,
         minimum: Option<i64>,
         note: Option<&'a str>,
+        version: i64,
     },
     PhysicalCount {
         product_id: i64,
@@ -281,14 +284,19 @@ fn encode_payload(payload: InventoryPayload<'_>) -> (OperationKind, Vec<u8>) {
             sale,
             minimum,
             note,
+            version,
         } => {
-            let version = if purchase.is_some() { 2 } else { 1 };
-            append_field(&mut encoded, if version == 2 { b"inventory/v2" } else { b"inventory/v1" });
+            let version = if version == 0 { if purchase.is_some() { 2 } else { 3 } } else { version };
+            append_field(&mut encoded, match version { 1 => b"inventory/v1", 2 => b"inventory/v2", _ => b"inventory/v3" });
             append_field(&mut encoded, OperationKind::StockEntry.as_str().as_bytes());
             append_number(&mut encoded, product_id);
             append_number(&mut encoded, quantity);
-            if let Some(purchase) = purchase {
-                append_number(&mut encoded, purchase);
+            if version == 2 {
+                append_number(&mut encoded, purchase.expect("legacy v2 identities contain a purchase price"));
+                append_optional_number(&mut encoded, sale);
+                append_optional_number(&mut encoded, minimum);
+            } else if version == 3 {
+                append_optional_number(&mut encoded, purchase);
                 append_optional_number(&mut encoded, sale);
                 append_optional_number(&mut encoded, minimum);
             }
@@ -358,7 +366,7 @@ pub enum InventoryOperation {
         product_id: i64,
         request_id: RequestId,
         quantity: StockEntryQuantity,
-        unit_purchase_price: UnitPurchasePrice,
+        unit_purchase_price: Option<UnitPurchasePrice>,
         sale_price_centavos: Option<i64>,
         minimum_sale_price_centavos: Option<i64>,
         note: Option<String>,
@@ -385,8 +393,9 @@ impl InventoryOperation {
             } => encode_payload(InventoryPayload::StockEntry {
                 product_id: *product_id,
                 quantity: quantity.value(),
-                purchase: Some(unit_purchase_price.value()),
+                purchase: unit_purchase_price.map(UnitPurchasePrice::value),
                 sale: *sale_price_centavos,
+                version: 0,
                 minimum: *minimum_sale_price_centavos,
                 note: note.as_deref(),
             }),
@@ -408,7 +417,7 @@ impl InventoryOperation {
         product_id: i64,
         request_id: RequestId,
         quantity: i64,
-        unit_purchase_price_centavos: i64,
+        unit_purchase_price_centavos: impl Into<Option<i64>>,
         sale_price_centavos: Option<i64>,
         minimum_sale_price_centavos: Option<i64>,
         note: Option<String>,
@@ -419,11 +428,12 @@ impl InventoryOperation {
         if matches!((sale_price_centavos, minimum_sale_price_centavos), (Some(sale), Some(minimum)) if minimum > sale) {
             return Err(InventoryError::INVALID_PRICE);
         }
+        let unit_purchase_price = unit_purchase_price_centavos.into().map(UnitPurchasePrice::new).transpose()?;
         Ok(Self::StockEntry {
             product_id,
             request_id,
             quantity: StockEntryQuantity::new(quantity)?,
-            unit_purchase_price: UnitPurchasePrice::new(unit_purchase_price_centavos)?,
+            unit_purchase_price,
             sale_price_centavos,
             minimum_sale_price_centavos,
             note,

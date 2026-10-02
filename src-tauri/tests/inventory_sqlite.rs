@@ -178,6 +178,31 @@ fn stock_entry_atomically_updates_current_prices_and_keeps_cost_on_immutable_mov
 }
 
 #[test]
+fn omitted_prices_preserve_nullable_values_and_replay_compares_caller_intent_first() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("UPDATE products SET purchase_price_centavos = NULL WHERE id = 1", []).unwrap();
+    let request_id = request("550e8400-e29b-41d4-a716-446655440230");
+    SqliteInventoryRepository::new(&mut connection).confirm(
+        InventoryOperation::stock_entry_with_prices(1, request_id.clone(), 2, None, None, None, None).unwrap()
+    ).unwrap();
+    let prices = connection.query_row(
+        "SELECT purchase_price_centavos, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1",
+        [], |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+    ).unwrap();
+    assert_eq!(prices, (None, 2_500, 2_500));
+    assert_eq!(connection.query_row(
+        "SELECT unit_purchase_price_centavos FROM inventory_movements WHERE request_id = ?1",
+        [request_id.as_uuid().to_string()], |row| row.get::<_, Option<i64>>(0),
+    ).unwrap(), None);
+    assert_eq!(SqliteInventoryRepository::new(&mut connection).confirm(
+        InventoryOperation::stock_entry_with_prices(999, request_id.clone(), 2, None, Some(2_500), None, None).unwrap()
+    ), Err(InventoryError::REQUEST_CONFLICT));
+    assert_eq!(SqliteInventoryRepository::new(&mut connection).confirm(
+        InventoryOperation::stock_entry_with_prices(1, request("550e8400-e29b-41d4-a716-446655440231"), 1, None, None, Some(2_501), None).unwrap()
+    ), Err(InventoryError::INVALID_PRICE));
+}
+
+#[test]
 fn conflicting_physical_count_reuse_rejects_changed_count_and_reason() {
     let mut connection = open_seeded_catalog().unwrap();
     let request_id = request("550e8400-e29b-41d4-a716-446655440112");

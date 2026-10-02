@@ -13,7 +13,7 @@ pub fn confirm_stock_entry<R: InventoryRepository>(
     product_id: i64,
     request_id: RequestId,
     quantity: i64,
-    unit_purchase_price_centavos: i64,
+    unit_purchase_price_centavos: Option<i64>,
     sale_price_centavos: Option<i64>,
     minimum_sale_price_centavos: Option<i64>,
     note: Option<String>,
