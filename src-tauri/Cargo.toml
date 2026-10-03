@@ -1,6 +1,6 @@
 [package]
 name = "repuestos-autos"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2021"
 default-run = "repuestos-autos"
 
@@ -28,6 +28,9 @@ uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
+chrono-tz = "=0.10.4"
+iana-time-zone = "=0.1.65"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 license-protocol = { path = "../crates/license-protocol" }
 ed25519-dalek = "2"

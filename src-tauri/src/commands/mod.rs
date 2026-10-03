@@ -8,5 +8,7 @@ pub mod inventory;
 pub mod license;
 pub mod movement_ledger;
 pub mod onboarding;
+pub mod pdf_format;
+pub mod pdf_table;
 pub mod post_sale;
 pub mod sales_history;
