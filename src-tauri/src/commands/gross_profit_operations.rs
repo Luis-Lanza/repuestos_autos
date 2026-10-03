@@ -337,6 +337,15 @@ fn render_gross_profit_pdf(
             draw_rule(&mut ops, 8.0, table_bottom, 281.0);
             row_y -= *height as f32 * LINE_MM + ROW_GAP_MM;
         }
+        let left_edge = COLS[0].0;
+        let (last_column_x, last_column_width, _, _) = COLS[COLS.len() - 1];
+        draw_vertical(&mut ops, left_edge, 149.0, table_bottom);
+        draw_vertical(
+            &mut ops,
+            last_column_x + last_column_width,
+            149.0,
+            table_bottom,
+        );
         for (x, _, _, _) in COLS.iter().skip(1) {
             draw_vertical(&mut ops, *x, 149.0, table_bottom);
         }

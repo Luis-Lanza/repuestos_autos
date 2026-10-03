@@ -355,6 +355,15 @@ fn render_movement_ledger_pdf(
         let table_bottom = page_rows.last().map_or(140.0, |fragment| {
             fragment.top_mm - fragment.line_count as f32 * PDF_LINE_HEIGHT_MM + 0.25
         });
+        let left_edge = PDF_COLUMNS[0].0;
+        let (last_column_x, last_column_width, _, _) = PDF_COLUMNS[PDF_COLUMNS.len() - 1];
+        draw_vertical(&mut ops, left_edge, 153.0, table_bottom);
+        draw_vertical(
+            &mut ops,
+            last_column_x + last_column_width,
+            153.0,
+            table_bottom,
+        );
         for (x, _, _, _) in PDF_COLUMNS.iter().skip(1) {
             draw_vertical(&mut ops, *x, 153.0, table_bottom);
         }

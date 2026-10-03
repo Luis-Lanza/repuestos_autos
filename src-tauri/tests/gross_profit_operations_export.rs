@@ -51,6 +51,94 @@ fn pdf(db: &rusqlite::Connection) -> Vec<u8> {
     bytes
 }
 
+fn missing_table_border_geometry(
+    document: &PdfDocument,
+    header_top_mm: f32,
+    internal_x_mm: &[f32],
+) -> Vec<String> {
+    use printpdf::{graphics::Line, ops::Op};
+
+    let mut missing = Vec::new();
+    for (page_index, page) in document.pages.iter().enumerate() {
+        let mut horizontal = Vec::new();
+        let mut vertical = Vec::new();
+        for op in &page.ops {
+            let Op::DrawLine {
+                line: Line { points, .. },
+            } = op
+            else {
+                continue;
+            };
+            if points.len() != 2 {
+                continue;
+            }
+            let a = &points[0].p;
+            let b = &points[1].p;
+            let (ax, ay) = (a.x.0 * 25.4 / 72.0, a.y.0 * 25.4 / 72.0);
+            let (bx, by) = (b.x.0 * 25.4 / 72.0, b.y.0 * 25.4 / 72.0);
+            if (ay - by).abs() < 0.05 {
+                horizontal.push((ax.min(bx), ay, ax.max(bx)));
+            } else {
+                vertical.push((ax, ay.max(by), ay.min(by)));
+            }
+        }
+        let has_horizontal = |y: f32| {
+            horizontal.iter().any(|(left, line_y, right)| {
+                (*left - 8.0).abs() < 0.05
+                    && (*right - 289.0).abs() < 0.05
+                    && (*line_y - y).abs() < 0.05
+            })
+        };
+        if !has_horizontal(header_top_mm) {
+            missing.push(format!(
+                "page {page_index}: header horizontal endpoint missing"
+            ));
+        }
+        let actual_bottom = horizontal
+            .iter()
+            .map(|(_, y, _)| *y)
+            .filter(|y| *y < 140.0)
+            .fold(140.0_f32, f32::min);
+        if actual_bottom < 17.0 {
+            missing.push(format!("page {page_index}: bottom outside page margin"));
+        }
+        if !has_horizontal(actual_bottom) {
+            missing.push(format!(
+                "page {page_index}: bottom horizontal endpoint missing"
+            ));
+        }
+        for edge_x in [8.0, 289.0] {
+            if !vertical.iter().any(|(x, top, bottom)| {
+                (*x - edge_x).abs() < 0.05
+                    && (*top - header_top_mm).abs() < 0.05
+                    && (*bottom - actual_bottom).abs() < 0.05
+            }) {
+                missing.push(format!(
+                    "page {page_index}: outer edge x={edge_x} missing from {header_top_mm} to {actual_bottom}"
+                ));
+            }
+        }
+        for x in internal_x_mm {
+            if !vertical.iter().any(|(actual_x, top, bottom)| {
+                (*actual_x - x).abs() < 0.05
+                    && (*top - header_top_mm).abs() < 0.05
+                    && (*bottom - actual_bottom).abs() < 0.05
+            }) {
+                missing.push(format!("page {page_index}: internal divider x={x} missing"));
+            }
+        }
+        if vertical
+            .iter()
+            .any(|(x, top, bottom)| *x < 7.95 || *x > 289.05 || *top > 153.05 || *bottom < 16.95)
+        {
+            missing.push(format!(
+                "page {page_index}: vertical rule exceeds page margins"
+            ));
+        }
+    }
+    missing
+}
+
 #[test]
 fn exports_every_matching_event_from_historical_snapshots_in_order_with_spanish_paginated_table() {
     let db = open_seeded_catalog().unwrap();
@@ -532,6 +620,36 @@ fn rejects_hostile_historical_text_before_saving_without_truncating_the_row() {
                 message: "El informe supera los límites de recursos y no se guardó.",
             }
         )
+    );
+}
+
+#[test]
+fn closes_outer_table_borders_for_empty_short_and_multipage_exports() {
+    let mut failures = Vec::new();
+    for (label, count) in [("empty", 0), ("short", 1), ("multipage", 23)] {
+        let db = open_seeded_catalog().unwrap();
+        for id in 1..=count {
+            sale(&db, id, "2024-03-10 10:00:00", Some(1000));
+        }
+        let document = PdfDocument::parse(&pdf(&db), &Default::default(), &mut Vec::new()).unwrap();
+        failures.extend(
+            missing_table_border_geometry(
+                &document,
+                149.0,
+                &[43.0, 91.0, 167.0, 186.0, 221.0, 257.0],
+            )
+            .into_iter()
+            .map(|failure| format!("{label}: {failure}")),
+        );
+        if label == "multipage" {
+            assert!(document.pages.len() > 1, "fixture must span multiple pages");
+        } else {
+            assert_eq!(document.pages.len(), 1, "fixture should fit on one page");
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "table border geometry failures: {failures:#?}"
     );
 }
 

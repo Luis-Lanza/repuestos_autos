@@ -34,6 +34,94 @@ fn insert_rows(connection: &Connection, count: i64) {
     }
 }
 
+fn missing_table_border_geometry(
+    document: &printpdf::PdfDocument,
+    header_top_mm: f32,
+    internal_x_mm: &[f32],
+) -> Vec<String> {
+    use printpdf::graphics::Line;
+
+    let mut missing = Vec::new();
+    for (page_index, page) in document.pages.iter().enumerate() {
+        let mut horizontal = Vec::new();
+        let mut vertical = Vec::new();
+        for op in &page.ops {
+            let Op::DrawLine {
+                line: Line { points, .. },
+            } = op
+            else {
+                continue;
+            };
+            if points.len() != 2 {
+                continue;
+            }
+            let a = &points[0].p;
+            let b = &points[1].p;
+            let (ax, ay) = (a.x.0 * 25.4 / 72.0, a.y.0 * 25.4 / 72.0);
+            let (bx, by) = (b.x.0 * 25.4 / 72.0, b.y.0 * 25.4 / 72.0);
+            if (ay - by).abs() < 0.05 {
+                horizontal.push((ax.min(bx), ay, ax.max(bx)));
+            } else {
+                vertical.push((ax, ay.max(by), ay.min(by)));
+            }
+        }
+        let has_horizontal = |y: f32| {
+            horizontal.iter().any(|(left, line_y, right)| {
+                (*left - 8.0).abs() < 0.05
+                    && (*right - 289.0).abs() < 0.05
+                    && (*line_y - y).abs() < 0.05
+            })
+        };
+        if !has_horizontal(header_top_mm) {
+            missing.push(format!(
+                "page {page_index}: header horizontal endpoint missing"
+            ));
+        }
+        let actual_bottom = horizontal
+            .iter()
+            .map(|(_, y, _)| *y)
+            .filter(|y| *y < 140.0)
+            .fold(140.0_f32, f32::min);
+        if actual_bottom < 17.0 {
+            missing.push(format!("page {page_index}: bottom outside page margin"));
+        }
+        if !has_horizontal(actual_bottom) {
+            missing.push(format!(
+                "page {page_index}: bottom horizontal endpoint missing"
+            ));
+        }
+        for edge_x in [8.0, 289.0] {
+            if !vertical.iter().any(|(x, top, bottom)| {
+                (*x - edge_x).abs() < 0.05
+                    && (*top - header_top_mm).abs() < 0.05
+                    && (*bottom - actual_bottom).abs() < 0.05
+            }) {
+                missing.push(format!(
+                    "page {page_index}: outer edge x={edge_x} missing from {header_top_mm} to {actual_bottom}"
+                ));
+            }
+        }
+        for x in internal_x_mm {
+            if !vertical.iter().any(|(actual_x, top, bottom)| {
+                (*actual_x - x).abs() < 0.05
+                    && (*top - header_top_mm).abs() < 0.05
+                    && (*bottom - actual_bottom).abs() < 0.05
+            }) {
+                missing.push(format!("page {page_index}: internal divider x={x} missing"));
+            }
+        }
+        if vertical
+            .iter()
+            .any(|(x, top, bottom)| *x < 7.95 || *x > 289.05 || *top > 153.05 || *bottom < 16.95)
+        {
+            missing.push(format!(
+                "page {page_index}: vertical rule exceeds page margins"
+            ));
+        }
+    }
+    missing
+}
+
 #[test]
 fn export_uses_active_filters_and_returns_paginated_pdf_bytes() {
     let connection = open_seeded_catalog().unwrap();
@@ -606,6 +694,43 @@ fn export_response_serialization_preserves_the_frontend_contract() {
             "code": "persistence_failure",
             "message": "The movement ledger could not be loaded."
         }),
+    );
+}
+
+#[test]
+fn closes_outer_table_borders_for_empty_short_and_multipage_exports() {
+    let mut failures = Vec::new();
+    for (label, count) in [("empty", 0), ("short", 1), ("multipage", 21)] {
+        let connection = open_seeded_catalog().unwrap();
+        insert_rows(&connection, count);
+        let mut bytes = Vec::new();
+        assert_eq!(
+            export_movement_ledger(&connection, request(), "2025-01-02T12:00:00Z", |pdf| {
+                bytes.extend_from_slice(pdf);
+                ExportSaveResult::Saved
+            }),
+            MovementLedgerExportResponse::Success
+        );
+        let document = printpdf::PdfDocument::parse(
+            &bytes,
+            &printpdf::PdfParseOptions::default(),
+            &mut Vec::new(),
+        )
+        .unwrap();
+        failures.extend(
+            missing_table_border_geometry(&document, 153.0, &[37.0, 87.0, 122.0, 141.0, 164.0])
+                .into_iter()
+                .map(|failure| format!("{label}: {failure}")),
+        );
+        if label == "multipage" {
+            assert!(document.pages.len() > 1, "fixture must span multiple pages");
+        } else {
+            assert_eq!(document.pages.len(), 1, "fixture should fit on one page");
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "table border geometry failures: {failures:#?}"
     );
 }
 
