@@ -179,7 +179,7 @@ const PDF_PAGE_H_MM: f32 = 210.0;
 const PDF_ROW_START_MM: f32 = 132.0;
 const PDF_BOTTOM_MM: f32 = 17.0;
 const PDF_LINE_HEIGHT_MM: f32 = 4.5;
-const PDF_ROW_GAP_MM: f32 = 2.0;
+const PDF_ROW_GAP_MM: f32 = 4.0;
 const PDF_BODY_PT: f32 = 9.0;
 const PDF_COLUMNS: [(f32, f32, &str, bool); 6] = [
     (8.0, 29.0, "N.º / fecha y hora", false),
@@ -223,7 +223,9 @@ fn render_movement_ledger_pdf(
     for (row_index, row) in layout_rows.iter().enumerate() {
         let mut first_line = 0;
         while first_line < row.line_count {
-            let available = ((y - PDF_BOTTOM_MM) / PDF_LINE_HEIGHT_MM).floor().max(0.0) as usize;
+            let available = ((y - PDF_BOTTOM_MM + 0.25) / PDF_LINE_HEIGHT_MM)
+                .floor()
+                .max(0.0) as usize;
             if available == 0 {
                 if pages.len() >= 1_000 {
                     return Err(());
@@ -346,12 +348,15 @@ fn render_movement_ledger_pdf(
             draw_rule(
                 &mut ops,
                 8.0,
-                fragment.top_mm - fragment.line_count as f32 * PDF_LINE_HEIGHT_MM - 1.0,
+                fragment.top_mm - fragment.line_count as f32 * PDF_LINE_HEIGHT_MM + 0.25,
                 281.0,
             );
         }
+        let table_bottom = page_rows.last().map_or(140.0, |fragment| {
+            fragment.top_mm - fragment.line_count as f32 * PDF_LINE_HEIGHT_MM + 0.25
+        });
         for (x, _, _, _) in PDF_COLUMNS.iter().skip(1) {
-            draw_vertical(&mut ops, *x, 153.0, 17.0);
+            draw_vertical(&mut ops, *x, 153.0, table_bottom);
         }
         push_pdf_text(
             &mut ops,
@@ -437,6 +442,9 @@ fn layout_movement_row(row: &MovementLedgerRow) -> PdfRow {
 }
 
 fn push_pdf_text(ops: &mut Vec<Op>, text: &str, size: f32, x_mm: f32, y_mm: f32) {
+    ops.push(Op::SetFillColor {
+        col: printpdf::Color::Rgb(printpdf::color::Rgb::new(0.0, 0.0, 0.0, None)),
+    });
     ops.extend([
         Op::StartTextSection,
         Op::SetFont {

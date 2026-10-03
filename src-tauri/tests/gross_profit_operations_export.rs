@@ -330,6 +330,119 @@ fn save_cancellation_and_failure_are_bounded_and_never_expose_a_path() {
 }
 
 #[test]
+fn rendered_graphics_state_and_table_rules_remain_readable_on_every_page() {
+    use printpdf::{graphics::Line, ops::Op};
+
+    let db = open_seeded_catalog().unwrap();
+    for id in 1..=23 {
+        sale(&db, id, "2024-03-10 10:00:00", Some(1000));
+    }
+    let document = PdfDocument::parse(&pdf(&db), &Default::default(), &mut Vec::new()).unwrap();
+    assert!(document.pages.len() > 1);
+    let mut checked_text = 0;
+    for (page_index, page) in document.pages.iter().enumerate() {
+        let mut color = vec![0.0, 0.0, 0.0];
+        let mut baselines = Vec::new();
+        let mut horizontal_rules = Vec::new();
+        let mut vertical_bottoms = Vec::new();
+        let mut x = 0.0;
+        let mut y = 0.0;
+        for op in &page.ops {
+            match op {
+                Op::SetFillColor { col } => color = col.clone().into_vec(),
+                Op::SetTextMatrix {
+                    matrix: printpdf::matrix::TextMatrix::Raw(m),
+                } => {
+                    x = m[4] * 25.4 / 72.0;
+                    y = m[5] * 25.4 / 72.0;
+                }
+                Op::ShowText { items } => {
+                    for item in items {
+                        if matches!(item, printpdf::text::TextItem::Text(value) if !value.is_empty())
+                        {
+                            assert!(color.len() == 3 && color.iter().all(|channel| *channel <= 0.2),
+                                "page {page_index} text at ({x:.2},{y:.2}) has low-contrast effective fill {color:?}");
+                            baselines.push(y);
+                            checked_text += 1;
+                        }
+                    }
+                }
+                Op::DrawLine {
+                    line: Line { points, .. },
+                } if points.len() == 2 => {
+                    let a = &points[0].p;
+                    let b = &points[1].p;
+                    let ay = a.y.0 * 25.4 / 72.0;
+                    let by = b.y.0 * 25.4 / 72.0;
+                    if (ay - by).abs() < 0.01 {
+                        if a.x.0 < b.x.0 {
+                            horizontal_rules.push(ay);
+                        }
+                    } else {
+                        vertical_bottoms.push(ay.min(by));
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(horizontal_rules.iter().any(|rule| *rule < 140.0));
+        for rule in horizontal_rules.iter().filter(|rule| **rule < 140.0) {
+            assert!(
+                baselines
+                    .iter()
+                    .filter(|baseline| **baseline < 140.0)
+                    .all(|baseline| (baseline - rule).abs() >= 2.8),
+                "page {page_index} table separator at {rule:.2}mm intrudes into text clearance"
+            );
+        }
+        let table_bottom = horizontal_rules
+            .iter()
+            .copied()
+            .filter(|rule| *rule < 140.0)
+            .fold(140.0_f32, f32::min);
+        assert!(vertical_bottoms.iter().all(|bottom| (bottom - table_bottom).abs() < 0.1),
+            "page {page_index} vertical rules must stop at table end {table_bottom}, got {vertical_bottoms:?}");
+    }
+    assert!(
+        checked_text > 40,
+        "every header, body, and footer text segment was examined"
+    );
+
+    let short_db = open_seeded_catalog().unwrap();
+    sale(&short_db, 1, "2024-03-10 10:00:00", Some(1000));
+    let short = PdfDocument::parse(&pdf(&short_db), &Default::default(), &mut Vec::new()).unwrap();
+    let mut horizontal = Vec::new();
+    let mut vertical = Vec::new();
+    for op in &short.pages[0].ops {
+        if let Op::DrawLine {
+            line: Line { points, .. },
+        } = op
+        {
+            if points.len() != 2 {
+                continue;
+            }
+            let a = &points[0].p;
+            let b = &points[1].p;
+            let ay = a.y.0 * 25.4 / 72.0;
+            let by = b.y.0 * 25.4 / 72.0;
+            if (ay - by).abs() < 0.01 {
+                horizontal.push(ay);
+            } else {
+                vertical.push(ay.min(by));
+            }
+        }
+    }
+    let actual_bottom = horizontal
+        .into_iter()
+        .filter(|y| *y < 140.0)
+        .fold(140.0_f32, f32::min);
+    assert!(
+        vertical.iter().all(|y| (*y - actual_bottom).abs() < 0.1),
+        "short report vertical rules end at its actual last row boundary"
+    );
+}
+
+#[test]
 fn rejects_date_bounds_that_do_not_match_local_midnight_and_dst_offsets() {
     let db = open_seeded_catalog().unwrap();
     let mut bad = request();

@@ -292,6 +292,139 @@ fn positioned_text(ops: &[Op]) -> Vec<(String, f32)> {
 }
 
 #[test]
+fn rendered_graphics_state_and_table_rules_remain_readable_on_every_page() {
+    use printpdf::{graphics::Line, matrix::TextMatrix};
+
+    let connection = open_seeded_catalog().unwrap();
+    insert_rows(&connection, 21);
+    let mut bytes = Vec::new();
+    assert_eq!(
+        export_movement_ledger(&connection, request(), "2025-01-02T12:00:00Z", |pdf| {
+            bytes.extend_from_slice(pdf);
+            ExportSaveResult::Saved
+        }),
+        MovementLedgerExportResponse::Success
+    );
+    let document =
+        printpdf::PdfDocument::parse(&bytes, &Default::default(), &mut Vec::new()).unwrap();
+    assert!(document.pages.len() > 1);
+    let mut checked_text = 0;
+    for (page_index, page) in document.pages.iter().enumerate() {
+        let mut color = vec![0.0, 0.0, 0.0];
+        let mut baselines = Vec::new();
+        let mut horizontal_rules = Vec::new();
+        let mut vertical_bottoms = Vec::new();
+        let mut x = 0.0;
+        let mut y = 0.0;
+        for op in &page.ops {
+            match op {
+                Op::SetFillColor { col } => color = col.clone().into_vec(),
+                Op::SetTextMatrix {
+                    matrix: TextMatrix::Raw(m),
+                } => {
+                    x = m[4] * 25.4 / 72.0;
+                    y = m[5] * 25.4 / 72.0;
+                }
+                Op::ShowText { items } => {
+                    for item in items {
+                        if matches!(item, TextItem::Text(value) if !value.is_empty()) {
+                            assert!(color.len() == 3 && color.iter().all(|channel| *channel <= 0.2),
+                            "page {page_index} text at ({x:.2},{y:.2}) has low-contrast effective fill {color:?}");
+                            baselines.push(y);
+                            checked_text += 1;
+                        }
+                    }
+                }
+                Op::DrawLine {
+                    line: Line { points, .. },
+                } if points.len() == 2 => {
+                    let a = &points[0].p;
+                    let b = &points[1].p;
+                    let ay = a.y.0 * 25.4 / 72.0;
+                    let by = b.y.0 * 25.4 / 72.0;
+                    if (ay - by).abs() < 0.01 {
+                        if a.x.0 < b.x.0 {
+                            horizontal_rules.push(ay);
+                        }
+                    } else {
+                        vertical_bottoms.push(ay.min(by));
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(horizontal_rules.iter().any(|rule| *rule < 140.0));
+        for rule in horizontal_rules.iter().filter(|rule| **rule < 140.0) {
+            assert!(
+                baselines
+                    .iter()
+                    .filter(|baseline| **baseline < 140.0)
+                    .all(|baseline| (baseline - rule).abs() >= 2.8),
+                "page {page_index} table separator at {rule:.2}mm intrudes into text clearance"
+            );
+        }
+        let table_bottom = horizontal_rules
+            .iter()
+            .copied()
+            .filter(|rule| *rule < 140.0)
+            .fold(140.0_f32, f32::min);
+        assert!(vertical_bottoms.iter().all(|bottom| (bottom - table_bottom).abs() < 0.1),
+            "page {page_index} vertical rules must stop at table end {table_bottom}, got {vertical_bottoms:?}");
+    }
+    assert!(
+        checked_text > 40,
+        "every header, body, continuation, and footer segment was examined"
+    );
+
+    let short_connection = open_seeded_catalog().unwrap();
+    insert_rows(&short_connection, 1);
+    let mut short_bytes = Vec::new();
+    assert_eq!(
+        export_movement_ledger(
+            &short_connection,
+            request(),
+            "2025-01-02T12:00:00Z",
+            |pdf| {
+                short_bytes.extend_from_slice(pdf);
+                ExportSaveResult::Saved
+            }
+        ),
+        MovementLedgerExportResponse::Success
+    );
+    let short =
+        printpdf::PdfDocument::parse(&short_bytes, &Default::default(), &mut Vec::new()).unwrap();
+    let mut horizontal = Vec::new();
+    let mut vertical = Vec::new();
+    for op in &short.pages[0].ops {
+        if let Op::DrawLine {
+            line: Line { points, .. },
+        } = op
+        {
+            if points.len() != 2 {
+                continue;
+            }
+            let a = &points[0].p;
+            let b = &points[1].p;
+            let ay = a.y.0 * 25.4 / 72.0;
+            let by = b.y.0 * 25.4 / 72.0;
+            if (ay - by).abs() < 0.01 {
+                horizontal.push(ay);
+            } else {
+                vertical.push(ay.min(by));
+            }
+        }
+    }
+    let actual_bottom = horizontal
+        .into_iter()
+        .filter(|y| *y < 140.0)
+        .fold(140.0_f32, f32::min);
+    assert!(
+        vertical.iter().all(|y| (*y - actual_bottom).abs() < 0.1),
+        "short report vertical rules end at its actual last row boundary"
+    );
+}
+
+#[test]
 fn export_fragments_extreme_unbroken_detail_across_bounded_pages_without_losing_text() {
     let connection = open_seeded_catalog().unwrap();
     let detail = (0..6_000)

@@ -180,6 +180,7 @@ fn render_gross_profit_pdf(
     const PAGE_H: f32 = 210.0;
     const BODY: f32 = 9.0;
     const LINE_MM: f32 = 4.5;
+    const ROW_GAP_MM: f32 = 4.5;
     const BOTTOM: f32 = 17.0;
     const COLS: [(f32, f32, &str, bool); 7] = [
         (8.0, 35.0, "Fecha y hora", false),
@@ -215,7 +216,7 @@ fn render_gross_profit_pdf(
     let generated = pdf_format::format_timestamp_local(generated_at)
         .unwrap_or_else(|_| "Hora local no disponible".into());
     let mut pages: Vec<Vec<(Vec<Vec<String>>, usize)>> = vec![Vec::new()];
-    let mut y = 141.0;
+    let mut y = 135.0;
     for row in rows {
         let operation = match row.return_id {
             Some(id) => format!("Devolución n.º {id} · Venta n.º {}", row.sale_id),
@@ -252,14 +253,14 @@ fn render_gross_profit_pdf(
         }
         let mut start_line = 0;
         while start_line < height {
-            if y - (LINE_MM + 2.0) < BOTTOM {
+            if y - LINE_MM < BOTTOM {
                 if pages.len() >= 1_000 {
                     return Err(PdfRenderError::LimitExceeded);
                 }
                 pages.push(Vec::new());
-                y = 141.0;
+                y = 135.0;
             }
-            let available = ((y - BOTTOM - 2.0) / LINE_MM).floor().max(1.0) as usize;
+            let available = ((y - BOTTOM) / LINE_MM).floor().max(1.0) as usize;
             let end_line = (start_line + available.min(24)).min(height);
             let fragment = lines
                 .iter()
@@ -277,7 +278,7 @@ fn render_gross_profit_pdf(
                 .last_mut()
                 .ok_or(PdfRenderError::InvalidData)?
                 .push((fragment, fragment_height));
-            y -= fragment_height as f32 * LINE_MM + 2.0;
+            y -= fragment_height as f32 * LINE_MM + ROW_GAP_MM;
             start_line = end_line;
         }
     }
@@ -318,6 +319,7 @@ fn render_gross_profit_pdf(
         }
         draw_rule(&mut ops, 8.0, 140.0, 281.0);
         let mut row_y = 135.0;
+        let mut table_bottom = 140.0;
         for (line_groups, height) in page_rows {
             for (column, lines) in line_groups.iter().enumerate() {
                 let (x, width, _, right) = COLS[column];
@@ -330,11 +332,13 @@ fn render_gross_profit_pdf(
                     text(&mut ops, value, BODY, at_x, row_y - line as f32 * LINE_MM);
                 }
             }
-            row_y -= *height as f32 * LINE_MM + 2.0;
-            draw_rule(&mut ops, 8.0, row_y + 1.0, 281.0);
+            let last_baseline = row_y - (*height - 1) as f32 * LINE_MM;
+            table_bottom = last_baseline - (LINE_MM + ROW_GAP_MM) / 2.0;
+            draw_rule(&mut ops, 8.0, table_bottom, 281.0);
+            row_y -= *height as f32 * LINE_MM + ROW_GAP_MM;
         }
         for (x, _, _, _) in COLS.iter().skip(1) {
-            draw_vertical(&mut ops, *x, 139.0, 17.0);
+            draw_vertical(&mut ops, *x, 149.0, table_bottom);
         }
         text(
             &mut ops,
@@ -360,6 +364,9 @@ fn money(centavos: i64) -> String {
     )
 }
 fn text(ops: &mut Vec<Op>, value: &str, size: f32, x: f32, y: f32) {
+    ops.push(Op::SetFillColor {
+        col: printpdf::Color::Rgb(printpdf::color::Rgb::new(0.0, 0.0, 0.0, None)),
+    });
     ops.extend([
         Op::StartTextSection,
         Op::SetFont {
