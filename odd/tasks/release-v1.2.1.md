@@ -24,6 +24,9 @@ Prepare version1.2.1 from integrated masterb21a2ec01d2bf85416410a81853a15b6576fd
 - Linux desktop build dependencies unavailable; do not install them. Windows build/update/raster acceptance remains manual.
 - Deployment guide recommends signing; human explicitly selected unsigned installers. Preserve that choice and disclose expected Windows warnings.
 
+## Evidence work-unit closure
+User-authorized evidence work-unit commit: `1437558ecf7d636d2676b7dcd2e0ee3a4ed1a817` (`docs(release): record 1.2.1 Windows smoke acceptance`), observed with only the two authorized task documents changed. Independent verifier `mutz32rs-1n-32e6` passed scoped structural/diff checks before commit; no new functional suite or Windows binary inspection was claimed. R2 local manual acceptance is closed; customer delivery and R3 installer attachment/publication remain separate.
+
 ## Next step
 GitHub latest release is v1.1.1; no v1.2* tags exist. Issue #224 is OPEN and approved with type:feature (type:chore is available); use nonclosing `Refs #224` for this release of integrated PDF work. The branch head is d303d4817cac8bf36b47e698a6410829b84378cc, remote master is b21a2ec01d2bf85416410a81853a15b6576fdde3, staged diff is empty, and the two task docs are dirty alongside six unrelated untracked task docs. Preserve those six files.
 
