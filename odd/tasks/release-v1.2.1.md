@@ -27,6 +27,8 @@ Prepare version1.2.1 from integrated masterb21a2ec01d2bf85416410a81853a15b6576fd
 ## Evidence work-unit closure
 User-authorized evidence work-unit commit: `1437558ecf7d636d2676b7dcd2e0ee3a4ed1a817` (`docs(release): record 1.2.1 Windows smoke acceptance`), observed with only the two authorized task documents changed. Independent verifier `mutz32rs-1n-32e6` passed scoped structural/diff checks before commit; no new functional suite or Windows binary inspection was claimed. R2 local manual acceptance is closed. R3 publication and exact installer attachment are now verified; customer-specific backup/update acceptance remains separate.
 
+R3 final publication evidence work-unit commit: `eb43aee05c001f09168c821a899d239c922cdd36` (`docs(release): record published 1.2.1 installer verification`), observed with only this task document changed. Server asset digest/latest Release/tag readback and scoped diff-whitespace checks passed; the public tag and application remain unchanged.
+
 ## Next step
 Release preparation/publication is complete. Download the attached installer from the public v1.2.1 Release. Keep the tag immutable; do not replace the asset with a different build. Record final publication evidence in a documentation-only feature-branch work unit without changing the released application or tag.
 
