@@ -1678,6 +1678,43 @@ fn create_product_command(
     state.with_write(|connection| commands::onboarding::create_product(connection, request))
 }
 
+#[cfg(test)]
+mod sales_browse_contract_tests {
+    use super::*;
+
+    fn request(page_size: i64) -> commands::catalog::BrowseProductsRequest {
+        commands::catalog::BrowseProductsRequest {
+            query: Some("FLT".into()), category_id: Some(1),
+            stock_state: "all".into(), activity: "active".into(), page: 1, page_size,
+        }
+    }
+
+    #[test]
+    fn sales_command_serializes_only_operational_facts_with_nullable_location() {
+        use application::catalog::locations::{assign_product_location, create_product_location, save_location_schema, CreateProductLocationInput, SaveLocationSchemaInput};
+        let mut connection = infrastructure::sqlite::open_seeded_catalog().unwrap();
+        let unassigned = serde_json::to_value(commands::catalog::browse_sale_products(&connection, request(20)).unwrap()).unwrap();
+        assert!(unassigned["products"][0].as_object().unwrap().contains_key("primary_location_code"));
+        assert_eq!(unassigned["products"][0]["primary_location_code"], serde_json::Value::Null);
+        save_location_schema(&mut connection, SaveLocationSchemaInput { expected_revision: 0, segments: vec!["Zone".into()] }).unwrap();
+        let location = create_product_location(&mut connection, CreateProductLocationInput { values: vec!["A-1".into()] }).unwrap();
+        assign_product_location(&mut connection, 1, 0, Some(location.location_id)).unwrap();
+        let changes_before = connection.total_changes();
+        let assigned = serde_json::to_value(commands::catalog::browse_sale_products(&connection, request(20)).unwrap()).unwrap();
+        assert_eq!(assigned["products"][0]["primary_location_code"], "A1");
+        let keys = assigned["products"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(keys, vec!["attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "sale_price_centavos", "sku"]);
+        assert_eq!(assigned["products"][0]["available_quantity"], unassigned["products"][0]["available_quantity"]);
+        assert_eq!(connection.total_changes(), changes_before);
+    }
+
+    #[test]
+    fn sales_command_keeps_page_size_bounded() {
+        let connection = infrastructure::sqlite::open_seeded_catalog().unwrap();
+        assert_eq!(commands::catalog::browse_sale_products(&connection, request(51)).unwrap_err(), "validation_error");
+    }
+}
+
 #[cfg(all(test, feature = "desktop"))]
 mod command_surface_tests {
     use super::*;
@@ -2024,7 +2061,9 @@ mod command_surface_tests {
         assert_eq!(response["products"][0]["attribute_values"], serde_json::json!([{"definition_id":9001,"label":"Material","value":"Acero"}]));
         assert!(!response.to_string().contains("7777"));
         assert!(!response.to_string().contains("Sensitive retired"));
-        for forbidden in ["purchase_price_centavos", "primary_location_code", "active_product_count", "low_stock_threshold", "revision", "active"] {
+        assert!(response["products"][0].as_object().unwrap().contains_key("primary_location_code"));
+        assert_eq!(response["products"][0]["primary_location_code"], serde_json::Value::Null);
+        for forbidden in ["purchase_price_centavos", "primary_location_id", "active_product_count", "low_stock_threshold", "revision", "active"] {
             assert!(!response.to_string().contains(forbidden), "unexpected sensitive field {forbidden}: {response}");
         }
         let listing = get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
@@ -2035,14 +2074,24 @@ mod command_surface_tests {
         let admin_thumbnail = get_ipc_response(&window, request_with("catalog_product_image_thumbnail_command", serde_json::json!({"product_id":1,"expected_revision":0}))).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(admin_thumbnail["code"], "catalog_access_required");
         app.state::<AppState>().with_write(|connection| {
+            use application::catalog::locations::{save_location_schema, create_product_location, assign_product_location, SaveLocationSchemaInput, CreateProductLocationInput};
+            save_location_schema(connection, SaveLocationSchemaInput { expected_revision: 0, segments: vec!["Zone".into(), "Shelf".into()] }).map_err(|_| "test_setup_failed")?;
+            let location = create_product_location(connection, CreateProductLocationInput { values: vec!["A-1".into(), "Shelf 2".into()] }).map_err(|_| "test_setup_failed")?;
+            assign_product_location(connection, 1, 0, Some(location.location_id)).map_err(|_| "test_setup_failed")?;
             let mut bytes = Vec::new();
             image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([20, 40, 60])))
                 .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
                 .map_err(|_| "test_setup_failed")?;
             let image = application::catalog::ProductImage::new("image/jpeg", bytes).map_err(|_| "test_setup_failed")?;
-            application::catalog::replace_product_image(connection, 1, 0, &image).map_err(|_| "test_setup_failed")?;
+            application::catalog::replace_product_image(connection, 1, 1, &image).map_err(|_| "test_setup_failed")?;
             Ok(())
         }).unwrap();
+        let located = get_ipc_response(&window, request_with("browse_sale_products_command", serde_json::json!({"query":"filtro","category_id":1,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(located["products"][0]["primary_location_code"], "A1-SHELF2");
+        for forbidden in ["purchase_price_centavos", "primary_location_id", "active_product_count", "low_stock_threshold", "revision", "active"] {
+            assert!(!located.to_string().contains(forbidden));
+        }
+        assert_eq!(get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap()["code"], "catalog_access_required");
         let sales_thumbnail = get_ipc_response(&window, request_with("sales_product_image_thumbnail_command", serde_json::json!({"product_id":1}))).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(sales_thumbnail["kind"], "success");
         assert_eq!(sales_thumbnail["product_id"], 1);

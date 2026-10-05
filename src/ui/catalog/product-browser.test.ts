@@ -215,6 +215,25 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   assert.match(css, /@media \(max-width: 400px\)[\s\S]*data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 });
 
+test("Sales table and gallery details show assigned and unassigned locations without changing rows", () => {
+  const props = { presentation: "sales" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
+  const view = render(createElement(ProductBrowser, { ...props, state: initialProductBrowserState }));
+  for (const salesViewMode of ["table", "gallery"] as const) {
+    for (const primary_location_code of ["A1-SHELF2", null]) {
+      const product = { ...page.products[0], primary_location_code, attribute_values: [] };
+      const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
+      view.rerender(createElement(ProductBrowser, { ...props, state, salesViewMode }));
+      const row = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByRole("listitem");
+      assert.equal(within(row).queryByText(/Ubicación|A1-SHELF2|Sin ubicación asignada/), null);
+      fireEvent.click(within(row).getByRole("button", { name: "Ver detalles" }));
+      const detail = screen.getByRole("dialog", { name: "Filter" });
+      assert.ok(within(detail).getByText("Ubicación principal"));
+      assert.ok(within(detail).getByText(primary_location_code ?? "Sin ubicación asignada"));
+      fireEvent.click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+    }
+  }
+});
+
 test("Sales product identity opens an accessible read-only detail with every ordered attribute and restores focus", async () => {
   const product = { ...page.products[0], purchase_price_centavos: null, minimum_sale_price_centavos: 1_500, attribute_values: [
     { definition_id: 2, label: "Diámetro", value: "50 mm" },
