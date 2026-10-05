@@ -32,5 +32,8 @@ Restore assigned storage location in Sales browse/checkout details. v1.0.0 displ
 ## Relevant files
 src-tauri/src/application/catalog/mod.rs; src-tauri/src/lib.rs; src-tauri/tests/catalog_browse.rs; src-tauri/tests/catalog_search.rs; src-tauri/tests/command_seam.rs; src-tauri/tests/product_locations.rs; src/commands/catalog.ts; src/commands/catalog.test.ts; src/ui/catalog/product-browser.ts; src/ui/catalog/product-browser.test.ts; src/ui/sales/sale-screen.mounted.test.ts.
 
+## Work-unit delivery
+User-authorized fix commit 36641cf (`fix(sales): restore assigned location in product details`) observed and pushed to origin/fix/sales-product-location. Includes all eleven code/test files plus this document, no unrelated tasks. Evidence-only follow-up records this identity; commit references in the earlier checklist are superseded by this observed delivery.
+
 ## Next step
-Report local functional fix with qualified verification. User authorized commit and push for local Windows testing; execute scoped delivery and report exact revision. Before customer installation, build/test on Windows; decide separately whether to authorize W9 evidence-policy maintenance. No published installer exists for this correction.
+Checkout/pull fix/sales-product-location on Windows and run npm run tauri:dev for local validation. Before customer installation, build/test on Windows; decide separately whether to authorize W9 evidence-policy maintenance. No published installer exists for this correction.
