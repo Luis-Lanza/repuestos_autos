@@ -60,14 +60,14 @@ fn sales_browse_command_serializes_only_bounded_safe_product_attributes() {
     }).unwrap();
     let value = serde_json::to_value(&page).unwrap();
     assert_eq!(value["products"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), vec![
-        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "product_id", "sale_price_centavos", "sku"
+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "sale_price_centavos", "sku"
     ]);
     assert_eq!(value["products"][0]["attribute_values"], serde_json::json!([
         { "definition_id": 7, "label": "Material", "value": "Paper" }
     ]));
     assert!(!value.to_string().contains("7777"));
     assert!(!value.to_string().contains("revision"));
-    assert!(!value.to_string().contains("location"));
+    assert_eq!(value["products"][0]["primary_location_code"], serde_json::Value::Null);
     assert!(!value.to_string().contains("activity"));
 }
 

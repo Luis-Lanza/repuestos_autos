@@ -39,7 +39,7 @@ const mockNativeIPC: typeof registerNativeIPC = (handler) => {
     if (!value || typeof value !== "object" || !Array.isArray((value as { products?: unknown }).products) || !Array.isArray((value as { categories?: unknown }).categories)) return value;
     const page = value as { products: Array<Record<string, unknown>>; categories: Array<Record<string, unknown>> };
     recentSalesProducts = page.products;
-    return { ...page, products: page.products.map(({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, attribute_values }) => ({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, attribute_values: attribute_values ?? [] })), categories: page.categories.map(({ category_id, name }) => ({ category_id, name })) };
+    return { ...page, products: page.products.map(({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, primary_location_code, attribute_values }) => ({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, primary_location_code: primary_location_code ?? null, attribute_values: attribute_values ?? [] })), categories: page.categories.map(({ category_id, name }) => ({ category_id, name })) };
   };
   return Promise.resolve(result).then(project);
   });
@@ -186,7 +186,7 @@ test("keeps Sales toolbar and gallery presentation isolated from browser layout 
   assert.match(css, /\[data-ui-sales-image-area\] \{[^}]*aspect-ratio: 4 \/ 3/);
 });
 
-test("Sales product details omit Catalog-only location data while the cart remains operational", async () => {
+test("Sales product details show operational location while the cart remains unchanged", async () => {
   const located = { ...products[0], primary_location_code: "A1-SHELF2" };
   mockNativeIPC((command) => command === "browse_products_command" ? browse([located]) : command === "catalog_product_image_thumbnail_command" ? { kind: "error", code: "image_unavailable", message: "Unavailable" } : Promise.reject(new Error(`Unexpected command: ${command}`)));
   render(createElement(SaleScreen));
@@ -194,8 +194,9 @@ test("Sales product details omit Catalog-only location data while the cart remai
   await user().type(within(catalog).getByRole("searchbox", { name: "Buscar en el catálogo" }), "filtro{Enter}");
   await user().click(await within(catalog).findByRole("button", { name: "Ver detalles", exact: true }));
   const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
-  assert.equal(within(detail).queryByText("A1-SHELF2"), null);
-  assert.equal(within(detail).queryByText("Ubicación principal"), null);
+  assert.ok(within(detail).getByText("A1-SHELF2"));
+  assert.ok(within(detail).getByText("Ubicación principal"));
+  assert.equal(within(detail).queryByText("Precio de compra"), null);
   await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
   const summary = screen.getByRole("region", { name: "Resumen de venta" });
@@ -313,11 +314,12 @@ test("rejects a thumbnail whose product identity does not match", async () => {
 });
 
 test("reproduces locked-Catalog Sales initialization, search, and category filtering with a safe projection", async () => {
+  const located = { ...products[0], primary_location_code: "A1-SHELF2" };
   const calls: unknown[] = [];
   mockIPC((command, payload) => {
     calls.push({ command, payload });
     if (command !== "browse_products_command") throw new Error(`Unexpected command: ${command}`);
-    return browse([products[0]]);
+    return browse([located]);
   });
   render(createElement(SaleScreen));
   const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
@@ -329,6 +331,13 @@ test("reproduces locked-Catalog Sales initialization, search, and category filte
   assert.ok(within(catalog).getByRole("button", { name: "Agregar" }));
   assert.doesNotMatch(catalog.textContent ?? "", /Precio de compra|Ubicación principal|Material/);
   assert.doesNotMatch(catalog.textContent ?? "", /Bs 32,00/);
+  const callsBeforeDetails = calls.length;
+  await user().click(within(catalog).getByRole("button", { name: "Ver detalles" }));
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  assert.ok(within(detail).getByText("Ubicación principal"));
+  assert.ok(within(detail).getByText("A1-SHELF2"));
+  assert.doesNotMatch(detail.textContent ?? "", /Precio de compra|Bs 32,00/);
+  assert.equal(calls.length, callsBeforeDetails, "location details require no Catalog request");
 });
 
 test("automatically loads the active first page once on mount", async () => {
@@ -542,6 +551,20 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
   assert.deepEqual(Array.from(dialog.querySelectorAll("[data-ui-dialog-actions] button")).map((button) => button.textContent), ["Volver", "Confirmar venta"]);
 });
 
+test("checkout details show the unassigned location fallback without changing the draft", async () => {
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : Promise.reject(new Error(`Unexpected command: ${command}`)));
+  render(createElement(SaleScreen));
+  const u = await addFirst();
+  const checkout = screen.getByRole("dialog", { name: "Revisar y cobrar" });
+  await u.click(within(checkout).getByRole("button", { name: "Ver detalles" }));
+  const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
+  assert.ok(within(detail).getByText("Ubicación principal"));
+  assert.ok(within(detail).getByText("Sin ubicación asignada"));
+  assert.equal(within(detail).queryByText("Precio de compra"), null);
+  await u.click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
+  assert.equal(screen.getByRole("dialog", { name: "Revisar y cobrar" }), checkout);
+});
+
 test("opens the full browse snapshot detail above checkout and hands focus and dismissal back safely", async () => {
   const product = { ...products[0], primary_location_code: "A1-SHELF2", attribute_values: [{ definition_id: 1, label: "Material", value: "Acero" }] };
   const calls: string[] = [];
@@ -562,7 +585,9 @@ test("opens the full browse snapshot detail above checkout and hands focus and d
   assert.ok(checkout.contains(detail), "the detail overlay must be nested within checkout for focus ownership");
   assert.ok(within(detail).getByRole("img", { name: "Filtro aceite" }));
   for (const fact of ["SKU", "FIL-1", "Categoría", "Filtros", "Stock", "Disponible: 8", "Precio de venta", "Precio mínimo de venta"]) within(detail).getByText(fact);
-  for (const forbidden of ["Ubicación principal", "A1-SHELF2", "Precio de compra", "Bs 32,00"]) assert.equal(within(detail).queryByText(forbidden), null);
+  assert.ok(within(detail).getByText("Ubicación principal"));
+  assert.ok(within(detail).getByText("A1-SHELF2"));
+  for (const forbidden of ["Precio de compra", "Bs 32,00"]) assert.equal(within(detail).queryByText(forbidden), null);
   assert.ok(within(detail).getByText("Material"));
   assert.ok(within(detail).getByText("Acero"));
   assert.equal(within(detail).getAllByText("Bs 85,50").length, 2);

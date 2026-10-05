@@ -65,8 +65,19 @@ fn product_assignment_is_optional_active_only_and_used_locations_are_protected()
     let location = create_product_location(&mut connection, CreateProductLocationInput { values: vec!["A".into()] }).unwrap();
     assert_eq!(connection.query_row("SELECT primary_location_id FROM products WHERE id = 1", [], |row| row.get::<_, Option<i64>>(0)).unwrap(), None);
 
+    let sales_input = repuestos_autos::application::catalog::BrowseProductsInput {
+        query: None, category_id: None,
+        stock_filter: repuestos_autos::application::catalog::ProductStockFilter::All,
+        activity_filter: repuestos_autos::application::catalog::ProductActivityFilter::Active,
+        page: 1, page_size: 20,
+    };
     assert_eq!(assign_product_location(&mut connection, 1, 0, Some(location.location_id)), Ok(1));
+    let assigned = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &sales_input).unwrap();
+    assert_eq!(assigned.products[0].primary_location_code.as_deref(), Some("A"));
     assert_eq!(assign_product_location(&mut connection, 1, 1, None), Ok(2));
+    let unassigned = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &sales_input).unwrap();
+    assert_eq!(unassigned.products[0].primary_location_code, None);
+    assert_eq!(unassigned.products[0].available_quantity, assigned.products[0].available_quantity);
     assert_eq!(connection.query_row("SELECT primary_location_id FROM products WHERE id = 1", [], |row| row.get::<_, Option<i64>>(0)).unwrap(), None);
     assert_eq!(assign_product_location(&mut connection, 1, 2, Some(location.location_id)), Ok(3));
     assert_eq!(set_location_activity(&mut connection, location.location_id, 0, false), Err(LocationValidationError::LocationInUse));

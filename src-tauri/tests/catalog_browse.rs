@@ -103,6 +103,30 @@ fn browse_includes_optional_generated_primary_location_without_changing_global_s
 }
 
 #[test]
+fn sales_browse_serializes_nullable_location_without_sensitive_catalog_facts_or_writes() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let input = BrowseProductsInput {
+        query: Some("FLT".into()), category_id: Some(1), stock_filter: ProductStockFilter::All,
+        activity_filter: ProductActivityFilter::Active, page: 1, page_size: 20,
+    };
+    let unassigned = serde_json::to_value(repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap()).unwrap();
+    assert_eq!(unassigned["products"].as_array().unwrap().len(), 1);
+    assert!(unassigned["products"][0].as_object().unwrap().contains_key("primary_location_code"));
+    assert_eq!(unassigned["products"][0]["primary_location_code"], serde_json::Value::Null);
+    save_location_schema(&mut connection, SaveLocationSchemaInput { expected_revision: 0, segments: vec!["Zone".into(), "Shelf".into()] }).unwrap();
+    let location = create_product_location(&mut connection, CreateProductLocationInput { values: vec!["A-1".into(), "Shelf 2".into()] }).unwrap();
+    assign_product_location(&mut connection, 1, 0, Some(location.location_id)).unwrap();
+    let changes_before = connection.total_changes();
+    let assigned = serde_json::to_value(repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap()).unwrap();
+    assert_eq!(assigned["products"][0]["primary_location_code"], "A1-SHELF2");
+    assert_eq!(assigned["products"][0]["available_quantity"], unassigned["products"][0]["available_quantity"]);
+    assert_eq!(connection.total_changes(), changes_before, "Sales browse must remain read-only");
+    for forbidden in ["purchase_price_centavos", "revision", "primary_location_id", "low_stock_threshold", "activity", "active", "active_product_count"] {
+        assert!(!assigned["products"][0].as_object().unwrap().contains_key(forbidden));
+    }
+}
+
+#[test]
 fn stock_filters_use_each_products_threshold_and_keep_zero_out_of_low_stock() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     connection.execute("UPDATE products SET low_stock_threshold = 4 WHERE id = 1", []).unwrap();
