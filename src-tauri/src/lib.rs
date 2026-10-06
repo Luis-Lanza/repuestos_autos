@@ -53,13 +53,14 @@ impl DatabaseState {
             Ok(None) if recovery_evidence => {
                 if has_ambiguous_temporary_artifacts(config.path())
                     || !retained_recovery_evidence_is_valid(config.path())
-                    || !is_valid_database(config.path())
+                    || !is_valid_recovery_evidence(config.path())
                 {
                     return Self::unavailable(config);
                 }
-                match open_existing_validated_database(&config) {
+                // All retained evidence was classified read-only before canonical migration.
+                match infrastructure::sqlite::open_recovery_database(&config) {
                     Ok(connection) => Self::from_connection(config, connection),
-                    Err(()) => Self::unavailable(config),
+                    Err(_) => Self::unavailable(config),
                 }
             }
             Ok(None) => {
@@ -342,7 +343,7 @@ fn retained_recovery_evidence_is_valid(canonical: &std::path::Path) -> bool {
     for name in ["restore-rollback.sqlite3", "pre-restore.sqlite3"] {
         let path = root.join(name);
         match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_file() && is_valid_database(&path) => {}
+            Ok(metadata) if metadata.file_type().is_file() && is_valid_recovery_evidence(&path) => {}
             Ok(_) => return false,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return false,
@@ -426,6 +427,19 @@ fn cleanup_abandoned_directory_using(directory: &std::path::Path, snapshots: boo
     true
 }
 
+fn is_valid_recovery_evidence(path: &std::path::Path) -> bool {
+    if !std::fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+    {
+        return false;
+    }
+    rusqlite::Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .as_ref()
+        .is_ok_and(|connection| {
+            infrastructure::sqlite::backup::validate_recovery_evidence(connection).is_ok()
+        })
+}
+
 fn is_valid_database(path: &std::path::Path) -> bool {
     let connection = rusqlite::Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY);
     connection
@@ -438,6 +452,268 @@ mod database_state_tests {
     use std::{cell::Cell, fs};
 
     use super::*;
+
+    fn schema_upgrade_fixture(path: &std::path::Path) {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        // Apply the shipped history, not a version stamp on a current schema.
+        for migration in [
+            include_str!("infrastructure/sqlite/migrations/0001_confirm_sale.sql"),
+            include_str!("infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
+            include_str!("infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
+            include_str!("infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
+            include_str!("infrastructure/sqlite/migrations/0005_catalog_onboarding_hardening.sql"),
+            include_str!("infrastructure/sqlite/migrations/0006_operational_inventory_control.sql"),
+            include_str!("infrastructure/sqlite/migrations/0007_catalog_maintenance.sql"),
+            include_str!("infrastructure/sqlite/migrations/0008_catalog_metadata_name_uniqueness.sql"),
+            include_str!("infrastructure/sqlite/migrations/0009_sales_history_index.sql"),
+            include_str!("infrastructure/sqlite/migrations/0010_post_sale_lifecycle.sql"),
+            include_str!("infrastructure/sqlite/migrations/0011_sale_idempotency_conflicts.sql"),
+            include_str!("infrastructure/sqlite/migrations/0012_inventory_idempotency_conflicts.sql"),
+            include_str!("infrastructure/sqlite/migrations/0013_catalog_dual_pricing.sql"),
+            include_str!("infrastructure/sqlite/migrations/0014_sale_list_price_snapshot.sql"),
+            include_str!("infrastructure/sqlite/migrations/0015_catalog_price_cap.sql"),
+            include_str!("infrastructure/sqlite/migrations/0016_product_images.sql"),
+            include_str!("infrastructure/sqlite/migrations/0017_product_image_thumbnails.sql"),
+            include_str!("infrastructure/sqlite/migrations/0018_global_product_purchase_price.sql"),
+            include_str!("infrastructure/sqlite/migrations/0019_category_field_lifecycle.sql"),
+            include_str!("infrastructure/sqlite/migrations/0020_product_locations.sql"),
+            include_str!("infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql"),
+            include_str!("infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql"),
+            include_str!("infrastructure/sqlite/migrations/0023_remove_untouched_demo_catalog.sql"),
+        ] {
+            connection.execute_batch(migration).unwrap();
+        }
+        connection.pragma_update(None, "user_version", 23).unwrap();
+        connection.execute_batch(
+            "INSERT INTO categories (id, name) VALUES (41, 'Synthetic category');
+             INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos)
+             VALUES (73, 41, 'SYN-73', 'Synthetic product', 1, 2500, 1800);
+             INSERT INTO stock_balances (product_id, quantity) VALUES (73, 9);"
+        ).unwrap();
+        assert!(connection.execute(
+            "INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos)
+             VALUES (41, 'OTHER', 'Synthetic product', 1, 2500, 1800)", []
+        ).is_err(), "schema 23 must enforce unique normalized names");
+        assert!(validate_restored_database(&connection).is_err(), "finalized candidates still require schema 24");
+    }
+
+    fn schema_upgrade_evidence(directory: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        fs::create_dir_all(directory).unwrap();
+        for name in ["restore-rollback.sqlite3", "pre-restore.sqlite3"] {
+            schema_upgrade_fixture(&directory.join(name));
+        }
+        fs::write(directory.join("restore-state.json.previous-0"), br#"{"state":"prepared"}"#).unwrap();
+        fs::write(directory.join("restore-state.json.previous-1"), br#"{"state":"candidate_installed"}"#).unwrap();
+        ["restore-rollback.sqlite3", "pre-restore.sqlite3", "restore-state.json.previous-0", "restore-state.json.previous-1"]
+            .iter().map(|name| {
+                let path = directory.join(name);
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            }).collect()
+    }
+
+    #[test]
+    fn schema_upgrade_startup_migrates_canonical_and_preserves_historical_evidence() {
+        let directory = std::env::temp_dir().join(format!("r-a-schema-upgrade-{}", uuid::Uuid::new_v4()));
+        let evidence = schema_upgrade_evidence(&directory);
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        schema_upgrade_fixture(config.path());
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        let business = recovered.with_read(|connection| {
+            validate_restored_database(connection).map_err(|_| "invalid_current_schema".to_string())?;
+            connection.query_row(
+                "SELECT p.id, p.sku, p.name, p.list_price_centavos, s.quantity
+                 FROM products p JOIN stock_balances s ON s.product_id = p.id WHERE p.id = 73",
+                [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?))
+            ).map_err(|error| error.to_string())
+        });
+        assert_eq!(business, Ok((73, "SYN-73".into(), "Synthetic product".into(), 2500, 9)));
+        for (path, bytes) in evidence {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_startup_accepts_current_canonical_with_old_snapshots() {
+        let directory = std::env::temp_dir().join(format!("r-a-current-old-{}", uuid::Uuid::new_v4()));
+        let evidence = schema_upgrade_evidence(&directory);
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        let initialized = DatabaseState::open(config.clone()).unwrap();
+        initialized.with_write(|connection| {
+            connection.execute_batch(
+                "INSERT INTO categories (id, name) VALUES (41, 'Synthetic category');
+                 INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos)
+                 VALUES (73, 41, 'SYN-73', 'Repeated name', 1, 2500, 1800),
+                        (74, 41, 'SYN-74', 'Repeated name', 1, 2500, 1800);"
+            ).map_err(|error| error.to_string())
+        }).unwrap();
+        drop(initialized);
+        let canonical_before = fs::read(config.path()).unwrap();
+
+        let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+        assert_eq!(recovered.with_read(|connection| {
+            validate_restored_database(connection).map_err(|_| "invalid_schema".to_string())?;
+            connection.query_row("SELECT COUNT(*) FROM products WHERE name = 'Repeated name' AND id IN (73, 74)", [], |row| row.get::<_, i64>(0))
+                .map_err(|error| error.to_string())
+        }), Ok(2));
+        assert_eq!(fs::read(config.path()).unwrap(), canonical_before);
+        for (path, bytes) in evidence {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_startup_rejects_invalid_or_ambiguous_evidence_without_writes() {
+        for case in ["corrupt", "future_snapshot", "unknown_snapshot", "invalid_schema", "foreign_key", "ambiguous", "invalid_marker", "future_canonical", "missing_canonical"] {
+            let directory = std::env::temp_dir().join(format!("r-a-negative-{case}-{}", uuid::Uuid::new_v4()));
+            schema_upgrade_evidence(&directory);
+            let config = infrastructure::sqlite::production_database_config(&directory);
+            if case != "missing_canonical" {
+                schema_upgrade_fixture(config.path());
+            }
+            let rollback = directory.join("restore-rollback.sqlite3");
+            match case {
+                "corrupt" => fs::write(&rollback, b"not a SQLite database").unwrap(),
+                "future_snapshot" | "unknown_snapshot" => {
+                    let connection = rusqlite::Connection::open(&rollback).unwrap();
+                    connection.pragma_update(None, "user_version", if case == "future_snapshot" { 25 } else { 0 }).unwrap();
+                }
+                "invalid_schema" => {
+                    rusqlite::Connection::open(&rollback).unwrap().execute_batch("PRAGMA foreign_keys = OFF; DROP TABLE products;").unwrap();
+                }
+                "foreign_key" => {
+                    let connection = rusqlite::Connection::open(&rollback).unwrap();
+                    connection.execute_batch("PRAGMA foreign_keys = OFF; UPDATE products SET category_id = 999 WHERE id = 73;").unwrap();
+                }
+                "ambiguous" => fs::write(directory.join("restore-state.json.part"), b"ambiguous").unwrap(),
+                "invalid_marker" => fs::write(directory.join("restore-state.json.previous-0"), b"unknown state").unwrap(),
+                "future_canonical" => {
+                    rusqlite::Connection::open(config.path()).unwrap().pragma_update(None, "user_version", 25).unwrap();
+                }
+                "missing_canonical" => {}
+                _ => unreachable!(),
+            }
+            let before: Vec<_> = fs::read_dir(&directory).unwrap().map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            }).collect();
+
+            let recovered = DatabaseState::recover_on_startup(config.clone(), &BackupStore::new(&directory));
+
+            assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()), "{case}");
+            assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len(), "{case}: no new files");
+            for (path, bytes) in before {
+                assert_eq!(fs::read(path).unwrap(), bytes, "{case}: preserve canonical and evidence");
+            }
+            if case == "missing_canonical" {
+                assert!(!config.path().exists(), "recovery must not create canonical storage");
+            }
+        }
+    }
+
+    fn schema_upgrade_missing_balances_fixture(
+        missing_file: &str,
+        current_canonical: bool,
+    ) -> (std::path::PathBuf, DatabaseConfig, Vec<(std::path::PathBuf, Vec<u8>)>) {
+        let directory = std::env::temp_dir().join(format!("r-a-missing-balances-{}", uuid::Uuid::new_v4()));
+        schema_upgrade_evidence(&directory);
+        let config = infrastructure::sqlite::production_database_config(&directory);
+        if current_canonical {
+            drop(DatabaseState::open(config.clone()).unwrap());
+        } else {
+            schema_upgrade_fixture(config.path());
+        }
+        rusqlite::Connection::open(directory.join(missing_file)).unwrap()
+            .execute_batch("DROP TABLE stock_balances;").unwrap();
+        let before = fs::read_dir(&directory).unwrap().map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        }).collect();
+        (directory, config, before)
+    }
+
+    #[test]
+    fn schema_upgrade_startup_rejects_missing_balances_in_historical_canonical() {
+        let (directory, config, before) = schema_upgrade_missing_balances_fixture("repuestos-autos.sqlite3", false);
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+        for (path, bytes) in before {
+            assert_eq!(fs::read(path).unwrap(), bytes, "canonical and all evidence must remain unchanged");
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_startup_rejects_missing_balances_in_historical_rollback() {
+        let (directory, config, before) = schema_upgrade_missing_balances_fixture("restore-rollback.sqlite3", false);
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+        for (path, bytes) in before {
+            assert_eq!(fs::read(path).unwrap(), bytes, "canonical and all evidence must remain unchanged");
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_startup_rejects_missing_balances_in_historical_protector() {
+        let (directory, config, before) = schema_upgrade_missing_balances_fixture("pre-restore.sqlite3", false);
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+        for (path, bytes) in before {
+            assert_eq!(fs::read(path).unwrap(), bytes, "canonical and all evidence must remain unchanged");
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_startup_rejects_current_canonical_with_missing_historical_balances() {
+        let (directory, config, before) = schema_upgrade_missing_balances_fixture("restore-rollback.sqlite3", true);
+
+        let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+        assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()));
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+        for (path, bytes) in before {
+            assert_eq!(fs::read(path).unwrap(), bytes, "canonical and all evidence must remain unchanged");
+        }
+    }
+
+    #[test]
+    fn schema_upgrade_startup_rejects_unusable_balance_columns_or_view() {
+        for replacement in [
+            "CREATE TABLE stock_balances (product_id INTEGER PRIMARY KEY);",
+            "CREATE TABLE stock_balances (quantity INTEGER NOT NULL);",
+            "CREATE VIEW stock_balances AS SELECT id AS product_id, 0 AS quantity FROM products;",
+        ] {
+            let (directory, config, _) = schema_upgrade_missing_balances_fixture("restore-rollback.sqlite3", false);
+            rusqlite::Connection::open(directory.join("restore-rollback.sqlite3")).unwrap()
+                .execute_batch(replacement).unwrap();
+            let before: Vec<_> = fs::read_dir(&directory).unwrap().map(|entry| {
+                let path = entry.unwrap().path();
+                let bytes = fs::read(&path).unwrap();
+                (path, bytes)
+            }).collect();
+
+            let recovered = DatabaseState::recover_on_startup(config, &BackupStore::new(&directory));
+
+            assert_eq!(recovered.with_read(|_| Ok(())), Err("database_unavailable".into()), "{replacement}");
+            assert_eq!(fs::read_dir(&directory).unwrap().count(), before.len());
+            for (path, bytes) in before {
+                assert_eq!(fs::read(path).unwrap(), bytes, "canonical and all evidence must remain unchanged");
+            }
+        }
+    }
 
     #[test]
     fn backup_diagnostic_classification_uses_only_bounded_kinds_and_codes() {

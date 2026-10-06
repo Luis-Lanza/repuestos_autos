@@ -68,6 +68,33 @@ pub fn stage_and_validate(
     metadata(&destination)
 }
 
+/// Validate retained recovery evidence without migrating or writing the source.
+/// Only a disposable in-memory backup advances through the supported migration chain.
+/// Finalized restore candidates still require `validate_restored_database`.
+pub(crate) fn validate_recovery_evidence(
+    connection: &Connection,
+) -> Result<(), BackupValidationError> {
+    let version = metadata(connection)?.schema_version;
+    if !(1..=CURRENT_SCHEMA_VERSION).contains(&version) {
+        return Err(BackupValidationError::UnsupportedSchema);
+    }
+    super::validate_recovery_operational_schema(connection)
+        .map_err(|_| BackupValidationError::InvalidBackup)?;
+    validate_foreign_keys(connection).map_err(|_| BackupValidationError::InvalidBackup)?;
+    if version == CURRENT_SCHEMA_VERSION {
+        return validate_restored_database(connection);
+    }
+    let mut candidate = Connection::open_in_memory()
+        .map_err(|_| BackupValidationError::InvalidBackup)?;
+    Backup::new(connection, &mut candidate)
+        .and_then(|backup| backup.run_to_completion(128, Duration::from_millis(1), None))
+        .map_err(|_| BackupValidationError::InvalidBackup)?;
+    candidate.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|_| BackupValidationError::InvalidBackup)?;
+    migrate_if_needed(&mut candidate).map_err(|_| BackupValidationError::InvalidBackup)?;
+    validate_restored_database(&candidate)
+}
+
 pub fn validate_restored_database(connection: &Connection) -> Result<(), BackupValidationError> {
     let version = metadata(connection)?.schema_version;
     if version != CURRENT_SCHEMA_VERSION {

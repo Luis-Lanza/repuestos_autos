@@ -92,6 +92,36 @@ pub fn open_existing_database(config: &DatabaseConfig) -> std::result::Result<Co
     Ok(connection)
 }
 
+// Recovery must not mistake a missing stock ledger for a migratable database.
+// These columns are unchanged since 0001 and required by inventory and sale queries.
+fn validate_recovery_operational_schema(connection: &Connection) -> Result<()> {
+    let is_table = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'stock_balances')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !is_table {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    // Preparing and stepping a read verifies both operational columns are usable,
+    // including for an empty table, without manufacturing or updating any balances.
+    connection.prepare("SELECT product_id, quantity FROM stock_balances LIMIT 0")?
+        .query([])?.next()?;
+    Ok(())
+}
+
+/// Open only the selected, prevalidated canonical file; never create missing storage.
+pub(crate) fn open_recovery_database(config: &DatabaseConfig) -> Result<Connection> {
+    let mut connection = Connection::open_with_flags(
+        config.path(), rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    validate_recovery_operational_schema(&connection)?;
+    migrate_if_needed(&mut connection)?;
+    validate_restored_database(&connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok(connection)
+}
+
 pub fn open_database(
     config: &DatabaseConfig,
 ) -> std::result::Result<Connection, Box<dyn std::error::Error>> {
