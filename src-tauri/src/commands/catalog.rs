@@ -256,6 +256,38 @@ pub enum SalesProductThumbnailResponse {
     Error { code: &'static str, message: &'static str },
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SalesProductOriginalRequest {
+    pub product_id: i64,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SalesProductOriginalResponse {
+    Success { product_id: i64, mime_type: &'static str, encoding: &'static str, bytes: String },
+    Unavailable,
+    Error { code: &'static str, message: &'static str },
+}
+
+pub fn sales_product_image_original(
+    connection: &rusqlite::Connection,
+    request: SalesProductOriginalRequest,
+) -> SalesProductOriginalResponse {
+    if request.product_id <= 0 { return SalesProductOriginalResponse::Unavailable; }
+    // Retain the existing original and thumbnail integrity validation together.
+    match catalog::read_product_image(connection, request.product_id) {
+        Ok(Some(image)) => SalesProductOriginalResponse::Success {
+            product_id: request.product_id, mime_type: image.mime_type(),
+            encoding: "base64", bytes: encode_base64(image.bytes()),
+        },
+        Ok(None) | Err(catalog::ProductImagePersistenceError::MissingProduct) => SalesProductOriginalResponse::Unavailable,
+        Err(_) => SalesProductOriginalResponse::Error {
+            code: "persistence_failure", message: "The product image could not be loaded.",
+        },
+    }
+}
+
 pub fn sales_product_image_thumbnail(
     connection: &rusqlite::Connection,
     request: SalesProductThumbnailRequest,

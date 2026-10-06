@@ -743,6 +743,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
         remove_product_image_command,
         catalog_product_image_thumbnail_command,
         sales_product_image_thumbnail_command,
+        sales_product_image_original_command,
         location_schema_command,
         onboarding_location_schema_command,
         onboarding_list_product_locations_command,
@@ -1088,6 +1089,18 @@ fn catalog_product_image_thumbnail_command(
         .unwrap_or_else(|_| commands::catalog::ProductImageThumbnailResponse::Error(commands::catalog::CatalogMaintenanceError {
             code: "persistence_failure", message: "The catalog could not be completed.",
         }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn sales_product_image_original_command(
+    state: tauri::State<AppState>,
+    request: commands::catalog::SalesProductOriginalRequest,
+) -> commands::catalog::SalesProductOriginalResponse {
+    state.with_read(|connection| Ok(commands::catalog::sales_product_image_original(connection, request)))
+        .unwrap_or(commands::catalog::SalesProductOriginalResponse::Error {
+            code: "persistence_failure", message: "The product image could not be loaded.",
+        })
 }
 
 #[cfg(feature = "desktop")]
@@ -2093,6 +2106,11 @@ mod command_surface_tests {
         }
         assert_eq!(get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap()["code"], "catalog_access_required");
         let sales_thumbnail = get_ipc_response(&window, request_with("sales_product_image_thumbnail_command", serde_json::json!({"product_id":1}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        let sales_original = get_ipc_response(&window, request_with("sales_product_image_original_command", serde_json::json!({"product_id":1}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(sales_original["kind"], "success");
+        assert_eq!(sales_original["mime_type"], "image/jpeg");
+        assert_eq!(sales_original.as_object().unwrap().len(), 5);
+        assert_eq!(get_ipc_response(&window, request_with("catalog_product_image_thumbnail_command", serde_json::json!({"product_id":1,"expected_revision":0}))).unwrap().deserialize::<serde_json::Value>().unwrap()["code"], "catalog_access_required");
         assert_eq!(sales_thumbnail["kind"], "success");
         assert_eq!(sales_thumbnail["product_id"], 1);
         assert_eq!(sales_thumbnail["mime_type"], "image/jpeg");

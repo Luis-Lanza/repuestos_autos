@@ -1,0 +1,24 @@
+# Sales full-image zoom
+
+## Authorization and scope
+User authorized implementation after read-only diagnosis of blurry Sales product zoom. User explicitly authorized scoped commit and push for Windows testing. No PR, merge or new release/publication authorized. Branch: `fix/sales-full-image-zoom`, based on immutable tested v1.2.2 source `8f08d3faba84d4fcd54c2290b83520181f9415b6`.
+
+## Goal
+Load the stored original image on demand when opening Sales product zoom in browse and checkout. Keep thumbnails for lists and small detail previews. Preserve Catalog authorization boundaries and avoid exposing maintenance metadata.
+
+## Constraints
+No schema migrations, dependency/version changes, import limit changes, signing changes or release delivery. Preserve six unrelated untracked task documents. Existing validated originals are retained unchanged, bounded to 1600px per dimension and 2 MiB. A small or blurry original cannot recover missing detail.
+
+## Acceptance
+Dedicated bounded read-only Sales original-image contract; strict native/TS response validation including original PNG/JPEG/WebP MIME. Zoom renders original rather than enlarging thumbnails; request only on opening, with loading/error handling and late-response/unmount guards. Closing/reopening preserves keyboard/focus behavior; browse and checkout both work. Catalog remains locked unless explicitly unlocked. Missing original handled safely.
+
+## Tasks
+- [x] Z1 MAPPED: Scout confirmed existing validated `read_product_image` and stored originals; shared Sales detail needs dedicated original IPC and on-demand local viewer state. Minimum five production and three test files, without SQL/schema changes. Evidence from scout muvynuc1-f-b9d0; writer must verify current branch before edits.
+- [x] Z2 IMPLEMENTED: Bounded original-image Sales contract and on-demand shared zoom, with observed RED/GREEN regressions. Original storage and thumbnails unchanged. Nine authorized files, +240/-12; no candidate-caused test/type regressions found. Scoped commit/push explicitly authorized; publication evidence pending.
+- [ ] Z3 IN PROGRESS: Independent executable verification complete with known pre-existing limitations; Windows desktop sharpness/rendering/focus and locked-Catalog IPC smoke remain pending. No release or customer installation.
+
+## Verification and delivery evidence
+Writer muvyqku2-g-vz1m implemented eight authorized files (211 additions, 8 deletions), with observed adapter/native/mounted RED before implementation. Native focused suite 10/10 and test typecheck pass; combined focused TS suite 88/90, NOT GREEN. Two failing assertions: obsolete shared-browser thumbnail-only zoom expectation and ambiguous status query in the new mounted test. Writer stopped for approval to add `src/ui/catalog/product-browser.test.ts`; user explicitly approved the exact additional test path through the scope-choice prompt. Follow-up writer muvz0e43-h-2pii reports nine allowed files (240 additions,12 deletions), focused TS/UI91/91, native10/10, test typecheckPASS, full npm419/419, default offlineRust441/441 and buildPASS. Independent verifier muvzhajt-i-8cfu reran focused TS/UI91/91, native10/10, test typecheck, build and diff check successfully. Production `npx --no-install tsc --noEmit` FAIL is proven pre-existing: HEAD94 diagnostics, candidate94, added0/removed0. Complete messages/codes/order/columns identical after only11 justified +19-line shifts on byte-identical source lines. Evidence `/tmp/sales-zoom-verify.f1msBm/`. No npm production typecheck script exists. `typecheck:tests` inherits test-file exclusions, so its PASS does not establish comprehensive mounted-test typing. Writer full-suite419/441 counts reused, not independently rerun. Parent diff-check spot checkPASS and current RDDoff confirmed. Desktop GTK/WebKit prerequisites unavailable, so added locked-Catalog desktop test unexecuted. No commits. Native ASSESS returned unassessable due undeclared untracked paths, RDDoff, runtimewriterlarge; plan requires independent verification (high-risk fallback). Historical W9 remains 24/30 with unchanged policy/hash failures; do not refresh hashes or expand admission policy to force passing. Desktop IPC execution environment must be stated, never inferred from mounted tests. Commit/push now explicitly authorized; commit identities recorded after successful operations.
+
+## Next step
+Request manual Windows verification with a sharp original: Sales browse zoom and checkout zoom use original; supported formats render; Escape/Tab/focus and close/reopen work; Sales original remains available with Catalog locked. Commit and push this scoped branch (authorized) for Windows testing; do not include unrelated task documents. Do not claim full desktop PASS or publish a new release. Preserve pre-existing typing/W9 limitations without broadening this fix. Existing validated original read retains thumbnail-integrity dependency.

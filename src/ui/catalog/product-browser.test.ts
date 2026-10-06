@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
+import type { SalesProductOriginalResponse } from "../../commands/catalog.ts";
+import { SalesProductDetail, ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
 
 const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
@@ -241,7 +242,7 @@ test("Sales product identity opens an accessible read-only detail with every ord
     { definition_id: 8, label: "Marca", value: "Bosch" },
   ] };
   const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
-  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" } };
+  const props = { state, presentation: "sales" as const, salesViewMode: "table" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {}, onSelect: () => {}, thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==" }, loadSalesOriginal: async (product_id: number) => ({ kind: "success" as const, product_id, src: "data:image/png;base64,iVBORw0KGgo=" }) };
   const view = render(createElement(ProductBrowser, props));
   for (const mode of ["table", "gallery"] as const) {
     if (mode === "gallery") view.rerender(createElement(ProductBrowser, { ...props, salesViewMode: mode }));
@@ -278,7 +279,7 @@ test("Sales product identity opens an accessible read-only detail with every ord
     const viewer = screen.getByRole("dialog", { name: "Imagen de Filter" });
     const viewerClose = within(viewer).getByRole("button", { name: "Cerrar imagen ampliada" });
     assert.equal(document.activeElement, viewerClose);
-    assert.ok(within(viewer).getByRole("img", { name: "Filter" }));
+    assert.equal((await within(viewer).findByRole("img", { name: "Filter" })).getAttribute("src"), "data:image/png;base64,iVBORw0KGgo=");
     assert.equal(detail.getAttribute("aria-hidden"), "true");
     fireEvent.keyDown(document, { key: "Escape" });
     assert.equal(screen.queryByRole("dialog", { name: "Imagen de Filter" }), null);
@@ -300,6 +301,29 @@ test("Sales product identity opens an accessible read-only detail with every ord
     assert.equal(screen.queryByRole("dialog", { name: "Filter" }), null);
     assert.equal(document.activeElement, trigger);
   }
+});
+
+test("Sales original zoom ignores product changes and late rejected generations", async () => {
+  const requests: Array<{ productId: number; resolve: (value: SalesProductOriginalResponse) => void; reject: (reason: Error) => void }> = [];
+  const loadOriginal = (productId: number) => new Promise<SalesProductOriginalResponse>((resolve, reject) => requests.push({ productId, resolve, reject }));
+  const props = { product: { ...page.products[0], attribute_values: [] }, thumbnails: { 1: "data:image/jpeg;base64,/9j/2Q==", 2: "data:image/jpeg;base64,/9j/2Q==" }, loadOriginal, triggerRef: { current: null }, onClose: () => {} };
+  const view = render(createElement(SalesProductDetail, props));
+  fireEvent.click(screen.getByRole("button", { name: "Ampliar imagen del producto Filter" }));
+  view.rerender(createElement(SalesProductDetail, { ...props, product: { ...props.product, product_id: 2, name: "Other filter" } }));
+  assert.deepEqual(requests.map((request) => request.productId), [1, 2]);
+  await act(async () => requests[0].resolve({ kind: "success", product_id: 1, src: "data:image/png;base64,iVBORw0KGgo=" }));
+  const viewer = screen.getByRole("dialog", { name: "Imagen de Other filter" });
+  assert.equal(within(viewer).queryByRole("img"), null);
+  assert.equal(within(viewer).getByRole("status").textContent, "Cargando imagen…");
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: "Ampliar imagen del producto Other filter" }));
+  await act(async () => requests[1].reject(new Error("late private rejection")));
+  const reopened = screen.getByRole("dialog", { name: "Imagen de Other filter" });
+  assert.equal(within(reopened).queryByRole("alert"), null);
+  assert.equal(within(reopened).getByRole("status").textContent, "Cargando imagen…");
+  await act(async () => requests[2].resolve({ kind: "success", product_id: 2, src: "data:image/webp;base64,UklGRgAAAABXRUJQ" }));
+  assert.equal(within(reopened).getByRole("img", { name: "Other filter" }).getAttribute("src"), "data:image/webp;base64,UklGRgAAAABXRUJQ");
+  view.unmount();
 });
 
 test("Sales view preference is separate from Catalog and defaults safely", () => {

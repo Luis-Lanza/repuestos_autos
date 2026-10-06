@@ -194,7 +194,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
       state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador")),
-    checkoutDetail ? createElement(SalesProductDetail, { product: checkoutDetail, thumbnails: checkoutDetailThumbnails, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));
+    checkoutDetail ? createElement(SalesProductDetail, { key: checkoutDetail.product_id, product: checkoutDetail, thumbnails: checkoutDetailThumbnails, loadOriginal: catalogProductImageCommands.salesOriginal, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));
   const summaryLines = state.lines.map((line) => createElement("li", { key: line.product_id, "data-ui-sale-summary-line": true },
     createElement("strong", null, line.product_name),
     createElement("span", { "data-ui-sku": true }, line.sku),
@@ -209,7 +209,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     createElement("div", { "data-ui-sale-layout": true },
       createElement(Panel, { label: "Catálogo de repuestos" } as never,
         createElement("p", { "data-ui-panel-subtitle": true }, "Búsqueda y despacho inmediato de repuestos en mostrador"),
-        createElement(ProductBrowser, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { if (!("revision" in product)) addProduct(product); }, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
+        createElement(ProductBrowser, { state: browser, presentation: "sales", salesViewMode, onSalesViewModeChange: (mode) => { setSalesViewMode(mode); writeSalesViewMode(mode); }, thumbnails: browseThumbnails, loadSalesOriginal: catalogProductImageCommands.salesOriginal, loadingMessage: "Buscando productos…", onQueryChange: (query) => browserDispatch({ type: "query_changed", value: query }), onCategoryChange: (category_id) => browserDispatch({ type: "category_changed", value: category_id }), onSubmit: search, onPageChange: changePage, onSelect: (product) => { if (!("revision" in product)) addProduct(product); }, actionLabel: "Agregar", disabledProductIds: new Set(state.lines.map((line) => line.product_id)), disabled: pending }) as never),
       createElement(Panel, { label: "Resumen de venta" } as never,
         createElement("div", { "data-ui-sale-summary": true },
           createElement("div", { "data-ui-sale-summary-heading": true },
