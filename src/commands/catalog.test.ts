@@ -27,36 +27,37 @@ test("decodes Inventory browse without purchase cost, revision, or attributes", 
   }
 });
 
-test("decodes locked-Sales browse with bounded attributes and no Catalog or revision fields", async () => {
+test("decodes locked-Sales browse with approved purchase cost and no protected metadata", async () => {
   const calls: unknown[] = [];
   const browse = createSalesBrowseProductsCommand(async (command, payload) => {
     calls.push({ command, payload });
-    return { products: [{ product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1-SHELF2", attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+    return { products: [{ product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1-SHELF2", attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] }], categories: [{ category_id: 9, name: "Engine" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
   });
   const result = await browse({ query: " filter ", category_id: 9 });
   assert.deepEqual(calls, [
     { command: "browse_sale_products_command", payload: { request: { query: "filter", category_id: 9, stock_state: "all", activity: "active", page: 1, page_size: 20 } } },
   ]);
-  assert.deepEqual(result.products[0], { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1-SHELF2", attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] });
+  assert.deepEqual(result.products[0], { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, list_price_centavos: 2500, catalog_unit_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: "A1-SHELF2", attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] });
   assert.deepEqual(result.categories, [{ category_id: 9, name: "Engine" }]);
 });
 
-test("decodes an unassigned Sales location as explicit null", async () => {
-  const product = { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: null, attribute_values: [] };
+test("decodes unregistered Sales cost and unassigned location as explicit null", async () => {
+  const product = { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: null, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: null, attribute_values: [] };
   const browse = createSalesBrowseProductsCommand(async () => ({ products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 }));
   assert.equal((await browse()).products[0].primary_location_code, null);
+  assert.equal((await browse()).products[0].purchase_price_centavos, null);
 });
 
 test("rejects unsafe Sales browse projections rather than falling back to Catalog browse", async () => {
-  const safeFacts = { product_id: 1, category_id: 1, sku: "A", name: "A", category_name: "A", available_quantity: 1, sale_price_centavos: 1, minimum_sale_price_centavos: 1, primary_location_code: null, attribute_values: [] };
-  for (const product of [{ product_id: 1 }, { ...safeFacts, revision: 0 }, { ...safeFacts, purchase_price_centavos: 1 }, { ...safeFacts, primary_location_code: 1 }, { ...safeFacts, primary_location_code: undefined }, { ...safeFacts, primary_location_code: {} }, { ...safeFacts, primary_location_code: [] }, { ...safeFacts, primary_location_code: true }, { ...safeFacts, primary_location_id: 1 }, { ...safeFacts, low_stock_threshold: 1 }, { ...safeFacts, activity: "active" }]) {
+  const safeFacts = { product_id: 1, category_id: 1, sku: "A", name: "A", category_name: "A", available_quantity: 1, purchase_price_centavos: null, sale_price_centavos: 1, minimum_sale_price_centavos: 1, primary_location_code: null, attribute_values: [] };
+  for (const product of [{ product_id: 1 }, { ...safeFacts, revision: 0 }, ...([undefined, 0, -1, 1.5, "1", {}, Number.MAX_SAFE_INTEGER + 1].map((purchase_price_centavos) => ({ ...safeFacts, purchase_price_centavos }))), (({ purchase_price_centavos: _, ...missing }) => missing)(safeFacts), { ...safeFacts, profit_margin: 1 }, { ...safeFacts, primary_location_code: 1 }, { ...safeFacts, primary_location_code: undefined }, { ...safeFacts, primary_location_code: {} }, { ...safeFacts, primary_location_code: [] }, { ...safeFacts, primary_location_code: true }, { ...safeFacts, primary_location_id: 1 }, { ...safeFacts, low_stock_threshold: 1 }, { ...safeFacts, activity: "active" }]) {
     const browse = createSalesBrowseProductsCommand(async () => ({ products: [product], categories: [], page: 1, page_size: 20, total: 1, total_pages: 1 }));
     await assert.rejects(browse(), /product catalog/);
   }
 });
 
 test("rejects oversized or metadata-bearing Sales attribute projections", async () => {
-  const product = { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: null, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] };
+  const product = { product_id: 1, category_id: 9, sku: "FLT-1", name: "Filter", category_name: "Engine", available_quantity: 4, purchase_price_centavos: 1800, sale_price_centavos: 2500, minimum_sale_price_centavos: 2000, primary_location_code: null, attribute_values: [{ definition_id: 4, label: "Material", value: "Paper" }] };
   for (const attribute_values of [
     [{ definition_id: 4, label: "Material", value: "Paper", revision: 1 }],
     [{ definition_id: 4, label: "L".repeat(129), value: "Paper" }],

@@ -5,10 +5,10 @@ import { createElement } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import type { SalesProductOriginalResponse } from "../../commands/catalog.ts";
+import type { ProductBrowseResult, SalesProductOriginalResponse } from "../../commands/catalog.ts";
 import { SalesProductDetail, ProductBrowser, createProductBrowserFlow, initialProductBrowserState, readCatalogViewMode, readSalesViewMode, writeCatalogViewMode, writeSalesViewMode } from "./product-browser.ts";
 
-const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, revision: 1 }], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
+const page = { products: [{ product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 4, catalog_unit_price_centavos: 2500, sale_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, purchase_price_centavos: null, primary_location_code: null, revision: 1, attribute_values: [] } satisfies ProductBrowseResult], categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: 1, total_pages: 1 };
 
 test("names Seleccionar actions by product and SKU without changing visible copy or selection", async () => {
   const products = [page.products[0], { ...page.products[0], product_id: 2, sku: "FLT-2" }];
@@ -221,7 +221,8 @@ test("Sales table and gallery details show assigned and unassigned locations wit
   const view = render(createElement(ProductBrowser, { ...props, state: initialProductBrowserState }));
   for (const salesViewMode of ["table", "gallery"] as const) {
     for (const primary_location_code of ["A1-SHELF2", null]) {
-      const product = { ...page.products[0], primary_location_code, attribute_values: [] };
+      const purchase_price_centavos = primary_location_code === null ? null : 1800;
+      const product = { ...page.products[0], primary_location_code, purchase_price_centavos, attribute_values: [] };
       const state = { ...initialProductBrowserState, status: "results" as const, result: { ...page, products: [product] } };
       view.rerender(createElement(ProductBrowser, { ...props, state, salesViewMode }));
       const row = within(screen.getByRole("list", { name: "Resultados del catálogo" })).getByRole("listitem");
@@ -230,6 +231,9 @@ test("Sales table and gallery details show assigned and unassigned locations wit
       const detail = screen.getByRole("dialog", { name: "Filter" });
       assert.ok(within(detail).getByText("Ubicación principal"));
       assert.ok(within(detail).getByText(primary_location_code ?? "Sin ubicación asignada"));
+      assert.ok(within(detail).getByText("Precio de compra"));
+      assert.ok(within(detail).getByText(purchase_price_centavos === null ? "No registrado" : "Bs 18,00"));
+      assert.equal(within(detail).queryByRole("textbox"), null);
       fireEvent.click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
     }
   }
@@ -271,7 +275,8 @@ test("Sales product identity opens an accessible read-only detail with every ord
     assert.equal(zoomTrigger.querySelector("img")?.getAttribute("alt"), "Filter");
     assert.ok(zoomTrigger.querySelector('[data-ui-sales-image-zoom-icon="true"]'));
     for (const fact of ["SKU", "FLT", "Categoría", "Filters", "Stock", "Disponible: 4", "Precio de venta", "Bs 25,00", "Precio mínimo de venta", "Bs 15,00"]) within(detail).getByText(fact);
-    assert.equal(within(detail).queryByText("Precio de compra"), null);
+    assert.ok(within(detail).getByText("Precio de compra"));
+    assert.ok(within(detail).getByText("No registrado"));
     const values = Array.from(detail.querySelectorAll("[data-ui-sales-product-detail-attributes] dt, [data-ui-sales-product-detail-attributes] dd"), (node) => node.textContent);
     assert.deepEqual(values, ["Diámetro", "50 mm", "Material", "Sin dato", "Marca", "Bosch"]);
     zoomTrigger.focus();

@@ -103,13 +103,15 @@ fn browse_includes_optional_generated_primary_location_without_changing_global_s
 }
 
 #[test]
-fn sales_browse_serializes_nullable_location_without_sensitive_catalog_facts_or_writes() {
+fn sales_browse_serializes_current_nullable_cost_without_protected_metadata_or_writes() {
     let mut connection = open_seeded_catalog().unwrap();
     let input = BrowseProductsInput {
         query: Some("FLT".into()), category_id: Some(1), stock_filter: ProductStockFilter::All,
         activity_filter: ProductActivityFilter::Active, page: 1, page_size: 20,
     };
+    connection.execute("UPDATE products SET purchase_price_centavos = 3200 WHERE id = 1", []).unwrap();
     let unassigned = serde_json::to_value(repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap()).unwrap();
+    assert_eq!(unassigned["products"][0]["purchase_price_centavos"], 3200);
     assert_eq!(unassigned["products"].as_array().unwrap().len(), 1);
     assert!(unassigned["products"][0].as_object().unwrap().contains_key("primary_location_code"));
     assert_eq!(unassigned["products"][0]["primary_location_code"], serde_json::Value::Null);
@@ -121,9 +123,16 @@ fn sales_browse_serializes_nullable_location_without_sensitive_catalog_facts_or_
     assert_eq!(assigned["products"][0]["primary_location_code"], "A1-SHELF2");
     assert_eq!(assigned["products"][0]["available_quantity"], unassigned["products"][0]["available_quantity"]);
     assert_eq!(connection.total_changes(), changes_before, "Sales browse must remain read-only");
-    for forbidden in ["purchase_price_centavos", "revision", "primary_location_id", "low_stock_threshold", "activity", "active", "active_product_count"] {
+    for forbidden in ["revision", "primary_location_id", "low_stock_threshold", "activity", "active", "active_product_count", "profit_margin"] {
         assert!(!assigned["products"][0].as_object().unwrap().contains_key(forbidden));
     }
+    connection.execute("UPDATE products SET purchase_price_centavos = NULL WHERE id = 1", []).unwrap();
+    let changes_before = connection.total_changes();
+    let unknown = serde_json::to_value(repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap()).unwrap();
+    assert!(unknown["products"][0].as_object().unwrap().contains_key("purchase_price_centavos"));
+    assert_eq!(unknown["products"][0]["purchase_price_centavos"], serde_json::Value::Null);
+    assert_eq!(unknown["total"], 1);
+    assert_eq!(connection.total_changes(), changes_before);
 }
 
 #[test]

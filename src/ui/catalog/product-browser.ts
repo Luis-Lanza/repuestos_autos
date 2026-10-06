@@ -129,6 +129,7 @@ export function SalesProductDetail({ product, thumbnails, loadOriginal, triggerR
           createElement("dt", null, "SKU"), createElement("dd", null, product.sku), createElement("dt", null, "Categoría"), createElement("dd", null, product.category_name),
           createElement("dt", null, "Stock"), createElement("dd", null, stockText(product)),
           createElement("dt", null, "Ubicación principal"), createElement("dd", null, product.primary_location_code || "Sin ubicación asignada"),
+          createElement("dt", null, "Precio de compra"), createElement("dd", null, product.purchase_price_centavos === null ? "No registrado" : priceText(product.purchase_price_centavos)),
           createElement("dt", null, "Precio de venta"), createElement("dd", null, priceText(salePriceCentavos(product))), createElement("dt", null, "Precio mínimo de venta"), createElement("dd", null, priceText(product.minimum_sale_price_centavos))),
         createElement("dl", { "aria-label": "Atributos del producto", "data-ui-sales-product-detail-attributes": true }, product.attribute_values.flatMap((attribute) => [
           createElement("dt", { key: `attribute-label-${attribute.definition_id}` }, attribute.label),

@@ -757,9 +757,11 @@ pub struct InventoryBrowsePage {
     pub total_pages: i64,
 }
 
-/// Bounded Sales facts including operational location, without purchase cost, revision, or maintenance metadata.
+/// Bounded public Sales facts: current purchase cost is deliberately visible even with Catalog locked.
+/// This read-only exception does not expose revision, margin policy, or maintenance metadata.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct SaleBrowseProduct {
+    pub purchase_price_centavos: Option<i64>,
     pub product_id: i64,
     pub category_id: i64,
     pub sku: String,
@@ -985,7 +987,7 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
     let offset_index = limit_index + 1;
     let products_sql = format!(
         "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
-                p.list_price_centavos, p.minimum_unit_price_centavos, location.code
+                p.list_price_centavos, p.minimum_unit_price_centavos, location.code, p.purchase_price_centavos
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
@@ -1001,7 +1003,7 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
     let mut products = connection.prepare(&products_sql)?.query_map(rusqlite::params_from_iter(args), |row| Ok(SaleBrowseProduct {
         product_id: row.get(0)?, category_id: row.get(1)?, sku: row.get(2)?, name: row.get(3)?,
         category_name: row.get(4)?, available_quantity: row.get(5)?, sale_price_centavos: row.get(6)?,
-        minimum_sale_price_centavos: row.get(7)?, primary_location_code: row.get(8)?, attribute_values: Vec::new(),
+        minimum_sale_price_centavos: row.get(7)?, primary_location_code: row.get(8)?, purchase_price_centavos: row.get(9)?, attribute_values: Vec::new(),
     }))?.collect::<Result<Vec<_>>>()?;
     const MAX_SALES_ATTRIBUTES_PER_PRODUCT: i64 = 32;
     const MAX_SALES_ATTRIBUTE_LABEL_CHARS: i64 = 128;

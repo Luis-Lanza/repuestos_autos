@@ -1706,7 +1706,9 @@ mod sales_browse_contract_tests {
     fn sales_command_serializes_only_operational_facts_with_nullable_location() {
         use application::catalog::locations::{assign_product_location, create_product_location, save_location_schema, CreateProductLocationInput, SaveLocationSchemaInput};
         let mut connection = infrastructure::sqlite::open_seeded_catalog().unwrap();
+        connection.execute("UPDATE products SET purchase_price_centavos = 3200 WHERE id = 1", []).unwrap();
         let unassigned = serde_json::to_value(commands::catalog::browse_sale_products(&connection, request(20)).unwrap()).unwrap();
+        assert_eq!(unassigned["products"][0]["purchase_price_centavos"], 3200);
         assert!(unassigned["products"][0].as_object().unwrap().contains_key("primary_location_code"));
         assert_eq!(unassigned["products"][0]["primary_location_code"], serde_json::Value::Null);
         save_location_schema(&mut connection, SaveLocationSchemaInput { expected_revision: 0, segments: vec!["Zone".into()] }).unwrap();
@@ -1716,9 +1718,13 @@ mod sales_browse_contract_tests {
         let assigned = serde_json::to_value(commands::catalog::browse_sale_products(&connection, request(20)).unwrap()).unwrap();
         assert_eq!(assigned["products"][0]["primary_location_code"], "A1");
         let keys = assigned["products"][0].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>();
-        assert_eq!(keys, vec!["attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "sale_price_centavos", "sku"]);
+        assert_eq!(keys, vec!["attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "purchase_price_centavos", "sale_price_centavos", "sku"]);
         assert_eq!(assigned["products"][0]["available_quantity"], unassigned["products"][0]["available_quantity"]);
         assert_eq!(connection.total_changes(), changes_before);
+        connection.execute("UPDATE products SET purchase_price_centavos = NULL WHERE id = 1", []).unwrap();
+        let unknown = serde_json::to_value(commands::catalog::browse_sale_products(&connection, request(20)).unwrap()).unwrap();
+        assert!(unknown["products"][0].as_object().unwrap().contains_key("purchase_price_centavos"));
+        assert_eq!(unknown["products"][0]["purchase_price_centavos"], serde_json::Value::Null);
     }
 
     #[test]
@@ -2058,7 +2064,7 @@ mod command_surface_tests {
     }
 
     #[test]
-    fn sales_browse_and_category_filters_work_while_catalog_is_locked_without_sensitive_facts() {
+    fn sales_browse_and_category_filters_work_while_catalog_is_locked_with_approved_cost() {
         let (app, window) = test_window();
         app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(false);
         app.state::<AppState>().with_write(|connection| {
@@ -2072,11 +2078,24 @@ mod command_surface_tests {
         assert_eq!(response["products"][0]["category_id"], 1);
         assert_eq!(response["categories"][0]["category_id"], 1);
         assert_eq!(response["products"][0]["attribute_values"], serde_json::json!([{"definition_id":9001,"label":"Material","value":"Acero"}]));
-        assert!(!response.to_string().contains("7777"));
+        assert_eq!(response["products"][0]["purchase_price_centavos"], 7777);
+        let before = app.state::<AppState>().with_read(|connection| Ok(connection.total_changes())).unwrap();
+        app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(true);
+        let unlocked = get_ipc_response(&window, request_with("browse_sale_products_command", serde_json::json!({"query":"filtro","category_id":1,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(unlocked, response);
+        app.state::<application::catalog::access::CatalogAccessSession>().set_test_authorized(false);
+        assert_eq!(app.state::<AppState>().with_read(|connection| Ok(connection.total_changes())).unwrap(), before);
+        app.state::<AppState>().with_write(|connection| {
+            connection.execute("UPDATE products SET purchase_price_centavos = NULL WHERE id = 1", []).map_err(|_| "test_setup_failed")?;
+            Ok(())
+        }).unwrap();
+        let unknown = get_ipc_response(&window, request_with("browse_sale_products_command", serde_json::json!({"query":"filtro","category_id":1,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
+        assert!(unknown["products"][0].as_object().unwrap().contains_key("purchase_price_centavos"));
+        assert_eq!(unknown["products"][0]["purchase_price_centavos"], serde_json::Value::Null);
         assert!(!response.to_string().contains("Sensitive retired"));
         assert!(response["products"][0].as_object().unwrap().contains_key("primary_location_code"));
         assert_eq!(response["products"][0]["primary_location_code"], serde_json::Value::Null);
-        for forbidden in ["purchase_price_centavos", "primary_location_id", "active_product_count", "low_stock_threshold", "revision", "active"] {
+        for forbidden in ["primary_location_id", "active_product_count", "low_stock_threshold", "revision", "active", "profit_margin"] {
             assert!(!response.to_string().contains(forbidden), "unexpected sensitive field {forbidden}: {response}");
         }
         let listing = get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap();
@@ -2101,7 +2120,7 @@ mod command_surface_tests {
         }).unwrap();
         let located = get_ipc_response(&window, request_with("browse_sale_products_command", serde_json::json!({"query":"filtro","category_id":1,"stock_state":"all","activity":"active","page":1,"page_size":20}))).unwrap().deserialize::<serde_json::Value>().unwrap();
         assert_eq!(located["products"][0]["primary_location_code"], "A1-SHELF2");
-        for forbidden in ["purchase_price_centavos", "primary_location_id", "active_product_count", "low_stock_threshold", "revision", "active"] {
+        for forbidden in ["primary_location_id", "active_product_count", "low_stock_threshold", "revision", "active", "profit_margin"] {
             assert!(!located.to_string().contains(forbidden));
         }
         assert_eq!(get_ipc_response(&window, request("list_catalog_categories_command")).unwrap().deserialize::<serde_json::Value>().unwrap()["code"], "catalog_access_required");

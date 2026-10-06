@@ -178,6 +178,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
         createElement("span", { "data-ui-sales-minimum-price": true },
           createElement("span", { "aria-hidden": true }, `Mín.: ${formatBs(line.minimum_price_centavos)}`),
           createElement("span", { className: "sale-price-fact-accessible" }, `Precio mínimo de venta: ${formatBs(line.minimum_price_centavos)}`))),
+      createElement("span", { "data-ui-sales-purchase-price-reference": true }, `Precio de compra (referencia): ${line.product_snapshot.purchase_price_centavos === null ? "No registrado" : formatBs(line.product_snapshot.purchase_price_centavos)}`),
       createElement("span", { "data-ui-sales-stock-snapshot": true }, `Stock: ${line.product_snapshot.available_quantity}`),
       createElement("span", { "data-ui-sales-stock-snapshot-note": true }, "Dato de la búsqueda; la disponibilidad se valida al confirmar."),
       createElement("div", { "data-ui-sales-cart-actions": true },

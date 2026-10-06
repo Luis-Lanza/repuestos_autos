@@ -44,14 +44,14 @@ fn sales_browse_projection_contains_only_active_filter_and_sale_facts() {
     assert_eq!(page.products.len(), 1);
     let value = serde_json::to_value(&page.products[0]).unwrap();
     assert_eq!(value.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), [
-        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "sale_price_centavos", "sku",
+        "attribute_values", "available_quantity", "category_id", "category_name", "minimum_sale_price_centavos", "name", "primary_location_code", "product_id", "purchase_price_centavos", "sale_price_centavos", "sku",
     ]);
     assert_eq!(value["attribute_values"], serde_json::json!([
         { "definition_id": 9001, "label": "Material", "value": "Acero" }
     ]));
     assert_eq!(value["minimum_sale_price_centavos"], 2_500);
     assert!(!value.to_string().contains("Hidden"));
-    assert!(!value.to_string().contains("7777"));
+    assert_eq!(value["purchase_price_centavos"], 7777);
     assert!(!value.to_string().contains("revision"));
     assert_eq!(value["primary_location_code"], serde_json::Value::Null);
     assert!(!value.to_string().contains("active"));

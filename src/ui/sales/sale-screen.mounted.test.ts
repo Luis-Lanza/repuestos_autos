@@ -40,7 +40,7 @@ const mockNativeIPC: typeof registerNativeIPC = (handler) => {
     if (!value || typeof value !== "object" || !Array.isArray((value as { products?: unknown }).products) || !Array.isArray((value as { categories?: unknown }).categories)) return value;
     const page = value as { products: Array<Record<string, unknown>>; categories: Array<Record<string, unknown>> };
     recentSalesProducts = page.products;
-    return { ...page, products: page.products.map(({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, primary_location_code, attribute_values }) => ({ product_id, category_id, sku, name, category_name, available_quantity, sale_price_centavos, minimum_sale_price_centavos, primary_location_code: primary_location_code ?? null, attribute_values: attribute_values ?? [] })), categories: page.categories.map(({ category_id, name }) => ({ category_id, name })) };
+    return { ...page, products: page.products.map(({ product_id, category_id, sku, name, category_name, available_quantity, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, primary_location_code, attribute_values }) => ({ product_id, category_id, sku, name, category_name, available_quantity, purchase_price_centavos, sale_price_centavos, minimum_sale_price_centavos, primary_location_code: primary_location_code ?? null, attribute_values: attribute_values ?? [] })), categories: page.categories.map(({ category_id, name }) => ({ category_id, name })) };
   };
   return Promise.resolve(result).then(project);
   });
@@ -188,7 +188,7 @@ test("Sales and checkout consume canonical sale price without changing submitted
   assert.equal(within(line).getByText("Venta: Bs 90,00").textContent, "Venta: Bs 90,00");
   assert.equal(within(line).queryByText(/Compra:/), null);
   assert.equal(within(line).getByText("Precio de venta: Bs 90,00").className, "sale-price-fact-accessible");
-  assert.equal(within(line).queryByText(/Precio de compra/), null);
+  assert.ok(within(line).getByText("Precio de compra (referencia): Bs 45,00"));
   assert.equal((within(line).getByRole("textbox", { name: "Precio de venta (Bs)" }) as HTMLInputElement).value, "90,00");
   await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
@@ -249,7 +249,8 @@ test("Sales product details show operational location while the cart remains unc
   const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
   assert.ok(within(detail).getByText("A1-SHELF2"));
   assert.ok(within(detail).getByText("Ubicación principal"));
-  assert.equal(within(detail).queryByText("Precio de compra"), null);
+  assert.ok(within(detail).getByText("Precio de compra"));
+  assert.ok(within(detail).getByText("Bs 32,00"));
   await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   await user().click(within(catalog).getByRole("button", { name: "Agregar" }));
   const summary = screen.getByRole("region", { name: "Resumen de venta" });
@@ -389,7 +390,8 @@ test("reproduces locked-Catalog Sales initialization, search, and category filte
   const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
   assert.ok(within(detail).getByText("Ubicación principal"));
   assert.ok(within(detail).getByText("A1-SHELF2"));
-  assert.doesNotMatch(detail.textContent ?? "", /Precio de compra|Bs 32,00/);
+  assert.ok(within(detail).getByText("Precio de compra"));
+  assert.ok(within(detail).getByText("Bs 32,00"));
   assert.equal(calls.length, callsBeforeDetails, "location details require no Catalog request");
 });
 
@@ -570,7 +572,7 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     const minimumPrice = `Bs ${product.minimum_sale_price_centavos === 8550 ? "85,50" : "125,50"}`;
     assert.equal(row.querySelector("[data-ui-sales-list-price] > [aria-hidden='true']")?.textContent, `Venta: ${salePrice}`);
     assert.equal(row.querySelector("[data-ui-sales-minimum-price] > [aria-hidden='true']")?.textContent, `Mín.: ${minimumPrice}`);
-    assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]"), null);
+    assert.equal(row.querySelector("[data-ui-sales-purchase-price-reference]")?.textContent, `Precio de compra (referencia): ${product.purchase_price_centavos === null ? "No registrado" : "Bs 32,00"}`);
     for (const fullFact of [
       `Precio de venta: ${salePrice}`,
       `Precio mínimo de venta: ${minimumPrice}`,
@@ -586,6 +588,12 @@ test("exposes Sales-owned checkout cards and settlement in stable logical order"
     );
     assert.equal(row.querySelector("[data-ui-sale-price-facts]")?.querySelectorAll(".sale-price-fact-accessible").length, 2);
     assert.equal(row.querySelectorAll("[data-ui-sale-price-facts] > [data-ui-sales-list-price], [data-ui-sale-price-facts] > [data-ui-sales-minimum-price]").length, 2);
+    await u.click(within(row).getByRole("button", { name: "Ver detalles" }));
+    const detail = screen.getByRole("dialog", { name: product.name });
+    assert.ok(within(detail).getByText("Precio de compra"));
+    assert.ok(within(detail).getByText(product.purchase_price_centavos === null ? "No registrado" : "Bs 32,00"));
+    assert.equal(within(detail).queryByRole("textbox"), null);
+    await u.click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
     assert.equal(within(row).getByRole("button", { name: `Quitar ${product.name}` }).getAttribute("aria-label"), `Quitar ${product.name}`);
     assert.ok(within(row).getByRole("spinbutton", { name: `Cantidad de ${product.name}` }));
     assert.ok(within(row).getByRole("textbox", { name: "Precio de venta (Bs)" }));
@@ -613,7 +621,8 @@ test("checkout details show the unassigned location fallback without changing th
   const detail = screen.getByRole("dialog", { name: "Filtro aceite" });
   assert.ok(within(detail).getByText("Ubicación principal"));
   assert.ok(within(detail).getByText("Sin ubicación asignada"));
-  assert.equal(within(detail).queryByText("Precio de compra"), null);
+  assert.ok(within(detail).getByText("Precio de compra"));
+  assert.ok(within(detail).getByText("Bs 32,00"));
   await u.click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   assert.equal(screen.getByRole("dialog", { name: "Revisar y cobrar" }), checkout);
 });
@@ -640,7 +649,7 @@ test("opens the full browse snapshot detail above checkout and hands focus and d
   for (const fact of ["SKU", "FIL-1", "Categoría", "Filtros", "Stock", "Disponible: 8", "Precio de venta", "Precio mínimo de venta"]) within(detail).getByText(fact);
   assert.ok(within(detail).getByText("Ubicación principal"));
   assert.ok(within(detail).getByText("A1-SHELF2"));
-  for (const forbidden of ["Precio de compra", "Bs 32,00"]) assert.equal(within(detail).queryByText(forbidden), null);
+  for (const fact of ["Precio de compra", "Bs 32,00"]) assert.ok(within(detail).getByText(fact));
   assert.ok(within(detail).getByText("Material"));
   assert.ok(within(detail).getByText("Acero"));
   assert.equal(within(detail).getAllByText("Bs 85,50").length, 2);

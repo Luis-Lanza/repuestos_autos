@@ -41,6 +41,8 @@ const brakePad: SalesBrowseProduct = {
   name: "Brake Pad",
   category_name: "Brakes",
   available_quantity: 4,
+  purchase_price_centavos: 1_800,
+  primary_location_code: null,
   catalog_unit_price_centavos: 2_500,
   sale_price_centavos: 2_500,
   list_price_centavos: 2_500,
