@@ -37,7 +37,6 @@ pub trait CatalogMetadataRepository {
         transaction: &Transaction<'_>,
         id: i64,
         sku: &str,
-        name: &str,
     ) -> Result<Option<ProductMetadata>>;
     fn edit_category(
         &self,
@@ -80,7 +79,7 @@ pub trait CatalogMetadataRepository {
 pub struct ProductMetadata {
     pub category_revision: i64,
     pub definitions: Vec<AttributeDefinition>,
-    pub duplicate_normalized_identity: bool,
+    pub duplicate_normalized_sku: bool,
 }
 
 pub trait CreateProductRepository {

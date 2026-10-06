@@ -9,6 +9,13 @@ import { createCatalogMaintenanceCommands } from "../../commands/catalog.ts";
 
 const archived = { entity_id: 1, target: "product" as const, label: "Filter", activity: "archived" as const, revision: 2 };
 
+test("SKU conflicts give a specific correction without replacing generic validation", () => {
+  const state = createCatalogMaintenanceFlow(initialCatalogMaintenanceState, { type: "edit_failed", code: "duplicate_sku" });
+  assert.equal(state.feedback, "El SKU ya existe. Usá otro SKU.");
+  assert.equal(state.recovery_required, false);
+  assert.equal(createCatalogMaintenanceFlow(state, { type: "edit_failed", code: "validation_error" }).feedback, "Revisá los valores del catálogo e intentá nuevamente.");
+});
+
 test("filters category management rows by category name without changing authoritative metadata", () => {
   const categories = [
     { entity_id: 1, target: "category" as const, label: "Filtros", activity: "active" as const, revision: 2, active_product_count: 8 },

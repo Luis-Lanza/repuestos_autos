@@ -702,6 +702,7 @@ pub fn maintain_catalog(
                 active_product_count: None,
             }),
             Err(error) => CatalogMaintenanceResponse::Error(match error {
+                catalog::MaintainCatalogError::DuplicateSku => duplicate_sku_error(),
                 catalog::MaintainCatalogError::InvalidPricing => validation_error(),
                 catalog::MaintainCatalogError::LifecycleBlocked => CatalogMaintenanceError {
                     code: "lifecycle_blocked",
@@ -931,8 +932,15 @@ pub fn map_command_state_error(error: &str) -> CatalogMaintenanceError {
         persistence_error()
     }
 }
+fn duplicate_sku_error() -> CatalogMaintenanceError {
+    CatalogMaintenanceError {
+        code: "duplicate_sku",
+        message: "The SKU already exists. Use another SKU.",
+    }
+}
 fn map_maintenance_error(error: catalog::MaintainCatalogError) -> CatalogMaintenanceError {
     match error {
+        catalog::MaintainCatalogError::DuplicateSku => duplicate_sku_error(),
         catalog::MaintainCatalogError::InvalidPricing => validation_error(),
         catalog::MaintainCatalogError::LifecycleBlocked => CatalogMaintenanceError {
             code: "lifecycle_blocked",

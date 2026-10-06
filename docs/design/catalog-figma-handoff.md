@@ -50,7 +50,7 @@ The reviewed frontend decoder requires positive safe integer product/category ID
 
 The existing product editor presents name, SKU, list price, minimum sale price, and category-defined attributes. The current form validates nonempty name/SKU, positive prices, minimum sale price not above list price, required attributes, and numeric/option attribute types. Preserve these constraints; do not invent free-form attributes or turn required/type-constrained values into optional decorative metadata.
 
-The domain/application/repository paths inspected support normalized uniqueness checks for product SKU/name and category name, typed attribute validation, lifecycle checks, stale revision handling, and catalog refresh/recovery. Product reactivation requires an active category and valid attribute values. Preserve category-defined required/type-constrained attributes and the active-category prerequisite. Keep exact error wording and any unobserved timing unspecified; do not imply inline validation or focus behavior beyond what is evidenced in Section 4.
+The domain/application/repository paths inspected support global normalized uniqueness for product SKU and uniqueness for category name; product names remain required/nonempty descriptive fields and may repeat, typed attribute validation, lifecycle checks, stale revision handling, and catalog refresh/recovery. Product reactivation requires an active category and valid attribute values. Preserve category-defined required/type-constrained attributes and the active-category prerequisite. Keep exact error wording and any unobserved timing unspecified; do not imply inline validation or focus behavior beyond what is evidenced in Section 4.
 
 ### Categories subview
 

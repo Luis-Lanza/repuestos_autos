@@ -64,6 +64,39 @@ fn definition_ids(connection: &rusqlite::Connection, category_id: i64) -> Vec<i6
 }
 
 #[test]
+fn same_name_products_keep_distinct_skus_attributes_and_search_identity() {
+    let mut connection = open_seeded_catalog().unwrap();
+    let category = create_configured_category(&mut connection);
+    let definitions = definition_ids(&connection, category);
+    connection.execute("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (99, ?1, 'Brand', 'text', 1)", [category]).unwrap();
+    let first = create_product(&mut connection, valid_product(category, &[(definitions[0], "1050"), (definitions[1], "Rubber"), (99, "Denso")])).unwrap();
+    let mut second = valid_product(category, &[(definitions[0], "1050"), (definitions[1], "Polyurethane"), (99, "NGK")]);
+    second.sku = "BEL-102".into();
+    let second = create_product(&mut connection, second).unwrap();
+    assert_ne!(first.product_id, second.product_id);
+    let results = repuestos_autos::catalog::search_active_products(&connection, "accessory").unwrap();
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().any(|p| p.product_id == first.product_id && p.sku == "BEL-101"));
+    assert!(results.iter().any(|p| p.product_id == second.product_id && p.sku == "BEL-102"));
+    for (id, material) in [(first.product_id, "Rubber"), (second.product_id, "Polyurethane")] {
+        assert_eq!(connection.query_row("SELECT option_value FROM product_attribute_values WHERE product_id = ?1 AND definition_id = ?2", rusqlite::params![id, definitions[1]], |row| row.get::<_, String>(0)).unwrap(), material);
+    }
+    let mut empty = valid_product(category, &[(definitions[0], "1050"), (99, "Denso")]);
+    empty.sku = "BEL-103".into();
+    empty.name = "   ".into();
+    assert!(create_product(&mut connection, empty).is_err());
+}
+
+#[test]
+fn creation_reports_duplicate_sku_for_legacy_padding_across_archived_categories() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute("UPDATE products SET sku = '  fLt-001  ', active = 0 WHERE id = 1", []).unwrap();
+    let mut input = valid_product(2, &[]);
+    input.sku = " FLT-001 ".into();
+    assert_eq!(create_product(&mut connection, input).unwrap_err(), CreateProductError::DuplicateSku);
+}
+
+#[test]
 fn onboarding_hides_retired_fields_while_catalog_listing_preserves_history() {
     let mut connection = open_seeded_catalog().unwrap();
     let category_id = create_configured_category(&mut connection);

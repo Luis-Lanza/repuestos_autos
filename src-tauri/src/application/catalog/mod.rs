@@ -53,6 +53,7 @@ pub enum MaintainCatalogError {
     MissingCatalogRecord,
     StaleCategorySchema,
     InvalidPricing,
+    DuplicateSku,
     LifecycleBlocked,
     StaleCatalogRecord,
     PersistenceFailure,
@@ -205,7 +206,6 @@ where
                         &transaction,
                         id,
                         sku.trim(),
-                        name.trim(),
                     )
                     .map_err(|_| MaintainCatalogError::PersistenceFailure)?
                     .ok_or(MaintainCatalogError::MissingCatalogRecord)?;
@@ -231,8 +231,8 @@ where
                     &values,
                 )
                 .map_err(|_| MaintainCatalogError::InvalidPricing)?;
-                if metadata.duplicate_normalized_identity {
-                    return Err(MaintainCatalogError::MissingCatalogRecord);
+                if metadata.duplicate_normalized_sku {
+                    return Err(MaintainCatalogError::DuplicateSku);
                 }
                 self.repository.edit_product(
                     &transaction,

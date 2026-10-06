@@ -49,6 +49,26 @@ const brakePad: SalesBrowseProduct = {
   minimum_sale_price_centavos: 2_500,
 };
 
+test("same-name products remain separate cart intents and confirmation identities", () => {
+  const other = { ...brakePad, product_id: 2, sku: "BP-200", sale_price_centavos: 3000 };
+  let state = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
+  state = createSaleFlow(state, { type: "add_product", product: other });
+  state = createSaleFlow(state, { type: "line_quantity_changed", product_id: 2, value: "2" });
+  assert.deepEqual(state.lines.map(({ product_id, sku, product_name, quantity, captured_unit_price_centavos }) => ({ product_id, sku, product_name, quantity, captured_unit_price_centavos })), [
+    { product_id: 1, sku: "BP-100", product_name: "Brake Pad", quantity: 1, captured_unit_price_centavos: 2500 },
+    { product_id: 2, sku: "BP-200", product_name: "Brake Pad", quantity: 2, captured_unit_price_centavos: 3000 },
+  ]);
+  assert.equal(draftTotalCentavos(state.lines), 8500);
+  state = createSaleFlow(state, { type: "confirmation_started", request_id: "same-names" });
+  state = createSaleFlow(state, { type: "confirmation_failed", message: "Retry" });
+  const retry = createSaleFlow(state, { type: "confirmation_started", request_id: "ignored-retry" });
+  assert.equal(retry.request_id, "same-names");
+  assert.deepEqual(retry.lines, state.lines);
+  const removed = createSaleFlow(state, { type: "remove_product", product_id: 1 });
+  assert.equal(removed.request_id, null);
+  assert.deepEqual(removed.lines.map((line) => [line.product_id, line.sku, line.quantity]), [[2, "BP-200", 2]]);
+});
+
 test("derives checked draft prices and totals while preserving captured facts", () => {
   const captured = createSaleFlow(initialSaleState, { type: "add_product", product: brakePad });
   const quantityTwo = createSaleFlow(captured, {

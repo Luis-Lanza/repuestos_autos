@@ -112,6 +112,17 @@ test("rejects malformed search arrays, unsafe numbers, and native rejection text
   await assert.rejects(rejected("filter"), (error: unknown) => error instanceof Error && error.message === "The product search could not be completed." && !error.message.includes("SQL"));
 });
 
+test("decodes only the approved SKU conflict and hides native details", async () => {
+  const input = { target: CATALOG_TARGET.CATEGORY, entity_id: 1, expected_revision: 0, name: "Filters" };
+  const result = await createCatalogMaintenanceCommands(async () => ({ kind: "error", code: "duplicate_sku", message: "SQL private" })).edit(input);
+  assert.deepEqual(result, { kind: "error", code: "duplicate_sku", message: "The SKU already exists. Use another SKU." });
+  for (const response of [{ kind: "error", code: "duplicate_name", message: "private" }, { kind: "error", code: "duplicate_sku", message: "private", sql: "private" }, { kind: "error", code: "duplicate_sku", message: null }]) {
+    const rejected = await createCatalogMaintenanceCommands(async () => response).edit(input);
+    assert.equal(rejected.kind, "error");
+    if (rejected.kind === "error") assert.equal(rejected.code, "persistence_failure");
+  }
+});
+
 test("allowlists maintenance payloads and preserves only stable opaque outcomes", async () => {
   const calls: unknown[] = [];
   const commands = createCatalogMaintenanceCommands(async (command, payload) => {

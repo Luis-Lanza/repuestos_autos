@@ -73,7 +73,6 @@ impl CatalogMetadataRepository for MetadataRepository {
         _: &rusqlite::Transaction<'_>,
         _: i64,
         _: &str,
-        _: &str,
     ) -> rusqlite::Result<Option<ProductMetadata>> {
         Ok(Some(ProductMetadata {
             category_revision: 0,
@@ -83,7 +82,7 @@ impl CatalogMetadataRepository for MetadataRepository {
                 required: true,
                 options: vec![],
             }],
-            duplicate_normalized_identity: self.duplicate,
+            duplicate_normalized_sku: self.duplicate,
         }))
     }
     fn edit_category(
@@ -176,14 +175,14 @@ fn metadata_edits_require_the_current_revision_and_normalized_unique_values() {
 }
 
 #[test]
-fn product_patches_advance_or_reject_normalized_names_and_guarded_stale_writes() {
+fn product_patches_reject_normalized_sku_conflicts_and_guarded_stale_writes() {
     let cases = [
         (false, 0, false, Ok(1)),
         (
             true,
             0,
             false,
-            Err(MaintainCatalogError::MissingCatalogRecord),
+            Err(MaintainCatalogError::DuplicateSku),
         ),
         (
             false,

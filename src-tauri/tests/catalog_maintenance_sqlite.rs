@@ -52,6 +52,16 @@ fn count(connection: &rusqlite::Connection, table: &str) -> i64 {
 }
 
 #[test]
+fn product_names_may_repeat_on_edit() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch("INSERT INTO products (id, sku, name, category_id, list_price_centavos, minimum_unit_price_centavos, active) VALUES (91, 'OTHER', 'Shared name', 2, 2500, 2500, 1);").unwrap();
+    let result = EditCatalogUseCase::new(&mut connection, SqliteCatalogRepository)
+        .execute(EditCatalogInput::product(1, 0, "FLT-001", "Shared name", 2000, 2500, 2500, 0, vec![]));
+    assert_eq!(result.unwrap().revision, 1);
+    assert_eq!(count(&connection, "catalog_audit"), 1);
+}
+
+#[test]
 fn category_metadata_reports_authoritative_active_product_counts() {
     let connection = open_seeded_catalog().unwrap();
     let categories = repuestos_autos::application::catalog::list_category_metadata(

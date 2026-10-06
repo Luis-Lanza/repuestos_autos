@@ -10,6 +10,30 @@ use repuestos_autos::commands::catalog::{
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
 #[test]
+fn sku_conflicts_are_global_typed_and_leave_metadata_search_and_audit_unchanged() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch("INSERT INTO products (id, sku, name, category_id, active, list_price_centavos, minimum_unit_price_centavos) VALUES (91, '  OtHeR  ', 'Shared name', 2, 0, 2500, 2500);
+        INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (91, 1, 'Brand', 'text', 1);
+        INSERT INTO product_attribute_values (product_id, definition_id, text_value, searchable_value) VALUES (1, 91, 'Original', 'Original');").unwrap();
+    let request = |sku: &str, name: &str, revision| serde_json::from_value::<EditCatalogRequest>(serde_json::json!({
+        "target": "product", "entity_id": 1, "expected_revision": revision, "expected_category_revision": 0,
+        "sku": sku, "name": name, "purchase_price_centavos": 2000, "sale_price_centavos": 2500,
+        "minimum_sale_price_centavos": 2500, "attribute_values": [{"definition_id":91,"value":"Changed"}]
+    })).unwrap();
+    let before: String = connection.query_row("SELECT content FROM catalog_product_search WHERE rowid = 1", [], |r| r.get(0)).unwrap();
+    for sku in ["OTHER", " other ", "OtHeR"] {
+        let response = edit_catalog(&mut connection, request(sku, "Shared name", 0)).unwrap();
+        assert_eq!(serde_json::to_value(response).unwrap()["code"], "duplicate_sku");
+    }
+    assert_eq!(serde_json::to_value(edit_catalog(&mut connection, request("FLT-001", "   ", 0)).unwrap()).unwrap()["code"], "validation_error");
+    assert_eq!(serde_json::to_value(edit_catalog(&mut connection, request("OTHER", "Shared name", 1)).unwrap()).unwrap()["code"], "stale_catalog_record");
+    assert_eq!(connection.query_row("SELECT sku, revision FROM products WHERE id = 1", [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap(), ("FLT-001".into(), 0));
+    assert_eq!(connection.query_row("SELECT text_value FROM product_attribute_values WHERE product_id = 1 AND definition_id = 91", [], |r| r.get::<_, String>(0)).unwrap(), "Original");
+    assert_eq!(connection.query_row("SELECT content FROM catalog_product_search WHERE rowid = 1", [], |r| r.get::<_, String>(0)).unwrap(), before);
+    assert_eq!(connection.query_row("SELECT COUNT(*) FROM catalog_audit", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+}
+
+#[test]
 fn sales_original_returns_unchanged_large_original_without_catalog_metadata() {
     use repuestos_autos::commands::catalog::{sales_product_image_original, SalesProductOriginalRequest};
     let mut connection = open_seeded_catalog().unwrap();

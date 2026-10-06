@@ -195,7 +195,7 @@ impl CreateProductRepository for SqliteCatalogRepository {
     fn sku_exists(&self, transaction: &Transaction<'_>, sku: &str) -> Result<bool> {
         transaction
             .query_row(
-                "SELECT 1 FROM products WHERE lower(sku) = lower(?1)",
+                "SELECT 1 FROM products WHERE lower(trim(sku)) = lower(trim(?1))",
                 [sku],
                 |_| Ok(()),
             )
@@ -541,7 +541,6 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         transaction: &Transaction<'_>,
         id: i64,
         sku: &str,
-        name: &str,
     ) -> Result<Option<ProductMetadata>> {
         let Some((category_id, category_revision)) = transaction
             .query_row(
@@ -555,11 +554,11 @@ impl CatalogMetadataRepository for SqliteCatalogRepository {
         };
         let definitions =
             CreateProductRepository::attribute_definitions(self, transaction, category_id)?;
-        let duplicate_normalized_identity = transaction.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE id <> ?1 AND (lower(trim(sku)) = lower(trim(?2)) OR lower(trim(name)) = lower(trim(?3))))", params![id, sku, name], |row| row.get(0))?;
+        let duplicate_normalized_sku = transaction.query_row("SELECT EXISTS(SELECT 1 FROM products WHERE id <> ?1 AND lower(trim(sku)) = lower(trim(?2)))", params![id, sku], |row| row.get(0))?;
         Ok(Some(ProductMetadata {
             category_revision,
             definitions,
-            duplicate_normalized_identity,
+            duplicate_normalized_sku,
         }))
     }
 
