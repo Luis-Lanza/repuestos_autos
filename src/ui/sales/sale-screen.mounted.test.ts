@@ -627,6 +627,7 @@ test("retains checkout thumbnails across browse pages without changing the confi
       const request = (payload as { request: { product_id: number; expected_revision: number } }).request;
       return { kind: "success", product_id: request.product_id, revision: request.expected_revision, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
     }
+    if (command === "sales_product_image_original_command") return { kind: "success", product_id: 1, mime_type: "image/png", encoding: "base64", bytes: "iVBORw0KGgo=" };
     confirmationEnvelope = payload;
     return success;
   });
@@ -649,14 +650,60 @@ test("retains checkout thumbnails across browse pages without changing the confi
   assert.equal(detailImage.getAttribute("src"), "data:image/jpeg;base64,/9j/2Q==");
   await user().click(within(detail).getByRole("button", { name: "Ampliar imagen del producto Filtro aceite" }));
   const viewer = screen.getByRole("dialog", { name: "Imagen de Filtro aceite" });
-  assert.equal((within(viewer).getByRole("img", { name: "Filtro aceite" }) as HTMLImageElement).getAttribute("src"), detailImage.getAttribute("src"));
-  assert.equal(calls.length, nativeCallsBeforeDetails, "opening checkout details must not issue another native request");
+  assert.equal((await within(viewer).findByRole("img", { name: "Filtro aceite" })).getAttribute("src"), "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(calls.length, nativeCallsBeforeDetails + 1, "only opening zoom loads an original");
+  assert.equal(calls.filter((call) => call.command === "sales_product_image_original_command").length, 1);
   assert.equal(calls.filter((call) => call.command === "catalog_product_image_thumbnail_command").length, imageRequestsBeforeDetails, "checkout details must reuse the cached image");
   await user().keyboard("{Escape}");
   await user().click(within(detail).getByRole("button", { name: "Cerrar detalle del producto" }));
   await user().click(within(checkout).getByRole("button", { name: "Confirmar venta" }));
   await screen.findByRole("heading", { name: "Venta confirmada" });
   assert.deepEqual(confirmationEnvelope, { request: { request_id: UUID, lines: [{ product_id: 1, quantity: 1, captured_unit_price_centavos: 8550, final_unit_price_centavos: 8550 }], payment: { amount_tendered_centavos: null, qr_applied_centavos: null } } });
+});
+
+test("browse zoom loads on demand and ignores closed generations, failures and unmount", async () => {
+  const pending = Array.from({ length: 5 }, () => deferred<unknown>());
+  let originals = 0;
+  mockNativeIPC((command) => {
+    if (command === "browse_products_command") return browse([products[0]]);
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "success", product_id: 1, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+    if (command === "sales_product_image_original_command") return pending[originals++].promise;
+    throw new Error("unexpected command");
+  });
+  const view = render(createElement(SaleScreen));
+  await screen.findByRole("img", { name: "Filtro aceite" });
+  fireEvent.click(screen.getByRole("button", { name: "Ver detalles" }));
+  assert.equal(originals, 0);
+  const zoom = screen.getByRole("button", { name: "Ampliar imagen del producto Filtro aceite" });
+  fireEvent.click(zoom);
+  assert.equal(originals, 1);
+  const loadingViewer = screen.getByRole("dialog", { name: "Imagen de Filtro aceite" });
+  assert.ok(within(loadingViewer).getByRole("status").textContent?.includes("Cargando imagen"));
+  assert.equal(within(loadingViewer).queryByRole("img", { name: "Filtro aceite" }), null);
+  fireEvent.keyDown(document, { key: "Tab" });
+  assert.equal(document.activeElement, screen.getByRole("button", { name: "Cerrar imagen ampliada" }));
+  fireEvent.keyDown(document, { key: "Escape" });
+  assert.equal(document.activeElement, zoom);
+  fireEvent.click(zoom);
+  await act(async () => pending[0].resolve({ kind: "success", product_id: 1, mime_type: "image/png", encoding: "base64", bytes: "iVBORw0KGgo=" }));
+  assert.equal(within(screen.getByRole("dialog", { name: "Imagen de Filtro aceite" })).queryByRole("img", { name: "Filtro aceite" }), null);
+  await act(async () => pending[1].resolve({ kind: "unavailable" }));
+  assert.ok(screen.getByText("La imagen del producto no está disponible."));
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(zoom);
+  await act(async () => pending[2].reject(new Error("SQL /private")));
+  assert.equal(screen.getByRole("alert").textContent, "No se pudo cargar la imagen del producto.");
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(zoom);
+  await act(async () => pending[3].resolve({ kind: "success", product_id: 1, mime_type: "image/png", encoding: "base64", bytes: "iVBORw0KGgo=" }));
+  const viewer = screen.getByRole("dialog", { name: "Imagen de Filtro aceite" });
+  fireEvent.error(within(viewer).getByRole("img", { name: "Filtro aceite" }));
+  assert.ok(within(viewer).getByRole("alert"));
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(zoom);
+  view.unmount();
+  await act(async () => pending[4].reject(new Error("late rejection")));
+  assert.equal(screen.queryByRole("dialog"), null);
 });
 
 test("preserves Sales checkout dismissal, focus return, and backdrop no-op", async () => {

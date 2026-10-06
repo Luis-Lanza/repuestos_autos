@@ -32,6 +32,8 @@ export interface ProductImageInput { product_id: number; expected_revision: numb
 export type ProductImageMutationResponse = { kind: "success"; product_id: number; revision: number } | { kind: "cancelled" } | CatalogMaintenanceError;
 export type ProductImageThumbnailResponse = { kind: "success"; product_id: number; revision: number; src: string } | CatalogMaintenanceError;
 export type SalesProductThumbnailResponse = { kind: "success"; product_id: number; src: string } | { kind: "unavailable" } | { kind: "error"; code: "persistence_failure"; message: string };
+export type SalesProductOriginalResponse = SalesProductThumbnailResponse;
+export type SalesProductOriginalLoader = (product_id: number) => Promise<SalesProductOriginalResponse>;
 export interface CategoryEditInput { target: typeof CATALOG_TARGET.CATEGORY; entity_id: number; expected_revision: number; name: string; }
 export interface ProductEditInput { target: typeof CATALOG_TARGET.PRODUCT; entity_id: number; expected_revision: number; expected_category_revision: number; sku: string; name: string; purchase_price_centavos: number; sale_price_centavos: number; minimum_sale_price_centavos: number; low_stock_threshold?: number; attribute_values: CatalogAttributeValue[]; }
 export interface CategorySchemaFieldInput { definition_id: number | null; label: string; field_type: CatalogAttributeDefinition["field_type"]; required: boolean; options: string[]; }
@@ -192,12 +194,30 @@ const salesThumbnail = (value: unknown): SalesProductThumbnailResponse => {
   if (responseRecord(value) && value.kind === "error" && hasOnlyKeys(value, ["kind", "code", "message"]) && value.code === "persistence_failure" && typeof value.message === "string") return { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." };
   return { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." };
 };
+const salesOriginal = (value: unknown, productId: number): SalesProductOriginalResponse => {
+  const invalid: SalesProductOriginalResponse = { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." };
+  if (responseRecord(value) && value.kind === "unavailable" && hasOnlyKeys(value, ["kind"])) return { kind: "unavailable" };
+  if (!responseRecord(value) || value.kind !== "success" || !hasOnlyKeys(value, ["kind", "product_id", "mime_type", "encoding", "bytes"]) || !positiveSafeInteger(value.product_id) || value.product_id !== productId || value.encoding !== "base64" || typeof value.bytes !== "string" || !value.bytes.length || value.bytes.length > 4 * Math.ceil(PRODUCT_IMAGE_MAX_BYTES / 3) || !canonicalBase64(value.bytes)) return invalid;
+  const length = value.bytes.length / 4 * 3 - (value.bytes.endsWith("==") ? 2 : value.bytes.endsWith("=") ? 1 : 0);
+  if (length > PRODUCT_IMAGE_MAX_BYTES) return invalid;
+  // Decode only the signature prefix; the complete bounded payload stays encoded.
+  const prefix = atob(value.bytes.slice(0, 16));
+  const matches = value.mime_type === "image/jpeg" ? prefix.startsWith("\xff\xd8\xff")
+    : value.mime_type === "image/png" ? prefix.startsWith("\x89PNG\r\n\x1a\n")
+    : value.mime_type === "image/webp" && prefix.startsWith("RIFF") && prefix.slice(8, 12) === "WEBP";
+  return matches ? { kind: "success", product_id: value.product_id, src: `data:${value.mime_type};base64,${value.bytes}` } : invalid;
+};
 export function createCatalogProductImageCommands(command: Invoke) {
   const updateFailure = "The product image could not be updated.";
   return {
     choose: (input: ProductImageInput): Promise<ProductImageMutationResponse> => command("choose_product_image_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision } }).then((value) => imageMutation(value, updateFailure)).catch(() => failure(updateFailure)),
     remove: (input: ProductImageInput): Promise<ProductImageMutationResponse> => command("remove_product_image_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision } }).then((value) => imageMutation(value, updateFailure)).catch(() => failure(updateFailure)),
     thumbnail: (input: ProductImageInput): Promise<ProductImageThumbnailResponse> => command("catalog_product_image_thumbnail_command", { request: { product_id: input.product_id, expected_revision: input.expected_revision } }).then(imageThumbnail).catch(() => failure("The product image could not be loaded.")),
+    salesOriginal: async (product_id: number): Promise<SalesProductOriginalResponse> => {
+      if (!positiveSafeInteger(product_id)) return { kind: "unavailable" };
+      try { return salesOriginal(await command("sales_product_image_original_command", { request: { product_id } }), product_id); }
+      catch { return { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." }; }
+    },
     salesThumbnail: (product_id: number): Promise<SalesProductThumbnailResponse> => command("sales_product_image_thumbnail_command", { request: { product_id } }).then(salesThumbnail).catch(() => ({ kind: "error", code: "persistence_failure", message: "The product image could not be loaded." })),
   };
 }

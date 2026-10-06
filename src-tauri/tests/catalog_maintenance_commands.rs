@@ -10,6 +10,52 @@ use repuestos_autos::commands::catalog::{
 use repuestos_autos::infrastructure::sqlite::open_seeded_catalog;
 
 #[test]
+fn sales_original_returns_unchanged_large_original_without_catalog_metadata() {
+    use repuestos_autos::commands::catalog::{sales_product_image_original, SalesProductOriginalRequest};
+    let mut connection = open_seeded_catalog().unwrap();
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(640, 480, image::Rgb([20, 40, 60])))
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    let original = ProductImage::new("image/png", bytes.clone()).unwrap();
+    replace_product_image(&mut connection, 1, 0, &original).unwrap();
+    let response = serde_json::to_value(sales_product_image_original(&connection, SalesProductOriginalRequest { product_id: 1 })).unwrap();
+    assert_eq!(response["mime_type"], "image/png");
+    assert_eq!(response["encoding"], "base64");
+    assert_eq!(response["product_id"], 1);
+    assert_eq!(response.as_object().unwrap().len(), 5);
+    // Decode transport bytes independently to protect byte identity, not just the MIME.
+    let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut decoded = Vec::new();
+    for chunk in response["bytes"].as_str().unwrap().as_bytes().chunks(4) {
+        let digits: Vec<u32> = chunk.iter().map(|byte| alphabet.find(*byte as char).unwrap_or(0) as u32).collect();
+        let value = digits[0] << 18 | digits[1] << 12 | digits[2] << 6 | digits[3];
+        decoded.push((value >> 16) as u8);
+        if chunk[2] != b'=' { decoded.push((value >> 8) as u8); }
+        if chunk[3] != b'=' { decoded.push(value as u8); }
+    }
+    assert_eq!(decoded, bytes);
+    let thumbnail = repuestos_autos::application::catalog::read_product_image_thumbnail(&connection, 1).unwrap().unwrap();
+    let thumbnail_image = image::load_from_memory(&thumbnail.bytes).unwrap();
+    assert_eq!((thumbnail_image.width(), thumbnail_image.height()), (256, 192));
+    assert_eq!(thumbnail.mime_type, "image/jpeg");
+    assert_ne!(thumbnail.bytes, decoded);
+}
+
+#[test]
+fn sales_original_requests_and_failures_are_bounded() {
+    use repuestos_autos::commands::catalog::{sales_product_image_original, SalesProductOriginalRequest};
+    for json in [r#"{}"#, r#"{"product_id":1,"revision":0}"#, r#"{"product_id":1,"path":"private"}"#, r#"{"product_id":1.5}"#] {
+        assert!(serde_json::from_str::<SalesProductOriginalRequest>(json).is_err());
+    }
+    let connection = open_seeded_catalog().unwrap();
+    for product_id in [-1, 0, 1, 99] {
+        assert_eq!(serde_json::to_value(sales_product_image_original(&connection, SalesProductOriginalRequest { product_id })).unwrap(), serde_json::json!({"kind":"unavailable"}));
+    }
+    let unavailable = rusqlite::Connection::open_in_memory().unwrap();
+    assert_eq!(serde_json::to_value(sales_product_image_original(&unavailable, SalesProductOriginalRequest { product_id: 1 })).unwrap(), serde_json::json!({"kind":"error","code":"persistence_failure","message":"The product image could not be loaded."}));
+}
+
+#[test]
 fn image_requests_are_strict_and_image_responses_never_expose_paths() {
     assert!(serde_json::from_str::<ProductImageRequest>(r#"{"product_id":1,"expected_revision":0,"path":"/secret"}"#).is_err());
     assert!(serde_json::from_str::<ProductImageRequest>(r#"{"product_id":1,"expected_revision":-1}"#).is_ok());

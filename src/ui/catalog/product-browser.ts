@@ -1,6 +1,6 @@
 import { createElement, type FormEvent, useEffect, useRef, useState } from "react";
 
-import type { ProductActivityState, ProductBrowserPage, ProductBrowserProduct, ProductStockState } from "../../commands/catalog.ts";
+import type { ProductActivityState, ProductBrowserPage, ProductBrowserProduct, ProductStockState, SalesProductOriginalLoader, SalesProductOriginalResponse } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 
 export type CatalogViewMode = "table" | "gallery";
@@ -71,13 +71,31 @@ function stockKind(product: ProductBrowserProduct) {
   return product.available_quantity === 0 ? "out-of-stock" : product.available_quantity === 1 ? "low-stock" : "available";
 }
 
-export function SalesProductDetail({ product, thumbnails, triggerRef, onClose }: {
+export function SalesProductDetail({ product, thumbnails, loadOriginal, triggerRef, onClose }: {
   product: ProductBrowserProduct;
   thumbnails?: Readonly<Record<number, string>>;
+  loadOriginal?: SalesProductOriginalLoader;
   triggerRef: { current: HTMLElement | null };
   onClose: () => void;
 }) {
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [original, setOriginal] = useState<{ productId: number; response: SalesProductOriginalResponse } | null>(null);
+  useEffect(() => {
+    if (!imageViewerOpen) { setOriginal(null); return; }
+    let live = true;
+    const productId = product.product_id;
+    setOriginal(null);
+    void (async () => {
+      try {
+        const response = await loadOriginal?.(productId) ?? { kind: "unavailable" };
+        if (live) setOriginal({ productId, response: response.kind === "success" && response.product_id !== productId ? { kind: "unavailable" } : response });
+      } catch {
+        if (live) setOriginal({ productId, response: { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." } });
+      }
+    })();
+    return () => { live = false; };
+  }, [imageViewerOpen, product.product_id, loadOriginal]);
+  const originalResponse = original?.productId === product.product_id ? original.response : null;
   const close = useRef<HTMLButtonElement>(null), imageTrigger = useRef<HTMLButtonElement>(null), viewerClose = useRef<HTMLButtonElement>(null), onCloseRef = useRef(onClose), wasViewerOpen = useRef(false);
   onCloseRef.current = onClose;
   useEffect(() => () => triggerRef.current?.focus(), [triggerRef]);
@@ -117,7 +135,7 @@ export function SalesProductDetail({ product, thumbnails, triggerRef, onClose }:
           createElement("dd", { key: `attribute-value-${attribute.definition_id}` }, attribute.value.trim() || "Sin dato"),
         ])))),
     imageViewerOpen ? createElement("div", { "data-ui-dialog-backdrop": true, "data-ui-sales-image-viewer-backdrop": true, onMouseDown: (event: { target: EventTarget | null; currentTarget: EventTarget | null }) => { if (event.target === event.currentTarget) setImageViewerOpen(false); } },
-      createElement("section", { role: "dialog", "aria-modal": "true", "aria-labelledby": "sales-product-image-viewer-title", "data-ui-sales-image-viewer": true }, createElement("header", null, createElement("h2", { id: "sales-product-image-viewer-title" }, `Imagen de ${product.name}`), createElement("button", { ref: viewerClose, type: "button", "aria-label": "Cerrar imagen ampliada", onClick: () => setImageViewerOpen(false) }, "Cerrar")), createElement("img", { src: image, alt: product.name, "data-ui-sales-image-viewer-image": true }))) : null);
+      createElement("section", { role: "dialog", "aria-modal": "true", "aria-labelledby": "sales-product-image-viewer-title", "data-ui-sales-image-viewer": true }, createElement("header", null, createElement("h2", { id: "sales-product-image-viewer-title" }, `Imagen de ${product.name}`), createElement("button", { ref: viewerClose, type: "button", "aria-label": "Cerrar imagen ampliada", onClick: () => setImageViewerOpen(false) }, "Cerrar")), originalResponse?.kind === "success" ? createElement("img", { src: originalResponse.src, alt: product.name, "data-ui-sales-image-viewer-image": true, onError: () => setOriginal({ productId: product.product_id, response: { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." } }) }) : createElement("p", { role: originalResponse?.kind === "error" ? "alert" : "status" }, !originalResponse ? "Cargando imagen…" : originalResponse.kind === "unavailable" ? "La imagen del producto no está disponible." : "No se pudo cargar la imagen del producto."))) : null);
 }
 
 export interface ProductBrowserProps {
@@ -139,6 +157,7 @@ export interface ProductBrowserProps {
   thumbnails?: Readonly<Record<number, string>>;
   disabled?: boolean;
   presentation?: "sales" | "catalog";
+  loadSalesOriginal?: SalesProductOriginalLoader;
   catalogViewMode?: CatalogViewMode;
   onCatalogViewModeChange?: (mode: CatalogViewMode) => void;
   salesViewMode?: CatalogViewMode;
@@ -233,5 +252,5 @@ export function ProductBrowser(props: ProductBrowserProps) {
             action);
     }))) : null,
     page && page.total_pages > 1 ? createElement("nav", { "aria-label": "Páginas de productos", "data-ui-product-browser-pages": true }, createElement("span", null, `Página ${page.page} de ${page.total_pages}`), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page <= 1, onClick: () => props.onPageChange(page.page - 1) }, "Anterior"), createElement(Action, { variant: "tertiary", disabled: props.disabled || page.page >= page.total_pages, onClick: () => props.onPageChange(page.page + 1) }, "Siguiente")) : null,
-      salesPresentation && detailProduct ? createElement(SalesProductDetail, { product: detailProduct, thumbnails: props.thumbnails, triggerRef: detailTrigger, onClose: () => setDetailProduct(null) }) : null);
+      salesPresentation && detailProduct ? createElement(SalesProductDetail, { key: detailProduct.product_id, product: detailProduct, thumbnails: props.thumbnails, loadOriginal: props.loadSalesOriginal, triggerRef: detailTrigger, onClose: () => setDetailProduct(null) }) : null);
 }

@@ -214,6 +214,28 @@ test("decodes only bounded canonical JPEG thumbnail data", async () => {
   }
 });
 
+test("Sales originals decode three formats through a dedicated matched narrow contract", async () => {
+  for (const [mime_type, bytes] of [["image/png", "iVBORw0KGgo="], ["image/jpeg", "/9j/2Q=="], ["image/webp", "UklGRgAAAABXRUJQ"]]) {
+    const calls: unknown[] = [];
+    const images = createCatalogProductImageCommands(async (command, payload) => { calls.push({ command, payload }); return { kind: "success", product_id: 1, mime_type, encoding: "base64", bytes }; });
+    assert.deepEqual(await images.salesOriginal(1), { kind: "success", product_id: 1, src: `data:${mime_type};base64,${bytes}` });
+    assert.deepEqual(calls, [{ command: "sales_product_image_original_command", payload: { request: { product_id: 1 } } }]);
+  }
+});
+
+test("Sales originals reject malformed, oversized, noncanonical, mismatched and metadata-bearing responses", async () => {
+  const valid = { kind: "success", product_id: 1, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+  for (const response of [null, { ...valid, bytes: "" }, { ...valid, bytes: "%%%=" }, { ...valid, bytes: "/9j/2R==" }, { ...valid, bytes: "/9j/" + "A".repeat(2_796_204) }, { ...valid, mime_type: "image/png" }, { ...valid, mime_type: "image/webp" }, { ...valid, product_id: 2 }, { ...valid, product_id: Number.MAX_SAFE_INTEGER + 1 }, { ...valid, revision: 0 }, { ...valid, path: "/private" }, { kind: "unavailable", path: "/private" }]) {
+    assert.equal((await createCatalogProductImageCommands(async () => response).salesOriginal(1)).kind, "error");
+  }
+  let calls = 0;
+  const images = createCatalogProductImageCommands(async () => { calls++; return valid; });
+  for (const id of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) assert.equal((await images.salesOriginal(id)).kind, "unavailable");
+  assert.equal(calls, 0);
+  assert.deepEqual(await createCatalogProductImageCommands(async () => ({ kind: "unavailable" })).salesOriginal(1), { kind: "unavailable" });
+  assert.deepEqual(await createCatalogProductImageCommands(async () => { throw new Error("SQL /private"); }).salesOriginal(1), { kind: "error", code: "persistence_failure", message: "The product image could not be loaded." });
+});
+
 test("location command contracts send narrow request envelopes and decode stable outcomes", async () => {
   const calls: unknown[] = [];
   const responses: unknown[] = [
