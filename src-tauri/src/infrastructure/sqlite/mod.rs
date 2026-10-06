@@ -21,7 +21,7 @@ pub use inventory_repository::SqliteInventoryRepository;
 pub use post_sale_repository::SqlitePostSaleRepository;
 pub use post_sale_transaction::SqlitePostSaleTransactionFactory;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 23;
+pub const CURRENT_SCHEMA_VERSION: i64 = 24;
 const MAX_CATALOG_PRICE_CENTAVOS: i64 = 9_007_199_254_740_991;
 const CATALOG_PRICE_SENTINEL: i64 = i64::MAX;
 
@@ -381,8 +381,20 @@ fn migrate_if_needed(connection: &mut Connection) -> Result<()> {
         version = 23;
     }
 
+    if version == 23 {
+        let transaction = connection.transaction()?;
+        validate_version_twenty_three_schema(&transaction)?;
+        transaction.execute_batch(include_str!(
+            "migrations/0024_allow_repeated_product_names.sql"
+        ))?;
+        validate_version_twenty_four_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 24)?;
+        transaction.commit()?;
+        version = 24;
+    }
+
     if version == CURRENT_SCHEMA_VERSION {
-        validate_version_twenty_three_schema(connection)?;
+        validate_version_twenty_four_schema(connection)?;
     }
 
     Ok(())
@@ -1115,6 +1127,18 @@ fn validate_version_twenty_one_schema(connection: &Connection) -> Result<()> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     validate_foreign_keys(connection)
+}
+
+fn validate_version_twenty_four_schema(connection: &Connection) -> Result<()> {
+    validate_version_twenty_three_schema(connection)?;
+    if connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'products_normalized_name_idx')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
 }
 
 fn validate_version_twenty_three_schema(connection: &Connection) -> Result<()> {

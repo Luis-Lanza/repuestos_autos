@@ -73,7 +73,7 @@ pub fn validate_restored_database(connection: &Connection) -> Result<(), BackupV
     if version != CURRENT_SCHEMA_VERSION {
         return Err(BackupValidationError::InvalidBackup);
     }
-    super::validate_version_twenty_three_schema(connection)
+    super::validate_version_twenty_four_schema(connection)
         .map_err(|_| BackupValidationError::InvalidBackup)?;
     validate_foreign_keys(connection).map_err(|_| BackupValidationError::InvalidBackup)
 }

@@ -1,0 +1,1 @@
+DROP INDEX products_normalized_name_idx;

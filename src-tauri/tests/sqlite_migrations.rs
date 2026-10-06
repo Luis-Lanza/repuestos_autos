@@ -264,6 +264,68 @@ fn legacy_facts(path: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 #[test]
+fn fresh_v24_accepts_repeated_names_but_keeps_nonempty_name_policy() {
+    use repuestos_autos::application::catalog::{CreateProductError, CreateProductInput, CreateProductUseCase};
+    use repuestos_autos::infrastructure::sqlite::SqliteCatalogRepository;
+    let directory = temporary_directory("fresh-v24-name-policy");
+    let config = production_database_config(&directory);
+    let mut connection = open_database(&config).unwrap();
+    assert_eq!(user_version(config.path()), 24);
+    connection.execute("INSERT INTO categories (id, name) VALUES (1, 'Customer category')", []).unwrap();
+    for (sku, name, valid) in [("A", "Bujía", true), ("B", "Bujía", true), ("C", "   ", false), ("D", "", false)] {
+        let result = CreateProductUseCase::new(&mut connection, SqliteCatalogRepository).execute(CreateProductInput {
+            sku: sku.into(), name: name.into(), category_id: 1, purchase_price_centavos: 100,
+            sale_price_centavos: 200, minimum_sale_price_centavos: 150, low_stock_threshold: None,
+            opening_quantity: 1, attribute_values: vec![],
+        });
+        if valid { assert!(result.is_ok(), "{result:?}"); }
+        else { assert_eq!(result, Err(CreateProductError::InvalidProduct)); }
+    }
+    drop(connection);
+    assert_eq!(open_database(&config).unwrap().query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+}
+
+#[test]
+fn schema_v24_allows_repeated_names_and_preserves_v23_facts_and_objects() {
+    let directory = temporary_directory("migration-v24-repeated-names");
+    let (path, config) = create_v22_demo_database(&directory);
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch(
+        "INSERT INTO catalog_audit (entity_type, entity_id, operation, before_json, after_json, revision) VALUES ('product', 1, 'edit', '{}', '{}', 1), ('product', 2, 'edit', '{}', '{}', 1);",
+    ).unwrap();
+    connection.execute_batch(include_str!("../src/infrastructure/sqlite/migrations/0023_remove_untouched_demo_catalog.sql")).unwrap();
+    connection.pragma_update(None, "user_version", 23).unwrap();
+    let objects = |connection: &Connection| {
+        connection.prepare("SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_schema WHERE name <> 'products_normalized_name_idx' ORDER BY type, name")
+            .unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))
+            .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+    };
+    let before_objects = objects(&connection);
+    let before_facts = legacy_facts(&path);
+    drop(connection);
+    let connection = open_database(&config).unwrap();
+    assert_eq!(user_version(&path), 24);
+    assert_eq!(objects(&connection), before_objects);
+    assert_eq!(legacy_facts(&path), before_facts);
+    assert_eq!(connection.query_row("SELECT after_json, revision FROM catalog_audit", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))).unwrap(), ("{}".into(), 1));
+    assert_eq!(connection.query_row("SELECT content FROM catalog_product_search WHERE product_id = 1", [], |row| row.get::<_, String>(0)).unwrap(), "flt-001 filtro de aceite filtros toyota ");
+    for (sku, name) in [("NEW-1", "Filtro de aceite"), ("NEW-2", " FILTRO DE ACEITE ")] {
+        connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (2, ?1, ?2, 1, 2500, 2500)", rusqlite::params![sku, name]).unwrap();
+    }
+    // SKU uniqueness is global, including archived products and other categories.
+    for sku in ["flt-001", " FLT-001 ", "buj-001", " BUJ-001 "] {
+        assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (2, ?1, 'Filtro de aceite', 1, 2500, 2500)", [sku]).is_err());
+    }
+    assert!(connection.execute("INSERT INTO categories (name) VALUES (' filtros ')", []).is_err());
+    assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) VALUES (999, 'BAD-FK', 'Filtro de aceite', 1, 2500, 2500)", []).is_err());
+    drop(connection);
+    let reopened = open_database(&config).unwrap();
+    assert_eq!(reopened.query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0)).unwrap(), 4);
+    assert_eq!(objects(&reopened), before_objects);
+    drop(reopened);
+}
+
+#[test]
 fn migration_v20_and_v21_upgrade_contracts_preserve_stock_and_legacy_costs() {
     let directory = temporary_directory("migration-v20-product-locations");
     let path = create_legacy_database(&directory);
@@ -436,7 +498,7 @@ fn schema_v23_fresh_database_has_no_demo_catalog_and_reopens_idempotently() {
     let directory = temporary_directory("migration-v23-fresh-empty");
     let config = production_database_config(&directory);
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&config.path()), 23);
+    assert_eq!(user_version(&config.path()), CURRENT_SCHEMA_VERSION);
     for table in ["categories", "products", "stock_balances", "product_searchable_values", "catalog_product_search"] {
         assert_eq!(connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 0, "{table}");
     }
@@ -453,7 +515,7 @@ fn schema_v23_removes_only_the_exact_untouched_v22_seed() {
     let directory = temporary_directory("migration-v23-clean-seed");
     let (path, config) = create_v22_demo_database(&directory);
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 23);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     for table in ["categories", "products", "stock_balances", "product_searchable_values", "catalog_product_search"] {
         assert_eq!(connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 0, "{table}");
     }
@@ -462,7 +524,7 @@ fn schema_v23_removes_only_the_exact_untouched_v22_seed() {
     let reopened = open_database(&config).unwrap();
     assert_eq!(reopened.query_row("SELECT COUNT(*) FROM products", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
     drop(reopened);
-    assert_eq!(user_version(&path), 23);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -499,7 +561,7 @@ fn schema_v23_preserves_seed_product_with_attribute_value() {
     drop(connection);
 
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 23);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         connection.query_row(
             "SELECT sku, name FROM products WHERE id = 1",
@@ -531,7 +593,7 @@ fn schema_v23_preserves_seed_product_with_changed_core_field() {
     drop(connection);
 
     let connection = open_database(&config).unwrap();
-    assert_eq!(user_version(&path), 23);
+    assert_eq!(user_version(&path), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         connection.query_row(
             "SELECT sku, name, active, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1",
@@ -768,7 +830,7 @@ fn rejects_invalid_v5_preflight_without_schema_advancement_or_rewrite() {
 }
 
 #[test]
-fn migrates_v8_history_index_preserving_facts_and_reopens_with_normalized_uniqueness() {
+fn migrates_v8_history_index_preserving_facts_and_reopens_with_repeated_names() {
     let directory = temporary_directory("migration-v7");
     let path = create_version_eight_database(&directory);
     let connection = Connection::open(&path).unwrap();
@@ -790,7 +852,7 @@ fn migrates_v8_history_index_preserving_facts_and_reopens_with_normalized_unique
             .unwrap(),
         "kept"
     );
-    assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) SELECT category_id, 'NEW-001', lower(trim(name)), 1, 1, 1 FROM products WHERE id = 1", []).is_err());
+    assert!(connection.execute("INSERT INTO products (category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) SELECT category_id, 'NEW-001', lower(trim(name)), 1, 1, 1 FROM products WHERE id = 1", []).is_ok());
     drop(connection);
     drop(open_database(&config).unwrap());
     std::fs::remove_dir_all(directory).unwrap();

@@ -32,7 +32,7 @@ use rusqlite::{params, Connection};
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 
 const LEGACY: &str = include_str!("fixtures/version1_fixed_price_legacy.sql");
-const MIGRATIONS: [&str; 22] = [
+const MIGRATIONS: [&str; 23] = [
     include_str!("../src/infrastructure/sqlite/migrations/0002_fixed_price_checkout.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0003_sale_line_product_snapshots.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0004_product_onboarding.sql"),
@@ -65,6 +65,7 @@ const MIGRATIONS: [&str; 22] = [
     include_str!("../src/infrastructure/sqlite/migrations/0021_sale_line_cost_snapshot.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0022_product_low_stock_threshold.sql"),
     include_str!("../src/infrastructure/sqlite/migrations/0023_remove_untouched_demo_catalog.sql"),
+    include_str!("../src/infrastructure/sqlite/migrations/0024_allow_repeated_product_names.sql"),
 ];
 
 fn temporary_directory(name: &str) -> PathBuf {
@@ -337,6 +338,58 @@ fn rejects_backup_destinations_when_ntfs_cannot_be_established() {
     );
     assert!(!destination.exists(), "rejected destinations are not created");
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn repeated_name_snapshot_stages_and_survives_canonical_recovery() {
+    let directory = temporary_directory("repeated-name-backup");
+    fs::create_dir_all(&directory).unwrap();
+    let config = production_database_config(&directory);
+    lifecycle_database(config.path());
+    let source = Connection::open(config.path()).unwrap();
+    source.execute("INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos) SELECT 3, category_id, 'DISTINCT-SKU', name, 1, list_price_centavos, minimum_unit_price_centavos FROM products WHERE id = 1", []).unwrap();
+    let snapshot = directory.join("snapshot.sqlite3");
+    assert_eq!(create_snapshot(&source, &snapshot).unwrap().schema_version, 24);
+    drop(source);
+    let before = fs::read(&snapshot).unwrap();
+    let stage = directory.join("stage.sqlite3");
+    assert_eq!(stage_and_validate(&snapshot, &stage).unwrap().schema_version, 24);
+    assert_eq!(fs::read(&snapshot).unwrap(), before);
+    let staged = Connection::open(&stage).unwrap();
+    assert_eq!(staged.query_row("SELECT COUNT(*) FROM products WHERE name = (SELECT name FROM products WHERE id = 1)", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    assert_eq!(staged.query_row("SELECT COUNT(*) FROM sale_return_lines", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    assert_eq!(staged.query_row("SELECT COUNT(*) FROM sale_cancellation_lines", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    drop(staged);
+    let store = BackupStore::new(&directory);
+    #[cfg(windows)]
+    {
+        let state = DatabaseState::open(config.clone()).unwrap();
+        state.install_validated_stage(&stage, &store).unwrap();
+        drop(state);
+    }
+    write_restore_state(&directory, RestoreState::CandidateInstalled);
+    let recovered = DatabaseState::recover_on_startup(config.clone(), &store);
+    assert!(recovered.with_read(|_| Ok(())).is_ok());
+    let canonical = Connection::open(config.path()).unwrap();
+    assert_eq!(canonical.query_row("SELECT COUNT(*) FROM products WHERE name = (SELECT name FROM products WHERE id = 1)", [], |row| row.get::<_, i64>(0)).unwrap(), 2);
+    assert_eq!(canonical.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 24);
+    drop(canonical);
+    drop(recovered);
+}
+
+#[test]
+fn rejects_v24_name_index_without_downgrading_or_mutating_source() {
+    let directory = temporary_directory("v24-unexpected-name-index");
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.sqlite3");
+    versioned_database(&source, 24);
+    let connection = Connection::open(&source).unwrap();
+    connection.execute_batch(MIGRATIONS[6]).unwrap();
+    assert_eq!(repuestos_autos::infrastructure::sqlite::validate_restored_database(&connection), Err(BackupValidationError::InvalidBackup));
+    drop(connection);
+    let before = fs::read(&source).unwrap();
+    assert_eq!(stage_and_validate(&source, &directory.join("stage.sqlite3")), Err(BackupValidationError::InvalidBackup));
+    assert_eq!(fs::read(&source).unwrap(), before);
 }
 
 #[test]
