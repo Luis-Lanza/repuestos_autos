@@ -95,6 +95,10 @@ All migrated screens retain isolated inline compatibility. Notifications never o
 - [ ] Check activation failure/cancel without losing installation/recovery guidance, then successful activation: exactly one success survives the handoff.
 - [ ] Simulate backup durability/cleanup and restore recovery uncertainty using an isolated fixture environment, never the customer's live database; dismissal must not erase guidance or suggest safe retry.
 
+## Catalog table Windows retest (N5; pending)
+
+The table wrapper now declares both scroll axes; its list declares visible overflow and no overscroll containment. Nested scrolling was a plausible wheel-routing issue, not a measured cause. On Windows, at desktop (≥961px) and narrow (≤960px) viewport widths, use existing catalog results to check wheel scrolling over table rows, scrollbar dragging and horizontal scrolling where available; switch to Gallery and open/close Edit to confirm their wheel scrolling still works and notifications remain reachable. Do not save edits or mutate business data, native configuration or the database during this check. Mounted CSS regressions verify declarations/cascade only; no browser geometry or wheel success has been observed locally.
+
 ## Evidence and pending checks
 
 Deterministic public-provider and mounted tests cover duplicate text, FIFO overflow retention, severity lifetime, hover/focus pause, server/isolated compatibility, modal live-region identity, keyboard close controls, activation handoff/navigation persistence, inventory retry state, duplicate/unmounted suppression and successful persistence followed by failed read-only refresh. CSS tests guard positioning and severity selectors, not measured WebView geometry.

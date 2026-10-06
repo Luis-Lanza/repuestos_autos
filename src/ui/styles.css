@@ -584,8 +584,7 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 [data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="views"] svg { inline-size: 1.25rem; block-size: 1.25rem; }
 [data-ui-catalog-workspace] [data-ui-catalog-toolbar-item="submit"] { justify-self: end; }
 [data-ui-catalog-workspace] [data-ui-product-browser-list] > li { grid-template-columns: 3.5rem minmax(0, 1fr) auto auto auto; }
-[data-ui-catalog-workspace] [data-ui-catalog-table-scroll] { min-inline-size: 0; max-inline-size: 100%; flex: 1 1 auto; overflow-x: auto; overscroll-behavior-inline: contain; }
-[data-ui-catalog-workspace] [data-ui-catalog-table="true"] { min-inline-size: 0; min-block-size: auto; flex: 1 1 auto; overflow: visible; }
+[data-ui-catalog-workspace] [data-ui-catalog-table-scroll] { min-inline-size: 0; max-inline-size: 100%; flex: 1 1 auto; overflow-x: auto; overflow-y: auto; overscroll-behavior-inline: contain; }
 [data-ui-catalog-workspace] [data-ui-catalog-table="true"] > li { min-inline-size: 0; grid-template-columns: 3.5rem minmax(0, 2fr) minmax(5rem, .8fr) minmax(0, 1fr) minmax(6rem, .9fr) minmax(2.75rem, auto); }
 [data-ui-catalog-workspace] [data-ui-catalog-table="true"] > [data-ui-catalog-table-row] > :nth-child(3) { white-space: nowrap; }
 [data-ui-catalog-workspace] [data-ui-catalog-table="true"] > [data-ui-catalog-table-row] > :nth-child(5) [data-ui-badge] { white-space: nowrap; }
@@ -607,6 +606,8 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
   [data-ui-catalog-workspace] [data-ui-catalog-table-scroll] { min-block-size: 0; }
   [data-ui-catalog-workspace] [data-ui-product-browser-list] { min-block-size: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
 }
+/* The wrapper owns both table scroll axes; the list must not trap wheel chaining. */
+[data-ui-catalog-workspace] [data-ui-product-browser-list][data-ui-catalog-table="true"] { min-inline-size: 0; min-block-size: auto; flex: 1 1 auto; overflow-x: visible; overflow-y: visible; overscroll-behavior: auto; }
 [data-ui-catalog-workspace] [data-ui-catalog-image-area] { display: grid; min-block-size: 8rem; place-items: center; overflow: hidden; border-radius: var(--radius-control); background: var(--color-surface-subtle); }
 [data-ui-catalog-workspace] [data-ui-catalog-image-area] > [data-ui-product-thumbnail] { inline-size: 100%; block-size: 8rem; }
 [data-ui-catalog-image-placeholder] { display: grid; inline-size: 100%; min-block-size: 8rem; place-items: center; color: var(--color-text-muted); font-size: var(--type-caption-size); }

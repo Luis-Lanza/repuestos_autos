@@ -5,10 +5,25 @@ import { createElement } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-async function mountBaseStyles() {
+import { ProductBrowser, initialProductBrowserState, type CatalogViewMode } from "../catalog/product-browser.ts";
+
+async function mountBaseStyles(width?: number) {
   const style = document.createElement("style");
   style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
   document.head.append(style);
+  if (width !== undefined) {
+    // jsdom does not evaluate viewport media queries. Activate width-only rules
+    // in source order to check declarations/cascade, not layout or wheel routing.
+    const activeRules = (rules: CSSRuleList): string[] => Array.from(rules).flatMap((rule) => {
+      if (rule.type === 1) return [rule.cssText];
+      if (rule.type !== 4) return [];
+      const media = rule as CSSMediaRule;
+      const bounds = [...media.conditionText.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
+      if (!bounds.length || !bounds.every(([, bound, pixels]) => bound === "min" ? width >= Number(pixels) : width <= Number(pixels))) return [];
+      return activeRules(media.cssRules);
+    });
+    style.textContent = activeRules(style.sheet!.cssRules).join("\n");
+  }
   return style;
 }
 
@@ -28,7 +43,7 @@ test("Catalog table columns shrink and wrap while the results region retains opt
   try {
     render(createElement("div", { "data-ui-catalog-workspace": true },
       createElement("div", { "data-ui-catalog-table-scroll": true },
-        createElement("ul", { "data-ui-catalog-table": "true" },
+        createElement("ul", { "data-ui-product-browser-list": true, "data-ui-catalog-table": "true" },
           createElement("li", { "data-ui-catalog-table-row": true },
             createElement("div", { "data-ui-catalog-table-thumbnail": true }),
             createElement("div", { "data-ui-catalog-table-identity": true }, "A long product identity"),
@@ -63,6 +78,51 @@ test("Catalog table columns shrink and wrap while the results region retains opt
     style.remove();
   }
 });
+
+function catalogBrowser(mode: CatalogViewMode) {
+  return createElement(ProductBrowser, {
+    presentation: "catalog", catalogViewMode: mode,
+    state: { ...initialProductBrowserState, status: "results", result: {
+      products: [{ product_id: 1, revision: 1, category_id: 1, sku: "FIL-001", name: "Filtro", category_name: "Filtros", available_quantity: 2, purchase_price_centavos: null, sale_price_centavos: 12550, list_price_centavos: 12550, catalog_unit_price_centavos: 12550, minimum_sale_price_centavos: 10000, primary_location_code: null, attribute_values: [] }],
+      categories: [], page: 1, page_size: 20, total: 1, total_pages: 1,
+    } },
+    onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: () => {}, onPageChange: () => {},
+  });
+}
+
+for (const width of [961, 960, 600]) {
+  test(`Catalog table wrapper alone owns both scroll axes at ${width}px; Gallery and Edit retain scrolling`, async () => {
+    const style = await mountBaseStyles(width);
+    try {
+      render(createElement("div", { "data-ui-catalog-workspace": true },
+        catalogBrowser("table"), catalogBrowser("gallery"),
+        createElement("section", { "data-ui-catalog-edit-dialog": true },
+          createElement("div", { "data-ui-catalog-edit-content": true }, "Editar producto")),
+      ));
+      const wrapper = document.querySelector("[data-ui-catalog-table-scroll]")!;
+      const table = wrapper.querySelector('[data-ui-product-browser-list][data-ui-catalog-table="true"]')!;
+      assert.ok(table, "real ProductBrowser table carries the generic list attribute");
+      assert.equal(table.tagName, "UL");
+      assert.equal(styleOf(table, "overflow-y"), "visible");
+      assert.equal(styleOf(table, "overflow-x"), "visible");
+      assert.equal(styleOf(wrapper, "overflow-x"), "auto");
+      assert.equal(styleOf(wrapper, "overflow-y"), "auto");
+      if (width >= 961) assert.equal(styleOf(wrapper, "min-block-size"), "0px");
+      assert.equal(styleOf(table, "overscroll-behavior"), "auto");
+      const gallery = document.querySelector('[data-ui-catalog-gallery="true"]')!;
+      assert.equal(gallery.closest("[data-ui-catalog-table-scroll]"), null);
+      assert.equal(styleOf(gallery, "overflow-y"), "auto");
+      assert.equal(styleOf(gallery, "overscroll-behavior"), "contain");
+      assert.equal(styleOf(gallery, "grid-template-columns"), `repeat(${width >= 961 ? 5 : 2}, minmax(0, 1fr))`);
+      const edit = document.querySelector("[data-ui-catalog-edit-content]")!;
+      assert.equal(styleOf(edit, "min-block-size"), "0px");
+      assert.equal(styleOf(edit, "overflow-y"), "auto");
+      assert.equal(styleOf(edit, "overscroll-behavior"), "contain");
+    } finally {
+      style.remove();
+    }
+  });
+}
 
 test("base styles expose generic controls and the typography hierarchy", async () => {
   const style = await mountBaseStyles();
