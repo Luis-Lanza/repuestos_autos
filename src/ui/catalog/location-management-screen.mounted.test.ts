@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC as nativeMockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
+import { LocationManagementScreen } from "./location-management-screen.ts";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
 const mockIPC: typeof nativeMockIPC = (handler) => nativeMockIPC((command, payload) => command === "catalog_access_status_command" ? { kind: "status", status: "unlocked" } : handler(command, payload));
 
@@ -26,6 +28,78 @@ async function openLocations() {
   await screen.findByRole("heading", { name: "Gestionar ubicaciones" });
   return screen.getByText("Definí cómo se identifican las ubicaciones físicas y administrá sus códigos generados.").closest("section")!;
 }
+
+test("publishes accepted location activity outcomes repeatedly while retaining in-use guidance", async () => {
+  let code = "persistence_failure";
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [inactiveRow] };
+    if (command === "activate_product_location_command") return code === "success" ? { kind: "location_success", location: { ...inactiveRow, active: true } } : { kind: "error", code, message: "private" };
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(LocationManagementScreen)));
+  for (let i = 1; i <= 2; i++) {
+    await userEvent.click(await screen.findByRole("button", { name: "Activar PA-2" }));
+    await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, i));
+    assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="error"]'), null);
+  }
+  code = "location_in_use";
+  await userEvent.click(screen.getByRole("button", { name: "Activar PA-2" }));
+  await waitFor(() => assert.match(document.querySelector('[data-ui-location-management]')!.textContent!, /quitá la asignación/));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  for (const button of screen.getAllByRole("button", { name: "Cerrar notificación: Error" })) await userEvent.click(button);
+  code = "success";
+  await userEvent.click(screen.getByRole("button", { name: "Activar PA-2" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="success"]'), null);
+});
+
+test("suppresses duplicate and unmounted location creation completions with a surviving host", async () => {
+  let finish!: (value: unknown) => void;
+  let calls = 0;
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "create_product_location_command") return calls++, new Promise((resolve) => { finish = resolve; });
+  });
+  const view = render(createElement(ActionNotificationProvider, null, createElement(LocationManagementScreen)));
+  await userEvent.type(await screen.findByRole("textbox", { name: "Sector" }), "A");
+  const form = screen.getByRole("button", { name: "Crear ubicación" }).closest("form")!;
+  act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+  assert.equal(calls, 1);
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { finish({ kind: "location_success", location: row }); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+});
+
+test("owns schema, create, deactivate and delete outcomes without duplicate inline results", async () => {
+  let storedSchema = { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] };
+  let locations: typeof row[] = [];
+  mockIPC((command) => {
+    if (command === "location_schema_command") return { kind: "schema_success", schema: storedSchema };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations };
+    if (command === "save_location_schema_command") return { kind: "schema_success", schema: storedSchema = { ...storedSchema, revision: 2 } };
+    if (command === "create_product_location_command") { locations = [row]; return { kind: "location_success", location: row }; }
+    if (command === "deactivate_product_location_command") { locations = [{ ...row, active: false, revision: 3 }]; return { kind: "location_success", location: locations[0] }; }
+    if (command === "delete_product_location_command") return { kind: "deleted" };
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(LocationManagementScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Guardar esquema" }));
+  await waitFor(() => assert.match(document.querySelector('[data-ui-action-notice]')!.textContent!, /Esquema actualizado/));
+  await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Éxito" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Sector" }), "PB");
+  await userEvent.click(screen.getByRole("button", { name: "Crear ubicación" }));
+  await waitFor(() => assert.match(document.querySelector('[data-ui-action-notice]')!.textContent!, /creada/));
+  await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Éxito" }));
+  await userEvent.click(screen.getByRole("button", { name: "Desactivar PB-12" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirmar desactivación" }));
+  await waitFor(() => assert.match(document.querySelector('[data-ui-action-notice]')!.textContent!, /desactivada/));
+  await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Éxito" }));
+  await userEvent.click(screen.getByRole("button", { name: "Eliminar PB-12" }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirmar eliminación" }));
+  await waitFor(() => assert.match(document.querySelector('[data-ui-action-notice]')!.textContent!, /eliminada/));
+  assert.equal(document.querySelector('[data-ui-location-management] [data-ui-feedback="success"]'), null);
+  assert.equal(document.querySelectorAll('[data-ui-location-row]').length, 0);
+});
 
 test("builds ordered schemas from templates, previews generated codes, and creates generated-code locations", async () => {
   let currentSchema = schema;

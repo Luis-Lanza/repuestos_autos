@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { postSaleCommands, type PostSaleErrorCode } from "../../commands/post-sale.ts";
 import {
   salesHistoryCommands,
@@ -100,7 +101,8 @@ const focusCorrectionTarget = (target: string | null, find: FocusFinder) => {
   if (target) find(target)?.focus();
 };
 
-function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef }: {
+function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, persisted = false }: {
+  persisted?: boolean;
   state: HistoryState;
   onAction?: (action: HistoryAction) => void;
   onSubmit?: () => void;
@@ -152,11 +154,12 @@ function ReturnForm({ state, onAction, onSubmit, onReloadDetail, invokerRef }: {
   intent.error && !intent.validation ? createElement("p", { role: "alert" }, intent.error) : null,
   intent.error && !intent.validation && onReloadDetail
     ? createElement("button", { type: "button", disabled: locked, onClick: () => onReloadDetail(intent.sale_id), style: correctionControlStyle }, "Recargar detalle de venta") : null,
-  createElement("button", { type: "submit", disabled: locked, style: correctionControlStyle },
+  createElement("button", { type: "submit", disabled: locked || persisted, style: correctionControlStyle },
     locked ? "Registrando devolución…" : "Registrar devolución")));
 }
 
-function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRef }: {
+function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRef, persisted = false }: {
+  persisted?: boolean;
   state: HistoryState;
   onAction?: (action: HistoryAction) => void;
   onSubmit?: () => void;
@@ -168,7 +171,7 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
   const fieldError = intent.validation?.focus_target;
   const errorId = fieldError ? `${fieldError}-error` : undefined;
   const preparation = createElement(FormDialog, {
-    open: intent.modal_open,
+    open: intent.modal_open || (persisted && intent.status === "error"),
     title: "Preparar cancelación de venta",
     description: "Ingresá el motivo y reconocé la corrección de inventario antes de revisar la cancelación.",
     pending: locked,
@@ -197,9 +200,9 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
   intent.error && !intent.validation && onReloadDetail
     ? createElement("button", { type: "button", disabled: locked, style: correctionControlStyle,
       onClick: () => onReloadDetail(intent.sale_id) }, "Recargar detalle de venta") : null,
-  createElement("button", { type: "submit", disabled: locked, style: correctionControlStyle }, "Continuar con la cancelación")));
+  createElement("button", { type: "submit", disabled: locked || persisted, style: correctionControlStyle }, "Continuar con la cancelación")));
   const confirmation = createElement(ConfirmationDialog, {
-    open: !intent.modal_open,
+    open: !intent.modal_open && !(persisted && intent.status === "error"),
     purpose: "cancellation",
     title: `Cancelar venta #${intent.sale_id}`,
     description: "Se cancelará la venta y se restaurarán únicamente las unidades todavía no devueltas. La venta y los pagos originales seguirán visibles en el historial.",
@@ -207,7 +210,7 @@ function CancellationForm({ state, onAction, onSubmit, onReloadDetail, invokerRe
     pending: locked,
     pendingLabel: "Cancelando venta…",
     onCancel: () => onAction?.({ type: "cancellation_modal_closed" }),
-    onConfirm: () => onSubmit ? onSubmit() : onAction?.({ type: "cancellation_submit_started" }),
+    onConfirm: () => { if (!persisted) { if (onSubmit) onSubmit(); else onAction?.({ type: "cancellation_submit_started" }); } },
   },
   createElement("p", null, `Motivo: ${intent.reason}`),
   intent.error ? createElement("p", { role: "alert" }, intent.error) : null,
@@ -232,6 +235,8 @@ const isSparseHistoryDetail = (state: HistoryState) => {
 
 export type HistoryScreenProps = {
   state: HistoryState;
+  persistedRequest?: string | null;
+  outcomeNotice?: string | null;
   onReload: (from: string, to: string) => void;
   onSelect: (sale: SalesHistorySummary) => void;
   onBack: () => void;
@@ -256,7 +261,15 @@ const correctionError = (code?: PostSaleErrorCode) =>
     ? "La corrección entró en conflicto con el detalle guardado. Recargá e intentá nuevamente."
     : "No se pudo guardar la corrección de inventario. Recargá e intentá nuevamente.";
 
-export function createSalesHistoryInteraction(commands: InteractionCommands) {
+const persistedRefreshGuidance = "La corrección ya fue guardada. No se pudo actualizar el detalle; recargalo antes de iniciar otra corrección.";
+
+export function createSalesHistoryInteraction(commands: InteractionCommands, onPersisted?: (requestId: string, message: string, saleId: number) => void) {
+  const persisted = new Set<string>();
+  const awaitingDetail = new Map<number, string>();
+  const acceptDetail = (detail: NonNullable<HistoryState["detail"]>) => {
+    const requestId = awaitingDetail.get(detail.sale_id);
+    if (requestId && (detail.returns.some(record => record.request_id === requestId) || detail.cancellation?.request_id === requestId)) awaitingDetail.delete(detail.sale_id);
+  };
   const submitting = new Set<string>();
   let requestIdentity = 0;
   let active = true;
@@ -272,6 +285,7 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
     dispatch({ type: "detail_started", sale_id: saleId });
     const response = await commands.detail(saleId);
     if (!isCurrent(identity)) return;
+    if (response.kind === "success") acceptDetail(response.detail);
     dispatch(
       response.kind === "success"
         ? { type: "detail_loaded", detail: response.detail }
@@ -289,6 +303,7 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
       intent: CorrectionIntent,
     ) => Promise<CorrectionResponse> | undefined,
   ) => {
+    if (intent && (persisted.has(intent.request_id) || awaitingDetail.has(intent.sale_id) || submitting.has(intent.request_id))) return;
     const started: HistoryAction = {
       type: isReturn ? "return_submit_started" : "cancellation_submit_started",
     };
@@ -300,7 +315,7 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
     if (
       !intent ||
       pendingIntent?.status !== "pending" ||
-      submitting.has(intent.request_id)
+      submitting.has(intent.request_id) || persisted.has(intent.request_id)
     )
       return;
     submitting.add(intent.request_id);
@@ -323,6 +338,9 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
         });
         return;
       }
+      persisted.add(intent.request_id);
+      awaitingDetail.set(intent.sale_id, intent.request_id);
+      onPersisted?.(intent.request_id, isReturn ? "Devolución registrada correctamente." : "Cancelación registrada correctamente.", intent.sale_id);
       dispatch({
         type: isReturn
           ? "return_submit_succeeded"
@@ -332,12 +350,13 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
       const reloaded = await commands.detail(intent.sale_id);
       if (!isCurrent(identity)) return;
       if (reloaded.kind === "success") {
+        acceptDetail(reloaded.detail);
         dispatch({ type: "detail_loaded", detail: reloaded.detail });
       } else {
         dispatch({
           type: isReturn ? "return_submit_failed" : "cancellation_submit_failed",
           request_id: intent.request_id,
-          message: correctionError(),
+          message: persistedRefreshGuidance,
         });
       }
     } finally {
@@ -395,6 +414,8 @@ export function createSalesHistoryInteraction(commands: InteractionCommands) {
 
 export function HistoryScreen({
   state,
+  persistedRequest,
+  outcomeNotice,
   onReload,
   onSelect,
   onBack,
@@ -406,6 +427,7 @@ export function HistoryScreen({
   findFocusable = findFocusableById,
 }: HistoryScreenProps) {
   const correctionInvokerRef = useRef<HTMLButtonElement>(null);
+  const correctionRefreshRequired = Boolean(persistedRequest && !(state.detail?.returns.some(record => record.request_id === persistedRequest) || state.detail?.cancellation?.request_id === persistedRequest));
   const [from, setFrom] = useState(localToday);
   const [to, setTo] = useState(localToday);
   const focusTarget = correctionFocusTarget(state);
@@ -425,6 +447,7 @@ export function HistoryScreen({
         createElement("h1", { id: "sales-history-detail-heading" }, "Detalle de venta"),
         createElement(Action, { variant: "secondary", onClick: onBack }, "Volver al historial"),
       ),
+      outcomeNotice ? createElement(Feedback, { kind: "success", children: outcomeNotice }) : null,
       state.status === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando detalle de venta…") : null,
       state.status === "error" ? createElement(Feedback, { kind: "error" } as never, "No se pudo cargar el detalle de venta.") : null,
       state.detail && original
@@ -453,7 +476,7 @@ export function HistoryScreen({
               "div",
               { "data-ui-history-correction-actions": true },
               (canOpenReturn(state) || state.return_intent !== null)
-                ? createElement("button", { ref: correctionInvokerRef, disabled: state.return_intent !== null, type: "button", onClick: (event: MouseEvent<HTMLButtonElement>) => {
+                ? createElement("button", { ref: correctionInvokerRef, disabled: correctionRefreshRequired || state.return_intent !== null, type: "button", onClick: (event: MouseEvent<HTMLButtonElement>) => {
                     correctionInvokerRef.current = event.currentTarget;
                     onAction?.({ type: "return_intent_opened", request_id: crypto.randomUUID() });
                   }, style: correctionControlStyle }, "Iniciar devolución de artículos")
@@ -463,7 +486,7 @@ export function HistoryScreen({
                     "button",
                     {
                       ref: correctionInvokerRef,
-                      disabled: state.cancellation_intent !== null,
+                      disabled: correctionRefreshRequired || state.cancellation_intent !== null,
                       type: "button",
                       onClick: (event: MouseEvent<HTMLButtonElement>) => {
                         correctionInvokerRef.current = event.currentTarget;
@@ -480,11 +503,14 @@ export function HistoryScreen({
             ),
           )
         : null,
+      correctionRefreshRequired && !state.return_intent && !state.cancellation_intent ? createElement(Feedback, { kind: "advisory", children: createElement(Fragment, null,
+        persistedRefreshGuidance,
+        createElement(Action, { variant: "secondary", disabled: state.status === "loading", onClick: () => { if (state.selected_id !== null) onReloadDetail?.(state.selected_id); } }, "Recargar detalle de venta")) }) : null,
       state.return_intent
-        ? createElement(ReturnForm, { state, onAction, onSubmit: onReturnSubmit, onReloadDetail, invokerRef: correctionInvokerRef })
+        ? createElement(ReturnForm, { state, onAction, onSubmit: onReturnSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.return_intent.request_id })
         : null,
       state.cancellation_intent
-        ? createElement(CancellationForm, { state, onAction, onSubmit: onCancellationSubmit, onReloadDetail, invokerRef: correctionInvokerRef })
+        ? createElement(CancellationForm, { state, onAction, onSubmit: onCancellationSubmit, onReloadDetail, invokerRef: correctionInvokerRef, persisted: persistedRequest === state.cancellation_intent.request_id })
         : null,
     );
   }
@@ -531,11 +557,19 @@ export function HistoryScreen({
 }
 export function SalesHistoryScreen() {
   const [state, dispatch] = useReducer(createHistoryFlow, initialHistoryState);
+  const notifications = useActionNotifications();
+  const [persistedRequests, setPersistedRequests] = useState<Record<number, string>>({});
+  const persistedRequest = state.selected_id === null ? null : persistedRequests[state.selected_id] ?? null;
+  const [outcomeNotice, setOutcomeNotice] = useState<string | null>(null);
   const interaction = useMemo(
     () =>
       createSalesHistoryInteraction({
         ...salesHistoryCommands,
         ...postSaleCommands,
+      }, (requestId, message, saleId) => {
+        setPersistedRequests(previous => ({ ...previous, [saleId]: requestId }));
+        if (notifications) notifications.publish({ severity: "success", message });
+        else setOutcomeNotice(message);
       }),
     [],
   );
@@ -551,6 +585,8 @@ export function SalesHistoryScreen() {
   }, [interaction]);
   return createElement(HistoryScreen, {
     state,
+    persistedRequest,
+    outcomeNotice,
     onReload: (from, to) => void reload(from, to),
     onSelect: (sale) => void select(sale),
     onBack: () => {

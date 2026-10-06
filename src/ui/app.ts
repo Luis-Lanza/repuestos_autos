@@ -1,4 +1,4 @@
-import { createElement, Fragment, useEffect, useRef, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 
 import { inventoryCommands } from "../commands/inventory.ts";
 import { licenseCommands } from "../commands/license.ts";
@@ -12,6 +12,7 @@ import { SalesHistoryScreen } from "./sales/history-screen.ts";
 import { CatalogMaintenanceScreen } from "./catalog/catalog-maintenance-screen.ts";
 import { MovementLedgerScreen } from "./reports/movement-ledger-screen.ts";
 import { ActivationScreen } from "./licensing/activation-screen.ts";
+import { ActionNotificationProvider, useActionNotifications } from "./visual-system/action-notifications.ts";
 
 export const SCREEN = {
   DASHBOARD: "dashboard", SALES: "sales", ONBOARDING: "onboarding", INVENTORY: "inventory", BACKUP: "backup", CATALOG: "catalog", SALES_HISTORY: "sales_history", REPORTS: "reports",
@@ -35,9 +36,12 @@ function screenContent(screen: Screen, onNavigate: (action: NavigationAction) =>
   return createElement(SaleScreen, { onInventoryAlertsRefresh: refreshInventoryCount });
 }
 export function App() {
+  return createElement(ActionNotificationProvider, null, createElement(AppContent));
+}
+function AppContent() {
+  const notifications = useActionNotifications();
   const [screen, setScreen] = useState<Screen>(SCREEN.DASHBOARD);
   const [accessMode, setAccessMode] = useState<"loading" | "activation" | "active" | "recovery">("loading");
-  const [activationNotice, setActivationNotice] = useState<string | null>(null);
   const [inventoryCount, setInventoryCount] = useState<number | null>(null);
   const [inventoryFilter, setInventoryFilter] = useState<"all" | "alerts">("all");
   const alertAttempt = useRef(0);
@@ -80,13 +84,11 @@ export function App() {
       ? createElement(ActivationScreen, {
         onRecovery: () => { setScreen(SCREEN.DASHBOARD); setAccessMode("recovery"); },
         onActivated: (notice) => {
-          if (notice) setActivationNotice(notice);
+          if (!mounted.current) return;
+          if (notice) notifications?.publish({ severity: "success", message: notice });
           setAccessMode("active");
         },
       })
       : createElement(AppShell, { screen, onNavigate: navigate, onInventoryAlerts: openInventoryAlerts, inventoryCue, recoveryMode: accessMode === "recovery" }, screenContent(screen, navigate, refreshInventoryCount, inventoryFilter, openInventoryAlerts, accessMode === "active"));
-  return createElement(Fragment, null,
-    createElement("div", { role: "status", "aria-live": "polite", "aria-atomic": true, "data-ui-activation-notice": true }, activationNotice),
-    content,
-  );
+  return content;
 }

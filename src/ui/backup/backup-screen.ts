@@ -1,5 +1,6 @@
 import { createElement as h, useEffect, useReducer, useRef, useState } from "react";
 
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { backupCommands } from "../../commands/backup.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
@@ -13,7 +14,29 @@ const restoreState = (status: string) => ["invalid", "expired", "unavailable", "
 export function BackupScreen({ canRestore = true }: { canRestore?: boolean } = {}) {
   const [state, dispatch] = useReducer(createBackupFlow, initialBackupState);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const dispatchRef = useRef<(action: BackupAction) => void>(dispatch); dispatchRef.current = dispatch;
+  const notifications = useActionNotifications();
+  const [sharedOutcome, setSharedOutcome] = useState(false);
+  // The interaction dispatches completions only after its mounted/generation guards.
+  const accept = (action: BackupAction) => {
+    let message: string | null = null;
+    let severity: "success" | "error" | "warning" = "error";
+    if (action.type === "backup_succeeded") {
+      const warning = action.summary.durability_warning || action.summary.cleanup_warning;
+      severity = warning ? "warning" : "success";
+      message = action.summary.durability_warning ? "La copia fue publicada, pero no se pudo confirmar la durabilidad del directorio final." : action.summary.cleanup_warning ? "La copia fue creada; falló la limpieza de un archivo interno temporal." : "Copia creada correctamente.";
+    } else if (action.type === "restore_succeeded") {
+      severity = "success"; message = "Restauración completada correctamente.";
+    } else if (action.type === "backup_failed" || (action.type === "restore_failed" && ["failure", "unavailable"].includes(action.status))) {
+      message = action.message;
+    }
+    if (message) notifications?.publish({ severity, message });
+    setSharedOutcome(Boolean(notifications && message));
+    // Unknown recovery must never invite a blind destructive retry.
+    dispatch(action.type === "restore_failed" && action.status === "recovery"
+      ? { ...action, message: "No se pudo recuperar la restauración. El estado local es incierto; conservá el respaldo y solicitá asistencia antes de restaurar nuevamente." }
+      : action);
+  };
+  const dispatchRef = useRef<(action: BackupAction) => void>(accept); dispatchRef.current = accept;
   const interactionRef = useRef<ReturnType<typeof createBackupInteraction> | null>(null);
   if (!interactionRef.current) interactionRef.current = createBackupInteraction(backupCommands, (action) => dispatchRef.current(action));
   useEffect(() => () => interactionRef.current?.dispose(), []);
@@ -29,8 +52,8 @@ export function BackupScreen({ canRestore = true }: { canRestore?: boolean } = {
     h("div", { "data-ui-backup-layout": true },
       h(Panel, { label: "Copia de seguridad" } as never,
         h(Action, { variant: "primary", pending: state.backup_status === "pending", pendingLabel: "Creando copia…", disabled: pending, onClick: () => void interaction.backup() }, "Elegir destino de la copia"),
-        backupMessage && !(state.backup?.durability_warning || state.backup?.cleanup_warning) ? h(Feedback, { kind: state.backup_status === "success" ? "success" : state.backup_status === "unavailable" ? "unavailable" : "error" } as never, backupMessage) : null,
-        state.backup?.durability_warning ? h(Feedback, { kind: "error" } as never, backupMessage) : null,
+        backupMessage && !sharedOutcome && !(state.backup_status === "success" && (state.backup?.durability_warning || state.backup?.cleanup_warning)) ? h(Feedback, { kind: state.backup_status === "success" ? "success" : state.backup_status === "unavailable" ? "unavailable" : "error" } as never, backupMessage) : null,
+        state.backup?.durability_warning ? h(Feedback, { kind: "error" } as never, "La copia fue publicada, pero no se pudo confirmar la durabilidad del directorio final.") : null,
         state.backup?.cleanup_warning ? h(Feedback, { kind: "advisory" } as never, "La copia fue creada, pero falló la limpieza de un archivo interno temporal.") : null,
         state.backup ? h("section", { "aria-labelledby": "backup-summary-heading", "data-ui-backup-summary": true },
           h("h3", { id: "backup-summary-heading" }, "Última copia creada"),
@@ -39,7 +62,7 @@ export function BackupScreen({ canRestore = true }: { canRestore?: boolean } = {
       h(Panel, { label: "Restauración" } as never,
         canRestore ? h(Action, { variant: "secondary", pending: state.restore_status === "pending" && !state.summary, pendingLabel: "Preparando restauración…", disabled: pending, onClick: () => void interaction.prepareRestore() }, "Elegir archivo de respaldo") : h("p", { role: "note" }, "La restauración está disponible con una licencia activa."),
         canRestore ? null : h(Action, { variant: "secondary", disabled: true }, "Elegir archivo de respaldo"),
-        restoreMessage ? h(Feedback, { kind: state.restore_status === "success" ? "success" : state.restore_status === "unavailable" ? "unavailable" : "error" } as never, restoreMessage) : null,
+        restoreMessage && !sharedOutcome ? h(Feedback, { kind: state.restore_status === "success" ? "success" : state.restore_status === "unavailable" ? "unavailable" : "error" } as never, restoreMessage) : null,
         canRestore && state.summary ? h("section", { "aria-labelledby": "restore-summary-heading", "data-ui-restore-candidate": true },
           h("h3", { id: "restore-summary-heading" }, "Candidato de restauración"),
           h("p", null, `Tamaño: ${state.summary.size_bytes} bytes · Esquema: ${state.summary.schema_version}`),

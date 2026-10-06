@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OnboardingScreen } from "./onboarding-screen.ts";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
 const category = { category_id: 1, name: "Filtros", fields: [{ definition_id: 10, label: "Marca", field_type: "text", required: true, options: [] }] };
 const decimalCategory = { category_id: 1, name: "Filtros", fields: [{ definition_id: 11, label: "Longitud", field_type: "number", required: true, options: [] }] };
@@ -18,6 +19,86 @@ async function enterValidProduct(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByRole("spinbutton", { name: "Stock inicial (unidades enteras)" }), "3");
   await user.type(screen.getByRole("textbox", { name: "Marca" }), "ACDelco");
 }
+
+test("publishes category outcomes repeatedly but keeps category validation inline", async () => {
+  let code = "persistence_failure";
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_category_command" ? code === "success" ? { kind: "success", category_id: 2, name: "Nueva", fields: [] } : { kind: "error", code, message: "private" } : undefined);
+  render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
+  const u = userEvent.setup({ document });
+  await screen.findByLabelText("Marca");
+  await u.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "Filtros");
+  for (let i = 1; i <= 2; i++) {
+    await u.click(screen.getByRole("button", { name: "Crear categoría" }));
+    await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, i));
+    assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
+  }
+  code = "duplicate_category";
+  await u.click(screen.getByRole("button", { name: "Crear categoría" }));
+  await waitFor(() => assert.ok(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]')));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  code = "success";
+  await u.click(screen.getByRole("button", { name: "Crear categoría" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="success"]'), null);
+});
+
+test("reports product creation with failed location as partial success and preserves correction without duplicate creation", async () => {
+  let calls = 0;
+  mockIPC((command) => {
+    if (command === "list_categories_command") return success();
+    if (command === "onboarding_location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "onboarding_list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A1", values: ["A1"], active: true, revision: 0 }] };
+    if (command === "create_product_command") { calls++; return { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true }; }
+    if (command === "onboarding_assign_product_primary_location_command") return { kind: "error", code: "persistence_failure", message: "private" };
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
+  const u = userEvent.setup({ document });
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(u);
+  await u.selectOptions(screen.getByRole("combobox", { name: "Sector" }), "A1");
+  await u.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="warning"]').length, 1));
+  assert.match(document.querySelector('[data-ui-onboarding]')!.textContent!, /Producto creado: FIL-1.*No se pudo asignar/);
+  await u.click(screen.getByRole("button", { name: "Cerrar notificación: Advertencia" }));
+  assert.match(document.querySelector('[data-ui-onboarding]')!.textContent!, /podés corregirla desde el Catálogo/);
+  assert.equal((screen.getByRole("textbox", { name: "SKU" }) as HTMLInputElement).value, "");
+  assert.equal(calls, 1);
+});
+
+test("suppresses duplicate and unmounted category outcomes with a surviving provider", async () => {
+  let finish!: (value: unknown) => void;
+  let calls = 0;
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_category_command" ? (calls++, new Promise((resolve) => { finish = resolve; })) : undefined);
+  const view = render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
+  await screen.findByLabelText("Marca");
+  await userEvent.type(screen.getByRole("textbox", { name: "Nombre de la categoría" }), "Nueva");
+  const form = screen.getByRole("button", { name: "Crear categoría" }).closest("form")!;
+  act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+  assert.equal(calls, 1);
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { finish({ kind: "success", category_id: 2, name: "Nueva", fields: [] }); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+});
+
+test("publishes product persistence error and subsequent full success without hiding attribute validation", async () => {
+  let code = "persistence_failure";
+  mockIPC((command) => command === "list_categories_command" ? success() : command === "create_product_command" ? code === "success" ? { kind: "success", product_id: 2, sku: "FIL-1", name: "Filtro", category_id: 1, category_name: "Filtros", purchase_price_centavos: 8000, sale_price_centavos: 12550, minimum_sale_price_centavos: 10000, available_quantity: 3, active: true } : { kind: "error", code, message: "private", field_error: { definition_id: 10, reason: "invalid_value" } } : undefined);
+  render(createElement(ActionNotificationProvider, null, createElement(OnboardingScreen, { onBack: () => undefined })));
+  const u = userEvent.setup({ document });
+  await screen.findByLabelText("Marca");
+  await enterValidProduct(u);
+  await u.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="error"]'), null);
+  code = "invalid_attribute_value";
+  await u.click(screen.getByRole("button", { name: "Crear producto" }));
+  assert.ok(await screen.findByText("Revisá el valor de este campo.", { selector: "[data-ui-feedback]" }));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  code = "success";
+  await u.click(screen.getByRole("button", { name: "Crear producto" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.equal(document.querySelector('[data-ui-onboarding] [data-ui-feedback="success"]'), null);
+});
 
 test("keeps product onboarding and its location path operational while Catalog is locked", async () => {
   const calls: string[] = [];

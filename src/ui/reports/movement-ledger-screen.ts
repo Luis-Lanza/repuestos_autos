@@ -1,4 +1,5 @@
 import { createElement, useEffect, useReducer, useRef, useState } from "react";
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { MOVEMENT_TYPES, movementLedgerCommands, type MovementType } from "../../commands/movement-ledger.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
 import { AlignedData, Panel } from "../visual-system/structure.ts";
@@ -18,6 +19,9 @@ export function MovementLedgerScreen() {
  const [reportMode, setReportMode] = useState<ReportMode>("");
  const [appliedMode, setAppliedMode] = useState<ReportMode | null>(null);
  const [profitPeriod, setProfitPeriod] = useState({ from: state.applied.from, to: state.applied.to });
+ const notifications = useActionNotifications();
+ const exportInFlight = useRef(false);
+ const [exportResourceLimit, setExportResourceLimit] = useState(false);
  const mounted = useRef(true); const listAttempt = useRef(0); const productsAttempt = useRef(0); const exportAttempt = useRef(0);
  useEffect(() => { mounted.current = true; return () => { mounted.current = false; listAttempt.current++; productsAttempt.current++; exportAttempt.current++; }; }, []);
  const load = (page: number, filters = state.applied) => {
@@ -52,7 +56,19 @@ export function MovementLedgerScreen() {
  const changeProductQuery = (query: string) => dispatch({ type: "product_query_changed", query, request_id: ++productsAttempt.current });
  const selectProduct = (product: typeof state.products[number]) => dispatch({ type: "product_selected", product, request_id: ++productsAttempt.current });
  const clearProduct = () => dispatch({ type: "product_cleared", request_id: ++productsAttempt.current });
- const exportPdf = () => { const request_id = ++exportAttempt.current; dispatch({ type: "export_started", request_id }); void movementLedgerCommands.export(state.applied).then(response => { if (mounted.current && request_id === exportAttempt.current) dispatch({ type: "export_finished", request_id, response }); }); };
+ const exportPdf = () => {
+  if (exportInFlight.current || state.status !== "ready") return;
+  exportInFlight.current = true; setExportResourceLimit(false);
+  const request_id = ++exportAttempt.current;
+  dispatch({ type: "export_started", request_id });
+  void movementLedgerCommands.export(state.applied).then(response => {
+   if (!mounted.current || request_id !== exportAttempt.current) return;
+   const resourceLimit = response.kind === "error" && response.code === "resource_limit";
+   setExportResourceLimit(resourceLimit);
+   notifications?.publish({ severity: response.kind === "success" ? "success" : response.kind === "cancelled" ? "info" : "error", message: response.kind === "success" ? "El PDF se generó correctamente." : response.kind === "cancelled" ? "Se canceló la exportación." : resourceLimit ? "El registro supera los límites de recursos y no se guardó. Ajustá los filtros e intentá de nuevo." : "No se pudo exportar el registro." });
+   dispatch({ type: "export_finished", request_id, response });
+  }).finally(() => { exportInFlight.current = false; });
+ };
  const filtersValid = Boolean(state.draft.from && state.draft.to && state.draft.from <= state.draft.to);
  const rows = state.rows.map(row => [
   row.occurred_at.replace("T", " "), createElement("span", null, createElement("strong", null, row.product_name), " ", createElement("code", null, row.product_sku), createElement("small", { "data-ui-ledger-current": true }, "datos actuales")),
@@ -70,7 +86,7 @@ export function MovementLedgerScreen() {
   : state.products_status === "empty" ? createElement(Feedback, { kind: "empty" }, `No encontramos productos para “${state.product_submitted_query}”.`)
   : state.products_status === "error" ? createElement(Feedback, { kind: "error" }, createElement("span", null, "No se pudo buscar en el catálogo local. Reintentá. ", createElement(Action, { variant: "tertiary", onClick: () => searchProducts(state.product_submitted_query, state.products_page) }, "Reintentar")))
   : state.products_status === "initial" ? createElement(Feedback, { kind: "initial" }, createElement("span", null, "Todos los productos. Buscá un producto por nombre o SKU para filtrar el registro.")) : null;
- const exportMessage = state.export_status === "pending" ? "Preparando el PDF…" : state.export_status === "success" ? "El PDF se generó correctamente." : state.export_status === "cancelled" ? "Se canceló la exportación." : state.export_status === "error" ? "No se pudo exportar el registro." : null;
+ const exportMessage = state.export_status === "pending" ? "Preparando el PDF…" : state.export_status === "success" ? "El PDF se generó correctamente." : state.export_status === "cancelled" ? "Se canceló la exportación." : state.export_status === "error" ? exportResourceLimit ? "El registro supera los límites de recursos y no se guardó. Ajustá los filtros e intentá de nuevo." : "No se pudo exportar el registro." : null;
  return createElement("main", { "aria-labelledby": "movement-ledger-heading", "data-ui-movement-ledger": true, "data-ui-report-mode": reportMode === "gross_profit" ? "gross-profit" : "movement",
   "data-ui-report-applied-mode": appliedMode === "gross_profit" ? "gross-profit" : "movement", "aria-busy": (appliedMode === "gross_profit" ? false : state.status === "loading") || undefined },
   createElement("header", { "data-ui-report-header": true }, createElement("h1", { id: "movement-ledger-heading" }, "Reportes"), createElement("p", null, "Consultá los movimientos de inventario o la ganancia bruta del período.")),
@@ -97,5 +113,5 @@ export function MovementLedgerScreen() {
    createElement("div", { "data-ui-report-actions": true }, createElement(Action, { variant: "secondary", disabled: state.status !== "ready", pending: state.export_status === "pending", pendingLabel: "Exportar PDF", onClick: exportPdf }, "Exportar PDF")),
    status,
    state.status === "ready" || state.status === "empty" ? createElement("div", { "data-ui-ledger-pages": true }, createElement("span", { role: "status" }, `Página ${state.page}`), createElement(Action, { variant: "secondary", disabled: state.page <= 1 || state.status === "loading", onClick: () => load(state.page - 1) }, "Anterior"), createElement(Action, { variant: "secondary", disabled: !state.has_more || state.status === "loading", onClick: () => load(state.page + 1) }, "Siguiente")) : null,
-   exportMessage ? createElement(Feedback, { kind: state.export_status === "error" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportMessage) : null));
+   exportMessage && (!notifications || state.export_status === "pending") ? createElement(Feedback, { kind: state.export_status === "error" ? "error" : state.export_status === "success" ? "success" : "advisory" }, exportMessage) : null));
 }

@@ -2,6 +2,8 @@
 
 Desktop point-of-sale and inventory application built with React, Tauri 2, Rust, and SQLite.
 
+Shared action outcomes use [action notifications](docs/action-notifications.md); validation and recovery guidance remain inline.
+
 ## Run on Fedora 43
 
 ### 1. Install system dependencies

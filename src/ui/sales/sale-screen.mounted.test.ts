@@ -7,6 +7,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 
 import { SaleScreen } from "./sale-screen.ts";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
 const style = document.createElement("style");
 style.textContent = await readFile(new URL("../styles.css", import.meta.url), "utf8");
@@ -50,6 +51,58 @@ async function searchFor(value = "filtro") { const u = user(); await u.type(scre
 async function addFirst() { const u = await searchFor(); await u.click(await screen.findByRole("button", { name: "Agregar", exact: true })); await u.click(screen.getByRole("button", { name: "Revisar y cobrar" })); return u; }
 function installUuid(...ids: string[]) { let index = 0; Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: () => ids[Math.min(index++, ids.length - 1)] ?? UUID }); }
 
+test("publishes repeated accepted sale failures without redundant inline results and retains validation", async () => {
+  installUuid(UUID);
+  let calls = 0;
+  let code = "persistence_failure";
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? (calls++, { kind: "error", code, message: "private" }) : undefined);
+  render(createElement(ActionNotificationProvider, null, createElement(SaleScreen)));
+  const u = await addFirst();
+  for (let i = 1; i <= 2; i++) {
+    await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+    await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, i));
+    assert.equal(document.querySelector('[data-ui-checkout-content] [data-ui-feedback="error"]'), null);
+  }
+  code = "insufficient_stock";
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  assert.ok(await screen.findByText("No hay stock suficiente para completar la venta."));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  assert.equal(calls, 3);
+});
+
+test("publishes sale success while preserving the persisted receipt", async () => {
+  installUuid(UUID);
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? success : undefined);
+  render(createElement(ActionNotificationProvider, null, createElement(SaleScreen)));
+  const u = await addFirst();
+  await u.click(screen.getByRole("button", { name: "Confirmar venta" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.ok(screen.getByRole("button", { name: "Nueva venta" }));
+  const receipt = screen.getByRole("main");
+  const facts = receipt.textContent;
+  await u.click(within(screen.getByRole("region", { name: "Notificaciones de acciones" })).getByRole("button", { name: /Cerrar/ }));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+  assert.equal(receipt.textContent, facts);
+  assert.ok(screen.getByRole("button", { name: "Nueva venta" }));
+});
+
+test("suppresses duplicate and unmounted sale outcomes with a surviving provider", async () => {
+  installUuid(UUID);
+  const result = deferred<unknown>();
+  let calls = 0;
+  mockIPC((command) => command === "browse_products_command" ? browse([products[0]]) : command === "confirm_sale_command" ? (calls++, result.promise) : undefined);
+  const view = render(createElement(ActionNotificationProvider, null, createElement(SaleScreen)));
+  const u = await addFirst();
+  const button = screen.getByRole("button", { name: "Confirmar venta" });
+  act(() => { fireEvent.click(button); fireEvent.click(button); });
+  assert.equal(calls, 1);
+  await u.keyboard("{Escape}");
+  assert.ok(screen.getByRole("dialog", { name: "Revisar y cobrar" }));
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { result.resolve(success); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+});
+
 test("renders the approved Sales catalog and read-only empty and active draft summaries", async () => {
   mockIPC((command) => command === "browse_products_command" ? browse(products) : Promise.reject(new Error("unexpected command")));
   render(createElement(SaleScreen));
@@ -57,7 +110,7 @@ test("renders the approved Sales catalog and read-only empty and active draft su
   const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
   assert.equal(screen.getAllByText("Búsqueda y despacho inmediato de repuestos en mostrador").length, 2);
   assert.equal(catalog.querySelector("[data-ui-product-browser]")?.getAttribute("data-ui-product-browser"), "sales");
-  assert.equal(within(catalog).getByRole("status").textContent, "Resultados del catálogo: 3 repuestosFiltro: Stock activo");
+  await waitFor(() => assert.equal(within(catalog).getByRole("status").textContent, "Resultados del catálogo: 3 repuestosFiltro: Stock activo"));
   const firstProduct = within(catalog).getAllByRole("listitem")[0];
   assert.equal(firstProduct.querySelector("[data-ui-product-facts]")?.textContent, "FIL-1FiltrosDisponible: 8");
   assert.equal(firstProduct.querySelector("[data-ui-unit-price-caption]")?.textContent, "Precio de venta");

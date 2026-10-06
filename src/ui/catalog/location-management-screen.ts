@@ -1,6 +1,7 @@
 import { createElement, useEffect, useReducer, useRef, useState } from "react";
 
 import { productLocationCommands, type ProductLocationRecord } from "../../commands/catalog.ts";
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
 import { createLocationManagementFlow, generateLocationCode, initialLocationManagementState, LOCATION_TEMPLATES, validateLocationSchema, validateLocationValues } from "./location-management-flow.ts";
@@ -8,6 +9,8 @@ import { createLocationManagementFlow, generateLocationCode, initialLocationMana
 const locationError = (code: string) => code === "validation_error" ? "Revisá los nombres de segmentos y valores; no pueden estar vacíos ni repetirse." : code === "location_schema_in_use" ? "Ya existen ubicaciones físicas. El esquema y su orden no se pueden cambiar." : code === "duplicate_location_code" ? "Ya existe una ubicación con ese código. Elegí otros valores." : code === "location_in_use" ? "Esta ubicación está asignada a un producto. Para desactivarla o eliminarla, quitá la asignación desde la edición del producto y después volvé a intentarlo." : code === "stale_location" ? "La ubicación cambió. Recargá los datos antes de volver a intentar." : code === "location_unavailable" ? "La ubicación ya no está disponible. Recargá los datos." : "No se pudo completar el cambio de ubicación.";
 
 export function LocationManagementScreen() {
+  const notifications = useActionNotifications();
+  const [routineError, setRoutineError] = useState(false);
   const [state, dispatch] = useReducer(createLocationManagementFlow, initialLocationManagementState);
   const [segments, setSegments] = useState<string[]>([...LOCATION_TEMPLATES[0].segments]);
   const [values, setValues] = useState<string[]>([]);
@@ -41,18 +44,29 @@ export function LocationManagementScreen() {
   };
   useEffect(() => { void load(); }, []);
 
+  const fail = (code: string) => {
+    const message = locationError(code);
+    const routine = code === "persistence_failure";
+    setRoutineError(routine);
+    if (routine) notifications?.publish({ severity: "error", message });
+    dispatch({ type: "failed", message });
+  };
+  const succeed = (action: Extract<Parameters<typeof dispatch>[0], { type: "succeeded" }>) => {
+    notifications?.publish({ severity: "success", message: action.notice });
+    dispatch(action);
+  };
   const run = async (operation: () => ReturnType<typeof productLocationCommands.saveSchema>) => {
     if (locked.current || state.status === "unavailable") return;
     locked.current = true; setPending(true); dispatch({ type: "started" });
+    const current = request.current;
     const response = await operation();
-    if (!mounted.current) return;
+    if (!mounted.current || current !== request.current) return;
     locked.current = false; setPending(false);
-    if (response.kind === "error") { dispatch({ type: "failed", message: locationError(response.code) }); return; }
-    if (response.kind === "schema_success") dispatch({ type: "succeeded", notice: "Esquema actualizado.", schema: response.schema });
-    else if (response.kind === "location_success") { dispatch({ type: "succeeded", notice: `Ubicación ${response.location.code} creada.`, location: response.location }); setValues(segments.map(() => "")); setValueErrors({}); }
-    else if (response.kind === "deleted") dispatch({ type: "succeeded", notice: "Ubicación eliminada." });
-    else if (response.kind === "location_success") return;
-    else dispatch({ type: "failed", message: "La respuesta del servicio no coincide con la operación solicitada." });
+    if (response.kind === "error") { fail(response.code); return; }
+    if (response.kind === "schema_success") succeed({ type: "succeeded", notice: "Esquema actualizado.", schema: response.schema });
+    else if (response.kind === "location_success") { succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} creada.`, location: response.location }); setValues(segments.map(() => "")); setValueErrors({}); }
+    else if (response.kind === "deleted") succeed({ type: "succeeded", notice: "Ubicación eliminada." });
+    else { setRoutineError(false); dispatch({ type: "failed", message: "La respuesta del servicio no coincide con la operación solicitada." }); }
   };
   const saveSchema = () => {
     if (!state.schema || schemaFrozen || pending) return;
@@ -69,23 +83,25 @@ export function LocationManagementScreen() {
   const updateActivity = async (location: ProductLocationRecord, active: boolean) => {
     if (locked.current) return;
     locked.current = true; setPending(true); dispatch({ type: "started" });
+    const current = request.current;
     const response = active ? await productLocationCommands.activate({ location_id: location.location_id, expected_revision: location.revision }) : await productLocationCommands.deactivate({ location_id: location.location_id, expected_revision: location.revision });
-    if (!mounted.current) return;
+    if (!mounted.current || current !== request.current) return;
     locked.current = false; setPending(false); setConfirm(null);
-    if (response.kind === "error") dispatch({ type: "failed", message: locationError(response.code) });
-    else if (response.kind === "location_success") dispatch({ type: "succeeded", notice: `Ubicación ${response.location.code} ${active ? "activada" : "desactivada"}.`, location: response.location });
-    else dispatch({ type: "failed", message: "No se pudo confirmar el estado actualizado." });
+    if (response.kind === "error") fail(response.code);
+    else if (response.kind === "location_success") succeed({ type: "succeeded", notice: `Ubicación ${response.location.code} ${active ? "activada" : "desactivada"}.`, location: response.location });
+    else { setRoutineError(false); dispatch({ type: "failed", message: "No se pudo confirmar el estado actualizado." }); }
   };
   const deleteLocation = async () => {
     const location = confirm?.location;
     if (!location || locked.current) return;
     locked.current = true; setPending(true); dispatch({ type: "started" });
+    const current = request.current;
     const response = await productLocationCommands.delete({ location_id: location.location_id, expected_revision: location.revision });
-    if (!mounted.current) return;
+    if (!mounted.current || current !== request.current) return;
     locked.current = false; setPending(false); setConfirm(null);
-    if (response.kind === "error") dispatch({ type: "failed", message: locationError(response.code) });
-    else if (response.kind === "deleted") dispatch({ type: "succeeded", notice: `Ubicación ${location.code} eliminada.`, location_id: location.location_id });
-    else dispatch({ type: "failed", message: "No se pudo confirmar la eliminación." });
+    if (response.kind === "error") fail(response.code);
+    else if (response.kind === "deleted") succeed({ type: "succeeded", notice: `Ubicación ${location.code} eliminada.`, location_id: location.location_id });
+    else { setRoutineError(false); dispatch({ type: "failed", message: "No se pudo confirmar la eliminación." }); }
   };
 
   const selectTemplate = (name: string) => {
@@ -115,8 +131,8 @@ export function LocationManagementScreen() {
     createElement("p", null, "Definí cómo se identifican las ubicaciones físicas y administrá sus códigos generados."),
     state.status === "loading" ? createElement(Feedback, { kind: "loading" }, "Cargando esquema y ubicaciones…") : null,
     state.status === "unavailable" ? createElement(Feedback, { kind: "unavailable" }, createElement("span", null, state.error, " ", createElement(Action, { variant: "secondary", onClick: () => void load() }, "Reintentar carga"))) : null,
-    state.error && state.status !== "unavailable" ? createElement(Feedback, { kind: "error" }, state.error) : null,
-    state.notice ? createElement(Feedback, { kind: "success" }, state.notice) : null,
+    state.error && state.status !== "unavailable" && !(notifications && routineError) ? createElement(Feedback, { kind: "error" }, state.error) : null,
+    state.notice && !notifications ? createElement(Feedback, { kind: "success" }, state.notice) : null,
     state.status === "ready" && state.schema ? createElement("div", { "data-ui-location-workspace": true },
       createElement("section", { "aria-labelledby": "location-schema-heading", "data-ui-location-schema": true },
         createElement("h3", { id: "location-schema-heading" }, "Esquema de ubicaciones"),
@@ -138,5 +154,5 @@ export function LocationManagementScreen() {
           createElement("p", null, "Código generado: ", createElement("code", null, generateLocationCode(values.slice(0, state.schema.segments.length)) || "Completá los valores")),
           createElement(Action, { variant: "primary", type: "submit", disabled: pending }, "Crear ubicación"))),
       physicalLocationList) : null,
-    confirm ? createElement(ConfirmationDialog, { open: true, purpose: "cancellation", title: `${confirm.operation === "delete" ? "Eliminar" : "Desactivar"} ${confirm.location.code}`, description: confirm.operation === "delete" ? `¿Eliminar la ubicación ${confirm.location.code}? Si está asignada a un producto, la operación será rechazada.` : `¿Desactivar ${confirm.location.code}? Si está asignada a un producto, no se podrá desactivar.`, confirmLabel: confirm.operation === "delete" ? "Confirmar eliminación" : "Confirmar desactivación", pending, pendingLabel: "Actualizando…", dialogId: "location-lifecycle-confirmation", onCancel: () => { if (!pending) setConfirm(null); }, onConfirm: () => confirm.operation === "delete" ? void deleteLocation() : void updateActivity(confirm.location, false) }) : null);
+    confirm ? createElement(ConfirmationDialog, { open: true, purpose: "cancellation", title: `${confirm.operation === "delete" ? "Eliminar" : "Desactivar"} ${confirm.location.code}`, description: confirm.operation === "delete" ? `¿Eliminar la ubicación ${confirm.location.code}? Si está asignada a un producto, la operación será rechazada.` : `¿Desactivar ${confirm.location.code}? Si está asignada a un producto, no se podrá desactivar.`, confirmLabel: confirm.operation === "delete" ? "Confirmar eliminación" : "Confirmar desactivación", pending, pendingLabel: "Actualizando…", dialogId: "location-lifecycle-confirmation", onCancel: () => { if (!pending && !locked.current) setConfirm(null); }, onConfirm: () => confirm.operation === "delete" ? void deleteLocation() : void updateActivity(confirm.location, false) }) : null);
 }

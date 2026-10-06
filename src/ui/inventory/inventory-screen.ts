@@ -3,6 +3,7 @@ import { createElement, type FormEvent, useCallback, useEffect, useId, useReduce
 import { browseInventoryProducts, type InventoryBrowsePage, type ProductBrowseResult, type ProductSearchResult, type ProductStockState } from "../../commands/catalog.ts";
 import { inventoryCommands, type InventoryResponse } from "../../commands/inventory.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { createInventoryFlow, initialInventoryState, projectedBalance, stockEntryPrices, type InventoryState } from "./inventory-flow.ts";
 import { createProductBrowserFlow, initialProductBrowserState, ProductBrowser } from "../catalog/product-browser.ts";
@@ -49,6 +50,8 @@ export function InventoryOperationChoices({ operation, onChange, disabled = fals
 }
 
 export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null) => void; onInventoryAlertsRefresh?: () => void; initialStockState?: ProductStockState }) {
+  const notifications = useActionNotifications();
+  const [ordinaryFailure, setOrdinaryFailure] = useState(false);
   const onAlertCueChange = props?.onAlertCueChange;
   const [state, dispatch] = useReducer(createInventoryFlow, initialInventoryState);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, { ...initialProductBrowserState, stock_state: props.initialStockState ?? "all" });
@@ -58,9 +61,10 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const searchAttempt = useRef(0);
   const alertAttempt = useRef(0);
   const confirmLocked = useRef(false);
+  const confirmAttempt = useRef(0);
   const catalog = createInventoryCatalogInteraction();
 
-  useEffect(() => () => { mounted.current = false; searchAttempt.current += 1; alertAttempt.current += 1; confirmLocked.current = true; }, []);
+  useEffect(() => () => { mounted.current = false; searchAttempt.current += 1; alertAttempt.current += 1; confirmAttempt.current += 1; confirmLocked.current = true; }, []);
   const refreshAlerts = useCallback(async () => {
     setAlertState("loading");
     const attempt = ++alertAttempt.current;
@@ -102,19 +106,28 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
   const confirm = async () => {
     if (!state.product || confirmLocked.current || (state.operation === "physical_count" && !catalogPassword.trim())) return;
     confirmLocked.current = true;
+    const attempt = ++confirmAttempt.current;
     const request_id = state.request_id ?? crypto.randomUUID();
     dispatch({ type: "confirmation_started", request_id });
     const response: InventoryResponse = state.operation === "stock_entry"
       ? await inventoryCommands.confirmStockEntry({ request_id, product_id: state.product.product_id, quantity: Number(state.entry_quantity), ...(stockEntryPrices(state).purchase === undefined ? {} : { unit_purchase_price_centavos: stockEntryPrices(state).purchase! }), ...(stockEntryPrices(state).sale === undefined ? {} : { sale_price_centavos: stockEntryPrices(state).sale! }), ...(stockEntryPrices(state).minimum === undefined ? {} : { minimum_sale_price_centavos: stockEntryPrices(state).minimum! }), note: state.note || null })
       : await inventoryCommands.confirmPhysicalCount({ request_id, product_id: state.product.product_id, count: Number(state.physical_count), reason: state.reason, catalog_password: catalogPassword });
-    if (!mounted.current) return;
+    if (!mounted.current || attempt !== confirmAttempt.current) return;
     setCatalogPassword("");
     confirmLocked.current = false;
     if (response.kind === "success") {
       dispatch({ type: "confirmation_succeeded", result: response });
+      notifications?.publish({ severity: "success", message: `Operación guardada. Stock actual: ${response.resulting_quantity}.` });
       props.onInventoryAlertsRefresh?.();
       await refreshAlerts();
-    } else dispatch({ type: "confirmation_failed", message: response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : response.code === "catalog_password_invalid" ? "La contraseña del catálogo no es correcta. Ingresala de nuevo." : "No se pudo guardar la operación de inventario. Reintentá." });
+    } else {
+      // Only ordinary persistence failure migrates; domain validation/recovery stays inline.
+      const ordinary = response.code === "persistence_failure";
+      const message = response.code === "request_conflict" ? "El ID de solicitud ya fue usado con datos de inventario diferentes. Reintentá con los datos correctos." : response.code === "catalog_password_invalid" ? "La contraseña del catálogo no es correcta. Ingresala de nuevo." : "No se pudo guardar la operación de inventario. Reintentá.";
+      setOrdinaryFailure(ordinary);
+      dispatch({ type: "confirmation_failed", message });
+      if (ordinary) notifications?.publish({ severity: "error", message });
+    }
   };
 
   const projection = projectedBalance(state);
@@ -155,8 +168,10 @@ export function InventoryScreen(props: { onAlertCueChange?: (cue: string | null)
           projection !== null ? createElement("p", { "data-ui-inventory-projection": true }, `Saldo proyectado: ${projection}`) : null,
           state.advisory_notice ? createElement(Feedback, { kind: "stale" } as never, "Saldo proyectado desactualizado. Revisá el stock actual.") : null,
           createElement("div", { "data-ui-inventory-actions": true }, createElement(Action, { variant: "tertiary", disabled: pending, onClick: () => { setCatalogPassword(""); dispatch({ type: "discard" }); } }, "Nueva operación"), createElement(Action, { variant: "primary", pending, pendingLabel: "Guardando…", disabled: !valid, onClick: confirm }, "Confirmar operación")),
-          state.result ? createElement(Feedback, { kind: "success" } as never, `Operación guardada. Stock actual: ${state.result.resulting_quantity}.`) : null,
-          state.feedback ? createElement(Feedback, { kind: "error" } as never, createElement("span", null, state.feedback, " ", createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar"))) : null) : null),
+          state.result && !notifications ? createElement(Feedback, { kind: "success" } as never, `Operación guardada. Stock actual: ${state.result.resulting_quantity}.`) : null,
+          state.feedback ? notifications && ordinaryFailure
+            ? createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar")
+            : createElement(Feedback, { kind: "error" } as never, createElement("span", null, state.feedback, " ", createElement(Action, { variant: "tertiary", onClick: confirm }, "Reintentar"))) : null) : null),
       createElement(Panel, { label: "Alertas de stock" } as never,
         createElement("p", { "data-ui-inventory-alert-description": true }, "Productos en catálogo activo con stock crítico o agotado. Solo lectura."),
         alertState === "loading" ? createElement(Feedback, { kind: "loading" } as never, "Cargando alertas de stock…")

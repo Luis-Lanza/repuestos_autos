@@ -1152,3 +1152,37 @@ main[data-ui-sale] > [data-ui-sale-layout], main[data-ui-inventory] > [data-ui-i
 @media (max-width: 699px) {
   [data-ui-ledger-product-search] { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Body-level portal normally; reparented inside the active modal for accessible announcements. */
+[data-ui-action-notification-portal] { display: contents; }
+[data-ui-action-notifications] {
+  position: fixed;
+  inset-block-start: var(--space-4);
+  inset-inline-end: var(--space-4);
+  z-index: 1000;
+  inline-size: min(24rem, calc(100vw - 2 * var(--space-4)));
+  max-block-size: calc(100vh - 2 * var(--space-4));
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+[data-ui-action-notice] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--elevation-modal);
+  pointer-events: auto;
+}
+[data-ui-action-notice] p { grid-column: 1; margin: 0; overflow-wrap: anywhere; }
+[data-ui-action-notice] button { grid-column: 2; grid-row: 1 / span 2; align-self: start; padding-inline: var(--space-2); background: var(--color-surface); }
+[data-ui-action-notice][data-severity="success"] { background: var(--color-success-surface); color: var(--color-success); border-color: var(--color-success-edge); }
+[data-ui-action-notice][data-severity="error"] { background: var(--color-danger-surface); color: var(--color-danger-hover); border-color: var(--color-danger); }
+[data-ui-action-notice][data-severity="warning"] { background: var(--color-warning-surface); color: var(--color-warning); border-color: var(--color-warning-edge); }
+[data-ui-action-notice][data-severity="info"] { background: var(--color-surface-subtle); color: var(--color-action); border-color: var(--color-action); }
+[data-ui-notification-overflow] { margin: 0; padding: var(--space-2); background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-control); }
+[data-ui-notification-live] { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

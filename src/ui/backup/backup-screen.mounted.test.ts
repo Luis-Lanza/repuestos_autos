@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { BackupScreen } from "./backup-screen.ts";
 
 const prepared = { kind: "prepared", token: "restore-token", size_bytes: 2048, schema_version: 6 };
@@ -21,6 +22,101 @@ function mountIPC(overrides: Record<string, unknown> = {}) {
     throw new Error(`Unexpected command: ${command} ${JSON.stringify(payload)}`);
   });
 }
+
+test("shared backup and restore outcomes preserve summaries and recovery warnings", async () => {
+  mountIPC();
+  const user = userEvent.setup({ document });
+  render(createElement(ActionNotificationProvider, null, createElement(BackupScreen)));
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
+  assert.ok(await within(host).findByText("Copia creada correctamente."));
+  assert.equal(within(screen.getByRole("main")).queryByText("Copia creada correctamente."), null);
+  await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
+  assert.ok(screen.getByRole("region", { name: "Última copia creada" }));
+  mountIPC({ create: { kind: "error", code: "storage_unavailable" } });
+  await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
+  assert.ok(await within(host).findByText("El almacenamiento de copias no está disponible. Reintentá."));
+  await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
+  mountIPC({ create: { ...created, durability_warning: true } });
+  await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
+  assert.ok(within(screen.getByRole("main")).getByText(/durabilidad del directorio final/));
+  mountIPC();
+  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+  await user.click(screen.getByRole("button", { name: "Revisar restauración" }));
+  const dialog = screen.getByRole("dialog");
+  await user.click(within(dialog).getByRole("checkbox"));
+  await user.click(within(dialog).getByRole("button", { name: "Restaurar datos" }));
+  assert.ok(await within(host).findByText("Restauración completada correctamente."));
+});
+
+test("shared restore preparation and confirmation errors are results, not discarded candidates", async () => {
+ const user = userEvent.setup({ document });
+ mountIPC({ prepare: { kind: "error", code: "storage_unavailable", message: "bounded" } });
+ render(createElement(ActionNotificationProvider, null, createElement(BackupScreen)));
+ const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+ await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+ assert.ok(within(host).getByText("El almacenamiento local no está disponible. Reintentá."));
+ await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
+ mountIPC({ restore: { kind: "error", code: "restore_failed", message: "bounded" } });
+ await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+ await user.click(screen.getByRole("button", { name: "Revisar restauración" }));
+ await user.click(screen.getByRole("checkbox"));
+ await user.click(screen.getByRole("button", { name: "Restaurar datos" }));
+ assert.ok(within(host).getByText("No se pudo restaurar la información local. Reintentá."));
+ await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
+ assert.ok(screen.getByRole("region", { name: "Candidato de restauración" }));
+});
+
+test("invalid restore candidates retain inline guidance after preparation outcomes are dismissed", async () => {
+  const user = userEvent.setup({ document });
+  render(createElement(ActionNotificationProvider, null, createElement(BackupScreen)));
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  const restoration = screen.getByRole("region", { name: "Restauración" });
+  for (const [code, message] of [
+    ["token_invalid", "El candidato de restauración ya no es válido. Elegí el archivo nuevamente."],
+    ["invalid_backup", "El archivo de respaldo no es válido."],
+    ["token_expired", "La preparación de restauración venció. Elegí el archivo nuevamente."],
+  ]) {
+    mountIPC({ prepare: { kind: "error", code, message: "native detail" } });
+    await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+    for (const close of within(host).queryAllByRole("button", { name: /Cerrar/ })) await user.click(close);
+    assert.equal((await within(restoration).findByRole("alert")).textContent, message);
+    assert.equal(screen.queryByRole("region", { name: "Candidato de restauración" }), null);
+    assert.equal(screen.queryByRole("dialog"), null);
+  }
+});
+
+test("invalid confirmation token retains inline recovery and cannot confirm the obsolete candidate", async () => {
+  let confirmations = 0;
+  mountIPC({ restore: () => { confirmations++; return { kind: "error", code: "token_invalid", message: "native detail" }; } });
+  const user = userEvent.setup({ document });
+  render(createElement(ActionNotificationProvider, null, createElement(BackupScreen)));
+  await user.click(screen.getByRole("button", { name: "Elegir archivo de respaldo" }));
+  await user.click(screen.getByRole("button", { name: "Revisar restauración" }));
+  await user.click(screen.getByRole("checkbox"));
+  await user.click(screen.getByRole("button", { name: "Restaurar datos" }));
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  for (const close of within(host).queryAllByRole("button", { name: /Cerrar/ })) await user.click(close);
+  const restoration = screen.getByRole("region", { name: "Restauración" });
+  assert.equal((await within(restoration).findByRole("alert")).textContent, "El candidato de restauración ya no es válido. Elegí el archivo nuevamente.");
+  assert.equal((within(restoration).getByRole("button", { name: "Revisar restauración" }) as HTMLButtonElement).disabled, true);
+  const confirm = screen.queryByRole("button", { name: "Restaurar datos" });
+  if (confirm) await user.click(confirm);
+  assert.equal(confirmations, 1);
+  assert.equal(screen.queryByText("Restauración completada correctamente."), null);
+});
+
+test("surviving backup host rejects duplicate and unmounted creation", async () => {
+ let finish!: (value: unknown) => void; let calls = 0;
+ mountIPC({ create: () => { calls++; return new Promise(resolve => { finish = resolve; }); } });
+ const view = render(createElement(ActionNotificationProvider, null, createElement(BackupScreen)));
+ const picker = screen.getByRole("button", { name: "Elegir destino de la copia" });
+ fireEvent.click(picker); fireEvent.click(picker);
+ await waitFor(() => assert.equal(calls, 1));
+ view.rerender(createElement(ActionNotificationProvider));
+ await act(async () => { finish(created); });
+ assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+});
 
 test("renders Spanish continuity regions and a path-free backup summary", async () => {
   mountIPC();

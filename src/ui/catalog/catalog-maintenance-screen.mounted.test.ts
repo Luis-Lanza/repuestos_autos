@@ -10,6 +10,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CatalogMaintenanceScreen } from "./catalog-maintenance-screen.ts";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
 const activeCategory = { entity_id: 4, target: "category" as const, label: "Filtros", activity: "active" as const, revision: 2, active_product_count: 3 };
 const activeProduct = { entity_id: 1, target: "product" as const, label: "Filtro Premium · FIL-PRE-014", activity: "active" as const, revision: 7 };
@@ -36,6 +37,294 @@ async function openCategoryEditor() {
   await userEvent.click(await screen.findByRole("button", { name: "Gestionar categorías" }));
   return screen.findByRole("button", { name: "Editar Filtros" });
 }
+
+test("publishes lock and unlock completions, retaining credential validation inline", async () => {
+  let code = "access_unavailable";
+  mockIPC((command) => command === "catalog_access_lock_command" ? { kind: "success" } : command === "catalog_access_unlock_command" ? code === "success" ? { kind: "success" } : { kind: "error", code, message: "private" } : baseIPC(command));
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Bloquear catálogo" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
+  await userEvent.click(screen.getByRole("button", { name: "Desbloquear catálogo" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal(document.querySelector('[data-ui-catalog-access] [data-ui-feedback="error"]'), null);
+  code = "invalid_credentials";
+  await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
+  await userEvent.click(screen.getByRole("button", { name: "Desbloquear catálogo" }));
+  assert.ok(await screen.findByText("La contraseña o el código de recuperación no es válido."));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 2);
+  code = "success";
+  await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
+  await userEvent.click(screen.getByRole("button", { name: "Desbloquear catálogo" }));
+  await screen.findByRole("heading", { name: "Catálogo", exact: true });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 2);
+});
+
+test("publishes category saves before failed refresh, keeping recovery controls inline", async () => {
+  let saves = 0;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return categoryDetail;
+    if (command === "edit_catalog_command") { saves++; return { kind: "success", ...activeCategory, revision: 3 }; }
+    if (command === "list_catalog_categories_command" && saves) return { kind: "error", code: "persistence_failure", message: "private" };
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.ok(await within(dialog).findByRole("button", { name: "Reintentar actualización" }));
+  assert.match(dialog.textContent!, /No se pudieron actualizar/);
+  assert.equal(saves, 1);
+});
+
+test("publishes image cancellation, ordinary failure and replacement without migrating preview errors", async () => {
+  let outcome = "cancelled";
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return productDetail;
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "persistence_failure", message: "private" };
+    if (command === "choose_product_image_command") return outcome === "success" ? { kind: "success", product_id: 1, revision: 8 } : outcome === "cancelled" ? { kind: "cancelled" } : { kind: "error", code: outcome, message: "private" };
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  assert.ok(await within(dialog).findByText("No se pudo cargar la vista previa."));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+  for (const [result, severity] of [["cancelled", "info"], ["persistence_failure", "error"], ["success", "success"]]) {
+    outcome = result;
+    await userEvent.click(within(dialog).getByRole("button", { name: "Elegir imagen" }));
+    await waitFor(() => assert.ok(document.querySelector(`[data-ui-action-notice][data-severity="${severity}"]`)));
+  }
+  const imageSection = dialog.querySelector('[data-ui-catalog-product-image]')!;
+  assert.doesNotMatch(imageSection.textContent!, /No se modificó la imagen\.|No se pudo actualizar la imagen del producto\./);
+});
+
+test("publishes ordinary category lifecycle failure and success, retaining blocked action guidance", async () => {
+  const archived = { ...activeCategory, activity: "archived" as const };
+  let code = "persistence_failure";
+  mockIPC((command) => {
+    if (command === "list_catalog_categories_command") return { kind: "success", records: [archived] };
+    if (command === "maintain_catalog_command") return code === "success" ? { kind: "success", ...activeCategory } : { kind: "error", code, message: "private" };
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Gestionar categorías" }));
+  const management = screen.getByRole("region", { name: "Gestión de categorías" });
+  await userEvent.click(await within(management).findByRole("button", { name: "Reactivar Filtros" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal(within(management).queryByText("No se pudo actualizar el estado de la categoría."), null);
+  code = "lifecycle_blocked";
+  await userEvent.click(within(management).getByRole("button", { name: "Reactivar Filtros" }));
+  assert.ok(await within(management).findByText(/No se puede archivar/));
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  code = "success";
+  await userEvent.click(within(management).getByRole("button", { name: "Reactivar Filtros" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.equal(within(management).queryByText("Catálogo actualizado."), null);
+});
+
+test("suppresses duplicate and unmounted access completions while the provider stays mounted", async () => {
+  mockedCatalogAccessStatus = "locked";
+  let finish!: (value: unknown) => void;
+  let calls = 0;
+  mockIPC((command) => command === "catalog_access_unlock_command" ? (calls++, new Promise((resolve) => { finish = resolve; })) : baseIPC(command));
+  const view = render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await screen.findByLabelText("Contraseña");
+  await userEvent.type(screen.getByLabelText("Contraseña"), "password1");
+  const form = screen.getByRole("button", { name: "Desbloquear catálogo" }).closest("form")!;
+  act(() => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+  assert.equal(calls, 1);
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { finish({ kind: "success" }); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+  mockedCatalogAccessStatus = "unlocked";
+});
+
+for (const mode of ["setup", "recovery"] as const) test(`publishes ${mode} handoff only with retained recovery acknowledgement`, async () => {
+  mockedCatalogAccessStatus = mode === "setup" ? "setup_required" : "locked";
+  mockIPC((command) => {
+    if (command === `catalog_access_begin_${mode}_command`) return { kind: "recovery_code", recovery_code: "A".repeat(48) };
+    if (command === `catalog_access_finish_${mode}_command`) return { kind: "success" };
+    return baseIPC(command);
+  });
+  try {
+    render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+    await screen.findByRole("heading", { name: "Acceso al catálogo" });
+    if (mode === "recovery") {
+      await userEvent.click(await screen.findByRole("button", { name: "Usar código de recuperación" }));
+      await userEvent.type(screen.getByLabelText("Código de recuperación"), "B".repeat(48));
+    }
+    await userEvent.type(await screen.findByLabelText("Nueva contraseña"), "device-password");
+    await userEvent.type(screen.getByLabelText("Confirmar contraseña"), "device-password");
+    await userEvent.click(screen.getByRole("button", { name: mode === "setup" ? "Configurar catálogo" : "Restablecer contraseña" }));
+    assert.ok(await screen.findByText("A".repeat(48)));
+    assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 0);
+    assert.equal((screen.getByRole("button", { name: "Continuar al catálogo" }) as HTMLButtonElement).disabled, true);
+    await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Información" }));
+    assert.ok(screen.getByText("A".repeat(48)));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Confirmo que guardé el código de recuperación" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continuar al catálogo" }));
+    await screen.findByRole("heading", { name: "Catálogo", exact: true });
+    assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1);
+  } finally { mockedCatalogAccessStatus = "unlocked"; }
+});
+
+test("publishes password change results repeatedly and retains invalid-credential feedback", async () => {
+  let code = "access_unavailable";
+  mockIPC((command) => command === "catalog_access_change_password_command" ? code === "success" ? { kind: "success" } : { kind: "error", code, message: "private" } : baseIPC(command));
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await screen.findByRole("searchbox", { name: "Buscar en el catálogo" });
+  await userEvent.click(screen.getByText("Cambiar contraseña del catálogo"));
+  for (const label of ["Contraseña actual", "Nueva contraseña", "Confirmar nueva contraseña"]) await userEvent.type(screen.getByLabelText(label), "password1");
+  for (let i = 1; i <= 2; i++) {
+    await userEvent.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+    await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, i));
+    assert.equal(document.querySelector('[data-ui-catalog-password-change] [data-ui-feedback]'), null);
+  }
+  code = "invalid_credentials";
+  await userEvent.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+  assert.ok(await screen.findByText("La contraseña o el código de recuperación no es válido."));
+  code = "success";
+  await userEvent.click(screen.getByRole("button", { name: "Guardar contraseña" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.equal((screen.getByLabelText("Contraseña actual") as HTMLInputElement).value, "");
+  assert.equal(document.querySelector('[data-ui-catalog-password-change] [data-ui-feedback]'), null);
+});
+
+test("keeps partial category-schema persistence accurate and reload-gated after name failure", async () => {
+  let schemaSaves = 0;
+  let nameSaves = 0;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return { ...categoryDetail, revision: 2 + schemaSaves };
+    if (command === "edit_category_schema_command") return schemaSaves++, { kind: "success", ...activeCategory, revision: 3 };
+    if (command === "edit_catalog_command") return nameSaves++, { kind: "error", code: "persistence_failure", message: "private" };
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await openCategoryEditor());
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtros" });
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre de la categoría" }), " nuevos");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Agregar campo" }));
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Nombre del campo" }), "Marca");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar cambios" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="warning"]').length, 1));
+  assert.match(dialog.textContent!, /Campos de categoría guardados, pero no se pudo actualizar el nombre/);
+  assert.equal((within(dialog).getByRole("button", { name: "Guardar cambios" }) as HTMLButtonElement).disabled, true);
+  await userEvent.click(screen.getByRole("button", { name: "Cerrar notificación: Advertencia" }));
+  assert.match(dialog.textContent!, /Recargá para revisar/);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Reintentar actualización" }));
+  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Guardar cambios" }) as HTMLButtonElement).disabled, false));
+  assert.equal(schemaSaves, 1); assert.equal(nameSaves, 1);
+});
+
+test("publishes product edits and partial assignment without hiding stale and validation gates", async () => {
+  let code = "persistence_failure";
+  let revision = 7;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, revision };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [{ location_id: 8, code: "A", values: ["A"], active: true, revision: 0 }] };
+    if (command === "location_schema_command") return { kind: "schema_success", schema: { revision: 1, segments: [{ id: 1, label: "Sector", position: 0 }] } };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "edit_catalog_command") return code === "success" ? { kind: "success", ...activeProduct, revision: ++revision } : { kind: "error", code, message: "private" };
+    if (command === "assign_product_primary_location_command") return { kind: "error", code: "persistence_failure", message: "private" };
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal(dialog.querySelector('[data-ui-catalog-editor] [data-ui-feedback="error"]'), null);
+  const name = within(dialog).getByRole("textbox", { name: "Nombre del producto" });
+  await userEvent.clear(name);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  assert.match(dialog.querySelector('[data-ui-catalog-editor]')!.textContent!, /Corregí los campos indicados/);
+  await userEvent.type(name, "Filtro Premium");
+  code = "validation_error";
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  assert.match((await within(dialog).findByText("Revisá los valores del catálogo e intentá nuevamente.")).textContent!, /Revisá/);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Elegir imagen" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 2));
+  assert.match(dialog.querySelector('[data-ui-catalog-editor]')!.textContent!, /Revisá los valores del catálogo/);
+  for (const button of screen.getAllByRole("button", { name: "Cerrar notificación: Error" })) await userEvent.click(button);
+  code = "stale_catalog_record";
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await userEvent.click(await within(dialog).findByRole("button", { name: "Reintentar actualización" }));
+  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Guardar metadatos" }) as HTMLButtonElement).disabled, false));
+  code = "success";
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Guardar metadatos" }) as HTMLButtonElement).disabled, false));
+  await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Sector" }), "A");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Guardar metadatos" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="warning"]').length, 1));
+  assert.match(dialog.querySelector('[data-ui-catalog-editor]')!.textContent!, /Metadatos guardados, pero no se pudo asignar/);
+  assert.equal((within(dialog).getByRole("button", { name: "Guardar metadatos" }) as HTMLButtonElement).disabled, true);
+});
+
+test("suppresses duplicate and unmounted image removal, and blocks dialog dismissal while pending", async () => {
+  let finish!: (value: unknown) => void;
+  let calls = 0;
+  mockIPC((command) => {
+    if (command === "catalog_metadata_detail_command") return productDetail;
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "success", product_id: 1, revision: 7, mime_type: "image/jpeg", encoding: "base64", bytes: "/9j/2Q==" };
+    if (command === "remove_product_image_command") return calls++, new Promise((resolve) => { finish = resolve; });
+    return baseIPC(command);
+  });
+  const view = render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  const remove = await within(dialog).findByRole("button", { name: "Quitar imagen" });
+  act(() => { remove.click(); remove.click(); });
+  assert.equal(calls, 1);
+  await userEvent.keyboard("{Escape}");
+  assert.equal(screen.getAllByRole("dialog").length, 1);
+  await act(async () => { finish({ kind: "success", product_id: 1, revision: 8 }); });
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  assert.match(document.querySelector('[data-ui-action-notice]')!.textContent!, /Imagen del producto eliminada/);
+  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Quitar imagen" }) as HTMLButtonElement).disabled, false));
+  assert.equal(dialog.querySelector('[data-ui-catalog-product-image] [data-ui-feedback="success"]'), null);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Quitar imagen" }));
+  assert.equal(calls, 2);
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { finish({ kind: "success", product_id: 1, revision: 8 }); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 1);
+});
+
+test("owns product reactivate and confirmed archive outcomes without redundant modal notices", async () => {
+  let activity: "active" | "archived" = "archived";
+  let revision = 7;
+  let fail = true;
+  mockIPC((command, payload) => {
+    if (command === "catalog_metadata_detail_command") return { ...productDetail, activity, revision };
+    if (command === "list_product_locations_command") return { kind: "locations_success", locations: [] };
+    if (command === "catalog_product_image_thumbnail_command") return { kind: "error", code: "image_unavailable", message: "Unavailable" };
+    if (command === "maintain_catalog_command") {
+      if (fail) return { kind: "error", code: "persistence_failure", message: "private" };
+      activity = payload?.request?.intent === "archive" ? "archived" : "active";
+      return { kind: "success", ...activeProduct, activity, revision: ++revision };
+    }
+    return baseIPC(command);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(CatalogMaintenanceScreen)));
+  await userEvent.click(await screen.findByRole("button", { name: "Editar", exact: true }));
+  const dialog = await screen.findByRole("dialog", { name: "Editar Filtro Premium" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar", exact: true }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="error"]').length, 1));
+  assert.equal(dialog.querySelector('[data-ui-catalog-lifecycle] [data-ui-feedback="error"]'), null);
+  fail = false;
+  await userEvent.click(within(dialog).getByRole("button", { name: "Reactivar", exact: true }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 1));
+  await waitFor(() => assert.equal((within(dialog).getByRole("button", { name: "Archivar", exact: true }) as HTMLButtonElement).disabled, false));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Archivar", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirmar archivo" }));
+  await waitFor(() => assert.equal(document.querySelectorAll('[data-ui-action-notice][data-severity="success"]').length, 2));
+  assert.equal(dialog.querySelector('[data-ui-catalog-lifecycle] [data-ui-feedback="success"]'), null);
+});
 
 test("explicitly locks the Catalog session and returns to the password gate", async () => {
   const calls: string[] = [];

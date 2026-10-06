@@ -1,6 +1,7 @@
 import { createElement, type ChangeEvent, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
 
 import { CATALOG_INTENT, CATALOG_TARGET, browseProducts, catalogAccessCommands, catalogMaintenanceCommands, catalogProductImageCommands, productLocationCommands, type CatalogAccessResponse, type CatalogAccessStatus, type CatalogMaintenanceRecord, type CatalogMetadataDetail, type ProductLocationRecord } from "../../commands/catalog.ts";
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback } from "../visual-system/controls.ts";
 import { CatalogEditDialog, CatalogMetadataEditor } from "../visual-system/catalog-edit-dialog.ts";
 import { ConfirmationDialog } from "../visual-system/confirmation-dialog.ts";
@@ -18,7 +19,10 @@ type BrowserSnapshot = Pick<ProductBrowserState, "query" | "category_id" | "stoc
 
 const accessErrorMessage = (response: CatalogAccessResponse) => response.kind === "error" && response.code === "invalid_credentials" ? "La contraseña o el código de recuperación no es válido." : response.kind === "error" && response.code === "license_required" ? "Se requiere una licencia válida para configurar el acceso al catálogo." : response.kind === "error" && response.code === "validation_error" ? "La contraseña debe tener entre 8 y 1024 caracteres." : "No se pudo completar la solicitud de acceso al catálogo.";
 
-function CatalogAccessGate({ status, onUnlocked }: { status: CatalogAccessStatus | "loading"; onUnlocked: () => void }) {
+function CatalogAccessGate({ status, notice, onUnlocked }: { status: CatalogAccessStatus | "loading"; notice: string | null; onUnlocked: (message: string) => void }) {
+  const notifications = useActionNotifications();
+  const mounted = useRef(true), locked = useRef(false), request = useRef(0);
+  useEffect(() => () => { mounted.current = false; request.current++; }, []);
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
@@ -29,20 +33,36 @@ function CatalogAccessGate({ status, onUnlocked }: { status: CatalogAccessStatus
   useEffect(() => { setMode(status === "setup_required" ? "setup" : "unlock"); }, [status]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (pending) return;
+    if (locked.current) return;
     if ((mode === "setup" || mode === "recovery") && (password.length < 8 || password !== confirmation)) { setFeedback("Ingresá una contraseña de al menos 8 caracteres y confirmala correctamente."); return; }
-    setPending(true); setFeedback(null);
+    locked.current = true; setPending(true); setFeedback(null);
+    const current = ++request.current;
     try {
       const response = mode === "setup" ? await catalogAccessCommands.beginSetup(password)
         : mode === "unlock" ? await catalogAccessCommands.unlock(password)
           : mode === "recovery" ? await catalogAccessCommands.beginRecovery(recoveryCode, password)
             : mode === "confirm_setup" ? await catalogAccessCommands.finishSetup()
               : await catalogAccessCommands.finishRecovery();
+      if (!mounted.current || current !== request.current) return;
       setPassword(""); setConfirmation(""); setRecoveryCode("");
-      if (response.kind === "recovery_code") { setShownCode(response.recovery_code); setMode(mode === "setup" ? "confirm_setup" : "confirm_recovery"); }
-      else if (response.kind === "success") { setShownCode(null); onUnlocked(); }
-      else setFeedback(accessErrorMessage(response));
-    } finally { setPending(false); }
+      if (response.kind === "recovery_code") {
+        setShownCode(response.recovery_code); setMode(mode === "setup" ? "confirm_setup" : "confirm_recovery");
+        notifications?.publish({ severity: "info", message: "Guardá el código de recuperación y confirmá que lo guardaste para completar el acceso." });
+      } else if (response.kind === "success") {
+        const message = mode === "confirm_setup" ? "Acceso al catálogo configurado." : mode === "confirm_recovery" ? "Contraseña restablecida. Catálogo desbloqueado." : "Catálogo desbloqueado.";
+        notifications?.publish({ severity: "success", message });
+        setShownCode(null); onUnlocked(message);
+      } else {
+        const message = accessErrorMessage(response);
+        if (response.kind === "error" && response.code === "access_unavailable" && notifications) notifications.publish({ severity: "error", message });
+        else setFeedback(message);
+      }
+    } catch {
+      if (mounted.current && current === request.current) {
+        const message = "No se pudo completar la solicitud de acceso al catálogo.";
+        if (notifications) notifications.publish({ severity: "error", message }); else setFeedback(message);
+      }
+    } finally { if (mounted.current && current === request.current) { locked.current = false; setPending(false); } }
   };
   const isConfirmation = mode === "confirm_setup" || mode === "confirm_recovery";
   const recoveryNotice = isConfirmation && shownCode ? createElement("section", { "aria-label": "Código de recuperación" },
@@ -59,16 +79,18 @@ function CatalogAccessGate({ status, onUnlocked }: { status: CatalogAccessStatus
     recoveryNotice,
     feedback && createElement(Feedback, { kind: "error" } as never, feedback),
     createElement(Action, { type: "submit", disabled: pending || isConfirmation && confirmation !== "stored" }, pending ? "Procesando…" : isConfirmation ? "Continuar al catálogo" : mode === "setup" ? "Configurar catálogo" : mode === "unlock" ? "Desbloquear catálogo" : "Restablecer contraseña"),
-    mode === "unlock" && createElement(Action, { type: "button", variant: "tertiary", onClick: () => { setMode("recovery"); setFeedback(null); } }, "Usar código de recuperación"),
-    mode === "recovery" && createElement(Action, { type: "button", variant: "tertiary", onClick: () => { setMode("unlock"); setFeedback(null); } }, "Volver al ingreso de contraseña")) : null;
+    mode === "unlock" && createElement(Action, { type: "button", variant: "tertiary", disabled: pending, onClick: () => { setMode("recovery"); setFeedback(null); } }, "Usar código de recuperación"),
+    mode === "recovery" && createElement(Action, { type: "button", variant: "tertiary", disabled: pending, onClick: () => { setMode("unlock"); setFeedback(null); } }, "Volver al ingreso de contraseña")) : null;
   return createElement("main", { "aria-labelledby": "catalog-access-heading", "data-ui-catalog-access": true },
     createElement("h1", { id: "catalog-access-heading" }, "Acceso al catálogo"),
+    notice ? createElement(Feedback, { kind: "success", children: notice }) : null,
     createElement("p", null, status === "setup_required" ? "Configurá una contraseña para proteger el catálogo de este dispositivo." : "Ingresá tu contraseña para desbloquear el catálogo durante esta sesión."),
     (status === "loading" || status === "unavailable") && createElement(Feedback, { kind: status === "loading" ? "loading" : "error" } as never, status === "loading" ? "Verificando acceso…" : "No se pudo leer la configuración local del catálogo."),
     form);
 }
 
 function CatalogPasswordChange() {
+  const notifications = useActionNotifications();
   const [current, setCurrent] = useState(""); const [next, setNext] = useState(""); const [confirm, setConfirm] = useState(""); const [feedback, setFeedback] = useState<string | null>(null); const [pending, setPending] = useState(false);
   const pendingRef = useRef(false); const mounted = useRef(true); const requestId = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestId.current += 1; }; }, []);
@@ -81,10 +103,14 @@ function CatalogPasswordChange() {
     try {
       const response = await catalogAccessCommands.changePassword(current, next);
       if (!mounted.current || request !== requestId.current) return;
-      if (response.kind === "success") { setCurrent(""); setNext(""); setConfirm(""); setFeedback("Contraseña actualizada."); }
+      if (response.kind === "success") { setCurrent(""); setNext(""); setConfirm(""); if (notifications) notifications.publish({ severity: "success", message: "Contraseña actualizada." }); else setFeedback("Contraseña actualizada."); }
+      else if (response.kind === "error" && response.code === "access_unavailable" && notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
       else setFeedback(accessErrorMessage(response));
     } catch {
-      if (mounted.current && request === requestId.current) setFeedback("No se pudo completar la solicitud de acceso al catálogo.");
+      if (mounted.current && request === requestId.current) {
+        const message = "No se pudo completar la solicitud de acceso al catálogo.";
+        if (notifications) notifications.publish({ severity: "error", message }); else setFeedback(message);
+      }
     } finally {
       if (mounted.current && request === requestId.current) { pendingRef.current = false; setPending(false); }
     }
@@ -115,10 +141,15 @@ export async function reloadCatalogRecords(commands: CatalogLoadCommands, dispat
 }
 
 export function CatalogMaintenanceScreen() {
-  const [state, dispatch] = useReducer(createCatalogMaintenanceFlow, initialCatalogMaintenanceState);
+  const notifications = useActionNotifications();
+  const [routineFailure, setRoutineFailure] = useState(false);
+  const [flowState, dispatch] = useReducer(createCatalogMaintenanceFlow, initialCatalogMaintenanceState);
+  const [partialSaveGuidance, setPartialSaveGuidance] = useState<string | null>(null);
+  const state = partialSaveGuidance ? { ...flowState, recovery_required: true, feedback: partialSaveGuidance } : flowState;
   const [accessStatus, setAccessStatus] = useState<CatalogAccessStatus | "loading">("loading");
   const [lockPending, setLockPending] = useState(false);
   const [lockFeedback, setLockFeedback] = useState<string | null>(null);
+  const [accessNotice, setAccessNotice] = useState<string | null>(null);
   const lockPendingRef = useRef(false);
   const [form, setForm] = useState<CatalogEditForm | null>(null);
   const [productLocations, setProductLocations] = useState<ProductLocationRecord[]>([]);
@@ -126,6 +157,7 @@ export function CatalogMaintenanceScreen() {
   const [imageThumbnail, setImageThumbnail] = useState<string | null>(null);
   const [imagePending, setImagePending] = useState(false);
   const [imageFeedback, setImageFeedback] = useState<string | null>(null);
+  const [imageFeedbackKind, setImageFeedbackKind] = useState<"success" | "error" | "advisory">("error");
   const [browseThumbnails, setBrowseThumbnails] = useState<Record<number, string>>({});
   const mounted = useRef(true);
   const attempt = useRef(0);
@@ -198,6 +230,7 @@ export function CatalogMaintenanceScreen() {
         if (locations.kind === "locations_success") { setProductLocations(locations.locations.filter((location) => location.active)); setProductLocationsStatus("ready"); }
         else setProductLocationsStatus("error");
       } else setProductLocationsStatus("ready");
+      setPartialSaveGuidance(null);
       setForm(formForCatalogDetail(response.detail)); refreshDetailAfterRecovery.current = false; dispatch({ type: "detail_loaded", detail: response.detail });
     } else dispatch({ type: "detail_failed", code: response.code });
   };
@@ -212,7 +245,7 @@ export function CatalogMaintenanceScreen() {
         setImageFeedback(null);
       } else {
         setImageThumbnail(null);
-        if (response.kind === "error" && response.code !== "image_unavailable") setImageFeedback("No se pudo cargar la vista previa.");
+        if (response.kind === "error" && response.code !== "image_unavailable") { setImageFeedbackKind("error"); setImageFeedback("No se pudo cargar la vista previa."); }
       }
     });
   }, [state.detail]);
@@ -246,7 +279,7 @@ export function CatalogMaintenanceScreen() {
     dispatch({ type: "refresh_succeeded", records: response.records, keep_recovery_locked: keepRecoveryLocked });
     return true;
   };
-  useEffect(() => { void catalogAccessCommands.status().then((response) => setAccessStatus(response.kind === "status" ? response.status : "unavailable")); }, []);
+  useEffect(() => { void catalogAccessCommands.status().then((response) => { if (mounted.current) setAccessStatus(response.kind === "status" ? response.status : "unavailable"); }); }, []);
   useEffect(() => { if (accessStatus === "unlocked") void load(); }, [accessStatus]);
   useEffect(() => {
     const first = Object.keys(state.field_errors)[0];
@@ -262,15 +295,20 @@ export function CatalogMaintenanceScreen() {
     setLockPending(true);
     setLockFeedback(null);
     const response = await catalogAccessCommands.lock();
+    if (!mounted.current) return;
     lockPendingRef.current = false;
     setLockPending(false);
     if (response.kind === "success") {
+      notifications?.publish({ severity: "success", message: "Catálogo bloqueado." });
+      setAccessNotice(notifications ? null : "Catálogo bloqueado.");
       attempt.current += 1; browseAttempt.current += 1; browseThumbnailAttempt.current += 1; detailThumbnailAttempt.current += 1;
       mutationLocked.current = true; imageMutationLocked.current = true;
+      setPartialSaveGuidance(null);
       setForm(null); setProductLocations([]); setImageThumbnail(null); setBrowseThumbnails({});
       dispatch({ type: "selection_cleared" });
       setAccessStatus("locked");
-    } else setLockFeedback(accessErrorMessage(response));
+    } else if (response.kind === "error" && response.code === "access_unavailable" && notifications) notifications.publish({ severity: "error", message: accessErrorMessage(response) });
+    else setLockFeedback(accessErrorMessage(response));
   };
   const reload = async () => {
     const selected = state.selected;
@@ -279,6 +317,9 @@ export function CatalogMaintenanceScreen() {
     if (mounted.current && selected && attempt.current === selectionAttempt + 1) await loadDetail(selected);
   };
   const close = () => {
+    if (mutationLocked.current || imageMutationLocked.current) return;
+    setPartialSaveGuidance(null);
+    setRoutineFailure(false);
     attempt.current += 1;
     browseAttempt.current += 1;
     refreshDetailAfterRecovery.current = false;
@@ -292,6 +333,13 @@ export function CatalogMaintenanceScreen() {
     const refreshed = await refreshCatalogList(reloadDetail);
     if (refreshed && reloadDetail && mounted.current) await loadDetail(selected);
   };
+  // Only ordinary persistence failures migrate; validation and recovery remain domain-owned.
+  const publishFailure = (code: string, message = "No se pudo completar el cambio del catálogo.") => {
+    const routine = code === "persistence_failure";
+    setRoutineFailure(routine);
+    if (routine) notifications?.publish({ severity: "error", message });
+    return routine;
+  };
   const manageCategoryLifecycle = async (record: CatalogMaintenanceRecord, confirmedArchive = false) => {
     if (record.target !== "category" || mutationLocked.current || state.recovery_required || state.status === "pending") return;
     if (record.activity === "active" && !confirmedArchive) {
@@ -299,18 +347,22 @@ export function CatalogMaintenanceScreen() {
       return;
     }
     mutationLocked.current = true;
+    const current = attempt.current;
+    setRoutineFailure(false);
     setCategoryActionPending(record.entity_id);
     setCategoryActionFeedback((current) => ({ ...current, [record.entity_id]: "" }));
     const response = await catalogMaintenanceCommands.maintain({ target: record.target, entity_id: record.entity_id, intent: record.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: record.revision });
-    if (!mounted.current) return;
+    if (!mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     setCategoryActionPending(null);
     if (response.kind === "error") {
       const feedback = response.code === "lifecycle_blocked" ? "No se puede archivar esta categoría mientras tenga productos activos." : response.code === "stale_catalog_record" ? "La categoría cambió. Recargá los registros para continuar." : response.code === "catalog_unavailable" ? "La categoría no está disponible. Recargá los registros." : "No se pudo actualizar el estado de la categoría.";
-      setCategoryActionFeedback((current) => ({ ...current, [record.entity_id]: feedback }));
+      const routine = publishFailure(response.code, feedback);
+      setCategoryActionFeedback((current) => ({ ...current, [record.entity_id]: notifications && routine ? "" : feedback }));
       if (response.code === "stale_catalog_record") dispatch({ type: "mutation_failed", code: response.code });
       return;
     }
+    notifications?.publish({ severity: "success", message: "Catálogo actualizado." });
     dispatch({ type: "mutation_succeeded", record: response });
     await refreshCatalogList();
   };
@@ -319,15 +371,19 @@ export function CatalogMaintenanceScreen() {
     const target = archiveRecord ?? detail;
     if (!target || mutationLocked.current || state.recovery_required) return;
     mutationLocked.current = true;
+    const current = attempt.current;
+    setRoutineFailure(false);
     dispatch({ type: "mutation_started" });
     const response = await catalogMaintenanceCommands.maintain({ target: target.target, entity_id: target.entity_id, intent: archiveRecord ? CATALOG_INTENT.ARCHIVE : target.activity === "active" ? CATALOG_INTENT.ARCHIVE : CATALOG_INTENT.REACTIVATE, expected_revision: target.revision });
-    if (!mounted.current) return;
+    if (!mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {
+      publishFailure(response.code);
       refreshDetailAfterRecovery.current = response.code === "stale_catalog_record";
       dispatch({ type: "mutation_failed", code: response.code });
       return;
     }
+    notifications?.publish({ severity: "success", message: "Catálogo actualizado." });
     dispatch({ type: "mutation_succeeded", record: response });
     refreshDetailAfterRecovery.current = false;
     await refreshCatalogList();
@@ -359,13 +415,16 @@ export function CatalogMaintenanceScreen() {
     const detail = state.detail;
     if (!detail || !form || mutationLocked.current || state.recovery_required) return;
     const request = createCatalogEditRequest(detail, form);
-    if (!request) { dispatch({ type: "edit_validation_failed", field_errors: fieldErrorsForCatalogEdit(detail, form) }); return; }
+    if (!request) { setRoutineFailure(false); dispatch({ type: "edit_validation_failed", field_errors: fieldErrorsForCatalogEdit(detail, form) }); return; }
     mutationLocked.current = true;
+    const current = attempt.current;
+    setRoutineFailure(false);
     dispatch({ type: "edit_started" });
     const response = await catalogMaintenanceCommands.edit(request);
-    if (!mounted.current) return;
+    if (!mounted.current || current !== attempt.current) return;
     if (response.kind === "error") {
       mutationLocked.current = false;
+      publishFailure(response.code);
       refreshDetailAfterRecovery.current = response.code === "stale_catalog_record" || response.code === "stale_category_schema";
       dispatch({ type: "edit_failed", code: response.code });
       return;
@@ -373,10 +432,13 @@ export function CatalogMaintenanceScreen() {
     let updatedRevision = response.revision;
     if (detail.target === CATALOG_TARGET.PRODUCT && (form.primary_location_id ?? null) !== detail.primary_location_id) {
       const assignment = await productLocationCommands.assignPrimary({ product_id: detail.entity_id, expected_revision: response.revision, location_id: form.primary_location_id ?? null });
-      if (!mounted.current) return;
+      if (!mounted.current || current !== attempt.current) return;
       if (assignment.kind !== "assignment_success" || assignment.product_id !== detail.entity_id || assignment.location_id !== (form.primary_location_id ?? null)) {
         mutationLocked.current = false;
         refreshDetailAfterRecovery.current = true;
+        const message = "Metadatos guardados, pero no se pudo asignar la ubicación principal. Recargá para revisar el producto antes de volver a intentar.";
+        setPartialSaveGuidance(message);
+        notifications?.publish({ severity: "warning", message });
         dispatch({ type: "location_assignment_failed" });
         return;
       }
@@ -384,6 +446,7 @@ export function CatalogMaintenanceScreen() {
     }
     mutationLocked.current = false;
     const updatedRecord = { ...response, revision: updatedRevision };
+    notifications?.publish({ severity: "success", message: "Catálogo actualizado." });
     dispatch({ type: "edit_succeeded", record: updatedRecord });
     refreshDetailAfterRecovery.current = true;
     const refreshed = await refreshCatalogList(true);
@@ -393,20 +456,29 @@ export function CatalogMaintenanceScreen() {
     const detail = state.detail;
     if (!detail || detail.target !== "product" || imageMutationLocked.current || state.recovery_required || mutationLocked.current) return;
     imageMutationLocked.current = true;
+    const current = attempt.current;
     setImagePending(true);
     setImageFeedback(null);
     const response = await catalogProductImageCommands[operation]({ product_id: detail.entity_id, expected_revision: detail.revision });
-    if (!mounted.current) return;
+    if (!mounted.current || current !== attempt.current) return;
     imageMutationLocked.current = false;
     setImagePending(false);
-    if (response.kind === "cancelled") { setImageFeedback("No se modificó la imagen."); return; }
+    if (response.kind === "cancelled") { setImageFeedbackKind("advisory"); if (notifications) notifications.publish({ severity: "info", message: "No se modificó la imagen." }); else setImageFeedback("No se modificó la imagen."); return; }
     if (response.kind === "error") {
+      setImageFeedbackKind("error");
       refreshDetailAfterRecovery.current = response.code === "stale_catalog_record";
       if (response.code === "stale_catalog_record") dispatch({ type: "mutation_failed", code: response.code });
-      else setImageFeedback("No se pudo actualizar la imagen del producto.");
+      else {
+        const message = "No se pudo actualizar la imagen del producto.";
+        if (response.code === "persistence_failure" && notifications) notifications.publish({ severity: "error", message });
+        else setImageFeedback(message);
+      }
       return;
     }
-    if (response.product_id !== detail.entity_id) { setImageFeedback("No se pudo actualizar la imagen del producto."); return; }
+    if (response.product_id !== detail.entity_id) { setImageFeedbackKind("error"); const message = "No se pudo actualizar la imagen del producto."; if (notifications) notifications.publish({ severity: "error", message }); else setImageFeedback(message); return; }
+    setImageFeedbackKind("success");
+    const imageMessage = operation === "choose" ? "Imagen del producto actualizada." : "Imagen del producto eliminada.";
+    if (notifications) notifications.publish({ severity: "success", message: imageMessage }); else setImageFeedback(imageMessage);
     setImageThumbnail(null);
     dispatch({ type: "mutation_succeeded", record: { entity_id: detail.entity_id, target: detail.target, label: `${detail.sku} — ${detail.name}`, activity: detail.activity, revision: response.revision } });
     refreshDetailAfterRecovery.current = true;
@@ -435,15 +507,18 @@ export function CatalogMaintenanceScreen() {
     const detail = state.detail;
     if (!detail || detail.target !== "category" || !form || mutationLocked.current || state.recovery_required) return;
     const request = createCategorySchemaEditRequest(detail, form);
-    if (!request) { dispatch({ type: "edit_validation_failed", field_errors: { category_fields: "Completá el nombre y al menos una opción para cada campo de opciones." } }); return; }
+    if (!request) { setRoutineFailure(false); dispatch({ type: "edit_validation_failed", field_errors: { category_fields: "Completá el nombre y al menos una opción para cada campo de opciones." } }); return; }
     mutationLocked.current = true;
+    const current = attempt.current;
+    setRoutineFailure(false);
     dispatch({ type: "edit_started" });
     const currentFields = detail.attribute_definitions.filter((field) => field.active !== false).map((field) => ({ definition_id: field.definition_id, label: field.label, field_type: field.field_type, required: field.required, options: field.field_type === "option" ? field.options : [] }));
     const schemaChanged = JSON.stringify(request.fields) !== JSON.stringify(currentFields);
     const schemaResponse = schemaChanged ? await catalogMaintenanceCommands.editCategorySchema(request) : null;
-    if (!mounted.current) return;
+    if (!mounted.current || current !== attempt.current) return;
     if (schemaResponse?.kind === "error") {
       mutationLocked.current = false;
+      publishFailure(schemaResponse.code);
       refreshDetailAfterRecovery.current = schemaResponse.code === "stale_category_schema" || schemaResponse.code === "stale_catalog_record";
       dispatch({ type: "edit_failed", code: schemaResponse.code });
       return;
@@ -453,18 +528,26 @@ export function CatalogMaintenanceScreen() {
       : form.name === detail.name
         ? schemaResponse!
         : await catalogMaintenanceCommands.edit({ target: "category", entity_id: detail.entity_id, expected_revision: schemaResponse!.revision, name: form.name });
-    if (!mounted.current) return;
+    if (!mounted.current || current !== attempt.current) return;
     mutationLocked.current = false;
     if (response.kind === "error") {
-      refreshDetailAfterRecovery.current = response.code === "stale_category_schema" || response.code === "stale_catalog_record";
+      if (schemaChanged) {
+        const message = "Campos de categoría guardados, pero no se pudo actualizar el nombre. Recargá para revisar la categoría antes de volver a guardar.";
+        setPartialSaveGuidance(message);
+        notifications?.publish({ severity: "warning", message });
+      } else publishFailure(response.code);
+      refreshDetailAfterRecovery.current = schemaChanged || response.code === "stale_category_schema" || response.code === "stale_catalog_record";
       dispatch({ type: "edit_failed", code: response.code });
       return;
     }
+    notifications?.publish({ severity: "success", message: "Catálogo actualizado." });
     dispatch({ type: "edit_succeeded", record: response });
     refreshDetailAfterRecovery.current = true;
     const refreshed = await refreshCatalogList(true);
     if (refreshed && mounted.current) await loadDetail({ target: response.target, entity_id: response.entity_id, label: response.label, activity: response.activity, revision: response.revision });
   };
+  const hasRecoveryFeedback = state.recovery_required && (state.status === "loading" || !!state.feedback);
+  const inlineLifecycleFeedback = notifications && !hasRecoveryFeedback && (state.success_notice || routineFailure) ? null : state.lifecycle_feedback;
   const pending = state.status === "pending" || state.status === "loading" && !!state.selected;
   const interactionLocked = pending || state.recovery_required;
   const submitBrowse = (event: FormEvent) => {
@@ -476,7 +559,7 @@ export function CatalogMaintenanceScreen() {
   };
   const visibleCategories = filterCatalogCategories(state.records, categoryQuery);
 
-  if (accessStatus !== "unlocked") return createElement(CatalogAccessGate, { status: accessStatus, onUnlocked: () => setAccessStatus("unlocked") });
+  if (accessStatus !== "unlocked") return createElement(CatalogAccessGate, { status: accessStatus, notice: notifications ? null : accessNotice, onUnlocked: (message) => { mutationLocked.current = false; imageMutationLocked.current = false; setAccessNotice(notifications ? null : message); setAccessStatus("unlocked"); } });
 
   return createElement(
     "main",
@@ -485,6 +568,7 @@ export function CatalogMaintenanceScreen() {
     createElement("p", null, "Editá metadatos desde el detalle de categorías y productos."),
     createElement(Action, { variant: "secondary", disabled: lockPending, "aria-busy": lockPending, onClick: () => void lockCatalog() }, lockPending ? "Bloqueando…" : "Bloquear catálogo"),
     lockFeedback ? createElement(Feedback, { kind: "error" } as never, lockFeedback) : null,
+    accessNotice && !notifications ? createElement(Feedback, { kind: "success", children: accessNotice }) : null,
     createElement(CatalogPasswordChange),
     createElement("nav", { "aria-label": "Vistas del catálogo", "data-ui-catalog-navigation": true },
       createElement(Action, { variant: catalogSubview === "products" ? "secondary" : "tertiary", "aria-current": catalogSubview === "products" ? "page" : undefined, onClick: () => setCatalogSubview("products") }, "Productos"),
@@ -498,7 +582,7 @@ export function CatalogMaintenanceScreen() {
       state.status === "loading" && !state.selected ? createElement(Feedback, { kind: "loading" } as never, "Cargando categorías…") : null,
       state.status === "unavailable" && !state.selected ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "Las categorías no están disponibles. ", createElement(Action, { variant: "tertiary", onClick: () => void load() }, "Reintentar categorías"))) : null,
       state.status === "ready" && visibleCategories.length === 0 ? createElement(Feedback, { kind: "empty" } as never, categoryQuery ? "No hay categorías que coincidan con la búsqueda." : "Todavía no hay categorías.") : null,
-      state.lifecycle_feedback ? createElement(Feedback, { kind: state.recovery_required ? state.status === "loading" ? "loading" : "error" : "success" } as never, state.lifecycle_feedback) : null,
+      inlineLifecycleFeedback ? createElement(Feedback, { kind: state.recovery_required ? state.status === "loading" ? "loading" : "error" : "success" } as never, inlineLifecycleFeedback) : null,
       state.recovery_required ? createElement(Action, { variant: "secondary", disabled: pending, onClick: () => void refreshCatalogList() }, "Reintentar categorías") : null,
       createElement("ul", { "aria-label": "Categorías", "data-ui-category-list": true }, visibleCategories.map((record) => createElement("li", { key: record.entity_id, "aria-label": `${record.label}, ${record.activity === "active" ? "Activa" : "Archivada"}`, "data-ui-category-row": true },
         createElement("div", { "data-ui-category-identity": true }, createElement("strong", null, record.label), createElement("span", null, `${record.active_product_count} productos activos`), createElement("span", { "data-ui-category-state": record.activity }, record.activity === "active" ? "Activa" : "Archivada")),
@@ -508,7 +592,7 @@ export function CatalogMaintenanceScreen() {
         categoryActionPending === record.entity_id ? createElement(Feedback, { kind: "loading" } as never, "Actualizando categoría…") : null,
         categoryActionFeedback[record.entity_id] ? createElement(Feedback, { kind: "error" } as never, categoryActionFeedback[record.entity_id]) : null)))
       ) : null,
-    createElement(CatalogSuccessNotice, { notice: state.success_notice }),
+    createElement(CatalogSuccessNotice, { notice: notifications ? null : state.success_notice }),
     state.status === "loading" && !state.selected ? createElement(Feedback, { kind: "loading" } as never, "Cargando registros del catálogo…") : null,
     state.status === "unavailable" && !state.selected ? createElement(Feedback, { kind: "unavailable" } as never, createElement("span", null, "El catálogo no está disponible. ", createElement(Action, { variant: "tertiary", onClick: reload }, "Reintentar catálogo"))) : null,
     createElement(
@@ -540,7 +624,7 @@ export function CatalogMaintenanceScreen() {
         ),
       ),
     ),
-    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: state.feedback, lifecycleFeedback: state.lifecycle_feedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
+    state.selected ? createElement(CatalogEditDialog, { record: state.selected, detail: state.detail, form, loading: state.status === "loading", pending: state.status === "pending", feedback: notifications && routineFailure && !state.recovery_required ? null : state.feedback, lifecycleFeedback: inlineLifecycleFeedback, recoveryRequired: state.recovery_required, fieldErrors: state.field_errors, locations: productLocations, locationsStatus: productLocationsStatus, imageThumbnail, imagePending, imageFeedback, imageFeedbackKind, onChooseImage: () => void mutateImage("choose"), onRemoveImage: () => void mutateImage("remove"), onChange: change, onSubmit: edit, onLifecycle: requestDetailLifecycle, onReload: state.recovery_required ? retryRefresh : reload, onAddCategoryField: addCategoryField, onChangeCategoryField: changeCategoryField, onRetireCategoryField: requestCategoryFieldRetirement, onRemoveCategoryFieldDraft: removeCategoryFieldDraft, onSaveCategorySchema: () => void saveCategorySchema(), onCancel: close }) : null,
     retirementConfirmation ? createElement(ConfirmationDialog, {
       open: true,
       purpose: "cancellation",

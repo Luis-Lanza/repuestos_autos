@@ -84,5 +84,8 @@ test("maps native error codes to bounded Spanish recovery copy", () => {
   assert.equal(backupFeedback("invalid_backup", true), "El archivo de respaldo no es válido.");
   assert.equal(backupFeedback("token_expired", true), "La preparación de restauración venció. Elegí el archivo nuevamente.");
   assert.equal(backupFeedback("destination_exists"), "Ya existe una copia en ese destino. Elegí otro.");
-  assert.equal(restoreErrorStatus("unsupported_schema"), "invalid");
+  for (const code of ["unsupported_schema", "invalid_backup", "token_invalid"]) assert.equal(restoreErrorStatus(code), "invalid");
+  assert.equal(restoreErrorStatus("token_expired"), "expired");
+  assert.equal(restoreErrorStatus("restore_failed"), "failure");
+  assert.equal(restoreErrorStatus("storage_unavailable"), "unavailable");
 });

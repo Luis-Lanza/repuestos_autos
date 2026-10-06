@@ -4,11 +4,12 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mockIPC as installIPC } from "@tauri-apps/api/mocks";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { App } from "../app.ts";
 import { InventoryScreen } from "./inventory-screen.ts";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 
 const product = { product_id: 1, category_id: 1, sku: "FLT", name: "Filter", category_name: "Filters", available_quantity: 8, catalog_unit_price_centavos: 2500, list_price_centavos: 2500, minimum_sale_price_centavos: 2500, primary_location_code: null, attribute_values: [], revision: 0 };
 const browse = (products: typeof product[] = [product]) => ({ products: products.map((item) => ({ product_id: item.product_id, category_id: item.category_id, sku: item.sku, name: item.name, category_name: item.category_name, available_quantity: item.available_quantity, sale_price_centavos: item.sale_price_centavos ?? item.list_price_centavos ?? item.catalog_unit_price_centavos, minimum_sale_price_centavos: item.minimum_sale_price_centavos, primary_location_code: item.primary_location_code })), categories: [{ category_id: 1, name: "Filters" }], page: 1, page_size: 20, total: products.length, total_pages: products.length ? 1 : 0 });
@@ -628,6 +629,114 @@ test("uses All Stock for normal Inventory entry and stock-alert cue navigation",
   assert.equal(returnedFilter.value, "all");
   assert.ok(screen.getByRole("region", { name: "Alertas de stock" }));
   assert.deepEqual(browseRequests.at(-1), { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } });
+});
+
+test("shared inventory outcomes have one owner; dismissal preserves fields, advisory and retry envelope", async () => {
+  installUuid("notice-request-1", "notice-request-2", "notice-request-3");
+  const requests: Array<Record<string, unknown>> = [];
+  mockIPC((command, payload) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") {
+      requests.push(payload?.request as Record<string, unknown>);
+      return requests.length === 1 ? { kind: "error", code: "persistence_failure", message: "Native" } : success(String(requests.at(-1)!.request_id));
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
+  const user = await searchAndSelect();
+  const quantity = screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" });
+  await user.type(quantity, "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  assert.ok(await within(host).findByText("No se pudo guardar la operación de inventario. Reintentá."));
+  const operation = screen.getByRole("region", { name: "Operación de inventario" });
+  assert.equal(within(operation).queryByText("No se pudo guardar la operación de inventario. Reintentá."), null);
+  await user.click(within(host).getByRole("button", { name: /Cerrar notificación/ }));
+  assert.equal((quantity as HTMLInputElement).value, "3");
+  await user.click(within(operation).getByRole("button", { name: "Reintentar" }));
+  assert.ok(await within(host).findByText("Operación guardada. Stock actual: 11."));
+  assert.equal(within(operation).queryByText("Operación guardada. Stock actual: 11."), null);
+  assert.deepEqual(requests[1], requests[0]);
+  assert.ok(within(operation).getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
+  await user.click(within(host).getByRole("button", { name: /Cerrar notificación/ }));
+  assert.ok(within(operation).getByText("Saldo proyectado desactualizado. Revisá el stock actual."));
+  assert.equal((quantity as HTMLInputElement).value, "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await within(host).findByText("Operación guardada. Stock actual: 11.");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await waitFor(() => assert.equal(within(host).getAllByText("Operación guardada. Stock actual: 11.").length, 2));
+  assert.notEqual(requests[2].request_id, requests[3].request_id);
+});
+
+test("a duplicate click and an unmounted inventory completion never publish", async () => {
+  let resolve!: (value: ReturnType<typeof success>) => void;
+  let confirmations = 0;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") { confirmations++; return new Promise((done) => { resolve = done; }); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const view = render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  await user.click(screen.getByRole("button", { name: "Guardando…" }));
+  assert.equal(confirmations, 1);
+  view.rerender(createElement(ActionNotificationProvider));
+  await act(async () => { resolve(success("late-request")); });
+  assert.equal(screen.queryByText("Operación guardada. Stock actual: 11."), null);
+  assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
+});
+
+test("accepted save notifies even when the subsequent read-only alert refresh fails", async () => {
+  let saved = false;
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return saved ? { kind: "error", code: "persistence_failure", message: "Native" } : { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") { saved = true; return success("saved-request"); }
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  assert.ok(await within(screen.getByRole("region", { name: "Notificaciones de acciones" })).findByText("Operación guardada. Stock actual: 11."));
+  assert.ok(await within(screen.getByRole("region", { name: "Alertas de stock" })).findByText("Las alertas de stock no están disponibles."));
+  assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 1);
+});
+
+for (const code of ["invalid_price", "persisted_data_invalid"] as const) {
+  test(`shared host leaves ${code} validation/recovery feedback inline`, async () => {
+    mockIPC((command) => {
+      if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+      if (command === "browse_products_command") return browse();
+      if (command === "confirm_stock_entry_command") return { kind: "error", code, message: "Native" };
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
+    const user = await searchAndSelect();
+    await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+    await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+    assert.ok(await within(screen.getByRole("region", { name: "Operación de inventario" })).findByText("No se pudo guardar la operación de inventario. Reintentá."));
+    assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
+  });
+}
+
+test("shared host does not migrate request-conflict recovery guidance", async () => {
+  mockIPC((command) => {
+    if (command === "list_inventory_alerts_command") return { kind: "alerts", alerts: [] };
+    if (command === "browse_products_command") return browse();
+    if (command === "confirm_stock_entry_command") return { kind: "error", code: "request_conflict", message: "Native" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  render(createElement(ActionNotificationProvider, null, createElement(InventoryScreen)));
+  const user = await searchAndSelect();
+  await user.type(screen.getByRole("spinbutton", { name: "Cantidad (unidades enteras)" }), "3");
+  await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+  assert.ok(await within(screen.getByRole("region", { name: "Operación de inventario" })).findByText(/El ID de solicitud/));
+  assert.equal(document.querySelectorAll("[data-ui-action-notice]").length, 0);
 });
 
 test("clears the public stock cue while alerts load or are unavailable", async () => {

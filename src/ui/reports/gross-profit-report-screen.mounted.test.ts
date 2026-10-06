@@ -3,10 +3,45 @@ import test from "node:test";
 import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { GrossProfitReportScreen } from "./gross-profit-report-screen.ts";
 const report = (amount_centavos = 1250, missing_cost_line_count = 0, activity_count = 1) => ({ kind: "success", report: { amount_centavos, missing_cost_line_count, activity_count } });
 const operation = (id: number, page = 1) => ({ occurred_at: "2024-03-10T11:30:00Z", operation_kind: "venta", sale_id: id, return_id: null, product_name: "Filtro", sku: `SKU-${id}`, signed_quantity: 2, negotiated_unit_price_centavos: 1250, unit_cost_snapshot_centavos: null, cost_state: "unknown", signed_gross_profit_centavos: null });
 const operations = (rows = [operation(7)], page = 1, total = 1) => ({ kind: "success", report: { rows, page, page_size: 20, total, total_pages: Math.ceil(total / 20) } });
+test("shared profit PDF outcomes leave missing-cost disclosures inline", async () => {
+ let outcome: unknown = { kind: "success" };
+ mockIPC(command => command === "gross_profit_report_command" ? report(1250, 2) : command === "gross_profit_operations_command" ? operations() : outcome);
+ render(createElement(ActionNotificationProvider, null, createElement(GrossProfitReportScreen)));
+ await screen.findByRole("heading", { name: "Bs 12.50" });
+ const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+ for (const [result, message] of [
+  [{ kind: "success" }, "PDF guardado correctamente."],
+  [{ kind: "cancelled" }, "Exportación cancelada."],
+  [{ kind: "error", code: "resource_limit", message: "El informe supera los límites de recursos y no se guardó." }, "El informe supera los límites de recursos y no se guardó. Ajustá el período e intentá de nuevo."],
+  [{ kind: "error", code: "export_failed", message: "No se pudo guardar el informe PDF." }, "No se pudo guardar el PDF."],
+ ] as const) {
+  outcome = result;
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Exportar PDF" })); });
+  await waitFor(() => assert.ok(host.textContent?.includes(message), message));
+  assert.equal(screen.getByRole("region", { name: "Ganancia bruta" }).textContent?.includes(message), false);
+  fireEvent.click(host.querySelector("button")!);
+ }
+ assert.ok(screen.getByText(/2 línea\(s\) no tienen costo histórico conocido/));
+});
+
+test("profit export completion is silent after screen removal with a surviving host", async () => {
+ let finish!: (value: unknown) => void; let exports = 0;
+ mockIPC(command => command === "gross_profit_report_command" ? report() : command === "gross_profit_operations_command" ? operations() : (exports++, new Promise(resolve => { finish = resolve; })));
+ const view = render(createElement(ActionNotificationProvider, null, createElement(GrossProfitReportScreen)));
+ await screen.findByRole("heading", { name: "Bs 12.50" });
+ const button = screen.getByRole("button", { name: "Exportar PDF" });
+ fireEvent.click(button); fireEvent.click(button);
+ assert.equal(exports, 1);
+ view.rerender(createElement(ActionNotificationProvider));
+ await act(async () => { finish({ kind: "success" }); });
+ assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+});
+
 test("shows signed summary, missing-cost disclosure, and accessible Spanish operation table", async () => {
  mockIPC(command => command === "gross_profit_report_command" ? report(-1250, 2) : operations());
  render(createElement(GrossProfitReportScreen));

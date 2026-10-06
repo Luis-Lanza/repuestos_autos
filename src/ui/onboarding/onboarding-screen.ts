@@ -1,6 +1,7 @@
 import { createElement as h, useEffect, useReducer, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { createCategory, createProduct, FIELD_TYPE, listCategories, type Category, type CategoryFieldInput, type FieldType } from "../../commands/onboarding.ts";
 import { onboardingProductLocationCommands, type ProductLocationRecord, type ProductLocationSegment } from "../../commands/catalog.ts";
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { LocationPicker } from "../visual-system/location-picker.ts";
 import { Panel } from "../visual-system/structure.ts";
@@ -12,6 +13,8 @@ type PendingField = CategoryFieldInput & { optionsText: string };
 const emptyField: PendingField = { label: "", field_type: FIELD_TYPE.TEXT, required: false, options: [], optionsText: "" };
 
 export function OnboardingScreen({ onBack }: Props) {
+  const notifications = useActionNotifications();
+  const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createOnboardingFlow, initialOnboardingState);
   const [categoryName, setCategoryName] = useState("");
   const [pendingField, setPendingField] = useState(emptyField);
@@ -63,20 +66,25 @@ export function OnboardingScreen({ onBack }: Props) {
   };
   const submitCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSubmitCategory(state) || categoryLock.current) return;
+    if (!canSubmitCategory(state) || categoryLock.current || productLock.current) return;
     if (!categoryName.trim()) { setFieldError("category"); focus("category-name"); return; }
-    const id = ++mutation.current; categoryLock.current = true; setFieldError(""); dispatch({ type: "category_started", requestId: id });
+    const id = ++mutation.current; categoryLock.current = true; setRoutineOutcome(false); setFieldError(""); dispatch({ type: "category_started", requestId: id });
     try {
       const response = await createCategory({ name: categoryName.trim(), fields: categoryFields });
       if (!mounted.current || id !== mutation.current) return;
-      if (response.kind === "success") { dispatch({ type: "category_succeeded", requestId: id, category: response }); setSelectedId(String(response.category_id)); setCategoryName(""); setCategoryFields([]); }
-      else dispatch({ type: "category_failed", requestId: id });
-    } catch { if (mounted.current && id === mutation.current) dispatch({ type: "category_failed", requestId: id }); }
+      if (response.kind === "success") {
+        setRoutineOutcome(true); notifications?.publish({ severity: "success", message: `Categoría creada: ${response.name}.` });
+        dispatch({ type: "category_succeeded", requestId: id, category: response }); setSelectedId(String(response.category_id)); setCategoryName(""); setCategoryFields([]);
+      } else {
+        if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); }
+        dispatch({ type: "category_failed", requestId: id });
+      }
+    } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear la categoría." }); dispatch({ type: "category_failed", requestId: id }); } }
     finally { categoryLock.current = false; }
   };
   const submitProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSubmitProduct(state) || productLock.current) return;
+    if (!canSubmitProduct(state) || productLock.current || categoryLock.current) return;
     const productErrors = !selected ? "category" : !sku.trim() ? "sku" : !productName.trim() ? "name" : parseBsToCentavos(purchasePrice) === null ? "purchase-price" : parseBsToCentavos(listPrice) === null ? "list-price" : parseBsToCentavos(minimumSalePrice) === null ? "minimum-price" : parseBsToCentavos(minimumSalePrice)! > parseBsToCentavos(listPrice)! ? "minimum-price" : parsePositiveWhole(stock) === null ? "stock" : lowStockThreshold.trim() !== "" && parsePositiveWhole(lowStockThreshold) === null ? "low-stock-threshold" : "";
     const attributeError = selected && !productErrors ? validateCategoryAttributes(selected, attributes) : null;
     if (productErrors || attributeError) {
@@ -84,7 +92,7 @@ export function OnboardingScreen({ onBack }: Props) {
       focus(attributeError ? `attribute-${attributeError.definitionId}` : productErrors === "category" ? "product-category" : productErrors === "sku" ? "product-sku" : productErrors === "name" ? "product-name" : productErrors === "purchase-price" ? "purchase-price" : productErrors === "list-price" ? "list-price" : productErrors === "minimum-price" ? "minimum-sale-price" : productErrors === "low-stock-threshold" ? "low-stock-threshold" : "opening-stock");
       return;
     }
-    const id = ++mutation.current; productLock.current = true; setFieldError(""); setFieldErrorMessage(""); dispatch({ type: "product_started", requestId: id });
+    const id = ++mutation.current; productLock.current = true; setRoutineOutcome(false); setFieldError(""); setFieldErrorMessage(""); dispatch({ type: "product_started", requestId: id });
     try {
       const refreshed = await listCategories();
       if (!mounted.current || id !== mutation.current) return;
@@ -104,12 +112,14 @@ export function OnboardingScreen({ onBack }: Props) {
       if (!mounted.current || id !== mutation.current) return;
       if (response.kind === "success") {
         let locationMessage = "";
+        let locationAssigned = !primaryLocationId;
         if (primaryLocationId) {
           locationMessage = " No se pudo asignar la ubicación principal; podés corregirla desde el Catálogo.";
           try {
             const assignment = await onboardingProductLocationCommands.assignPrimary({ product_id: response.product_id, expected_revision: 0, location_id: Number(primaryLocationId) });
             const location = productLocations.find((item) => item.location_id === Number(primaryLocationId));
             if (assignment?.kind === "assignment_success" && assignment.product_id === response.product_id && assignment.location_id === Number(primaryLocationId) && location) {
+              locationAssigned = true;
               locationMessage = ` Ubicación principal: ${location.code}.`;
             }
           } catch {
@@ -117,7 +127,10 @@ export function OnboardingScreen({ onBack }: Props) {
           }
         }
         if (!mounted.current || id !== mutation.current) return;
-        dispatch({ type: "product_succeeded", requestId: id, message: `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.${locationMessage}` });
+        const message = `Producto creado: ${response.sku}. Stock inicial: ${response.available_quantity} unidades.${locationMessage}`;
+        setRoutineOutcome(locationAssigned);
+        notifications?.publish({ severity: locationAssigned ? "success" : "warning", message });
+        dispatch({ type: "product_succeeded", requestId: id, message });
         setSku(""); setProductName(""); setPurchasePrice(""); setListPrice(""); setMinimumSalePrice(""); setStock(""); setLowStockThreshold(""); setAttributes({}); setPrimaryLocationId("");
       }
       else if (response.code === "invalid_attribute_value") {
@@ -130,12 +143,15 @@ export function OnboardingScreen({ onBack }: Props) {
           setFieldErrorMessage(message);
           dispatch({ type: "product_failed", requestId: id, message });
         } else dispatch({ type: "product_failed", requestId: id, message: "No se pudo validar un valor de atributo. Revisá los campos de categoría y corregí cualquier valor que no corresponda a su tipo u opciones." });
-      } else dispatch({ type: "product_failed", requestId: id, message: response.message });
-    } catch { if (mounted.current && id === mutation.current) dispatch({ type: "product_failed", requestId: id }); }
+      } else {
+        if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); }
+        dispatch({ type: "product_failed", requestId: id, message: response.message });
+      }
+    } catch { if (mounted.current && id === mutation.current) { setRoutineOutcome(true); notifications?.publish({ severity: "error", message: "No se pudo crear el producto." }); dispatch({ type: "product_failed", requestId: id }); } }
     finally { productLock.current = false; }
   };
   const pending = state.categoryStatus === "pending" || state.productStatus === "pending";
-  const feedback = state.feedback && (state.categoryStatus === "error" || state.productStatus === "error" || state.categoryStatus === "success" || state.productStatus === "success") ? h(Feedback, { kind: state.categoryStatus === "error" || state.productStatus === "error" ? "error" : "success" } as never, state.feedback) : null;
+  const feedback = state.feedback && !(notifications && routineOutcome) && (state.categoryStatus === "error" || state.productStatus === "error" || state.categoryStatus === "success" || state.productStatus === "success") ? h(Feedback, { kind: state.categoryStatus === "error" || state.productStatus === "error" ? "error" : "success" } as never, state.feedback) : null;
   const fieldControl = (field: Category["fields"][number]) => field.field_type === FIELD_TYPE.OPTION ? h("select", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLSelectElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) }, h("option", { value: "" }, "Seleccioná"), field.options.map((option) => h("option", { key: option, value: option }, option))) : h("input", { id: `attribute-${field.definition_id}`, "aria-required": field.required || undefined, type: field.field_type === FIELD_TYPE.NUMBER ? "number" : "text", step: field.field_type === FIELD_TYPE.NUMBER ? "any" : undefined, value: attributes[field.definition_id] ?? "", disabled: pending, onChange: (event: ChangeEvent<HTMLInputElement>) => setAttributes({ ...attributes, [field.definition_id]: event.target.value }) });
 
   return h("main", { "aria-labelledby": "onboarding-heading", "data-ui-onboarding": true },

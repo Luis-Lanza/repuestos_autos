@@ -1,6 +1,7 @@
 import { createElement, type FormEvent, useEffect, useReducer, useRef, useState } from "react";
 import { browseSalesProducts, catalogProductImageCommands, type SalesBrowseProduct } from "../../commands/catalog.ts";
 import { confirmSale, type ConfirmSaleRequest } from "../../commands/confirm-sale.ts";
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { Action, Feedback, Field } from "../visual-system/controls.ts";
 import { Panel } from "../visual-system/structure.ts";
 import { CheckoutDialog } from "../visual-system/checkout-dialog.ts";
@@ -25,6 +26,8 @@ function finalPriceError(line: DraftLine): string | undefined {
 }
 
 export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}) {
+  const notifications = useActionNotifications();
+  const [routineOutcome, setRoutineOutcome] = useState(false);
   const [state, dispatch] = useReducer(createSaleFlow, initialSaleState);
   const [browser, browserDispatch] = useReducer(createProductBrowserFlow, initialProductBrowserState);
   const [salesViewMode, setSalesViewMode] = useState<CatalogViewMode>(readSalesViewMode);
@@ -120,6 +123,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     if (Object.keys(errors).length) { (errors.amount_tendered_centavos ? cashRef : qrRef).current?.focus(); return; }
 
     confirming.current = true;
+    setRoutineOutcome(false);
     const attempt = ++confirmationSequence.current;
     const currentRequestId = state.request_id ?? requestId();
     dispatch({ type: "confirmation_started", request_id: currentRequestId });
@@ -131,12 +135,20 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
     try {
       const response = await confirmSale(request);
       if (!mounted.current || attempt !== confirmationSequence.current) return;
-      if (response.kind === "success") { setPersistedDetails(projectPersistedSaleSummary(response)); dispatch({ type: "confirmation_succeeded", summary: response }); props.onInventoryAlertsRefresh?.(); }
+      if (response.kind === "success") { notifications?.publish({ severity: "success", message: "Venta confirmada." }); setPersistedDetails(projectPersistedSaleSummary(response)); dispatch({ type: "confirmation_succeeded", summary: response }); props.onInventoryAlertsRefresh?.(); }
       else if (response.kind === "minimum_price_violation") dispatch({ type: "minimum_price_violation", ...response });
       else if (response.kind === "stale_catalog_record") dispatch({ type: "confirmation_failed", message: "El catálogo cambió. Revisá el precio de venta e intentá nuevamente." });
       else if (response.code === "invalid_final_price") dispatch({ type: "final_price_validation_failed", message: response.message });
-      else dispatch({ type: "confirmation_failed", message: failureByCode[response.code] ?? "No se pudo confirmar la venta. Intentá nuevamente." });
-    } catch { if (mounted.current && attempt === confirmationSequence.current) dispatch({ type: "confirmation_failed", message: "No se pudo confirmar la venta. Intentá nuevamente." }); }
+      else {
+        const message = failureByCode[response.code] ?? "No se pudo confirmar la venta. Intentá nuevamente.";
+        if (response.code === "persistence_failure") { setRoutineOutcome(true); notifications?.publish({ severity: "error", message }); }
+        dispatch({ type: "confirmation_failed", message });
+      }
+    } catch { if (mounted.current && attempt === confirmationSequence.current) {
+      const message = "No se pudo confirmar la venta. Intentá nuevamente.";
+      setRoutineOutcome(true); notifications?.publish({ severity: "error", message });
+      dispatch({ type: "confirmation_failed", message });
+    } }
     finally { if (attempt === confirmationSequence.current) confirming.current = false; }
   }
 
@@ -191,7 +203,7 @@ export function SaleScreen(props: { onInventoryAlertsRefresh?: () => void } = {}
         createElement("h3", { id: "checkout-payment-heading" }, "Pago"),
         createElement(Field, { kind: "money", label: "Efectivo recibido", error: paymentErrors.amount_tendered_centavos, control: createElement("input", { ref: cashRef, value: state.payment.amount_tendered_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, amount_tendered_centavos: undefined })); dispatch({ type: "payment_changed", field: "amount_tendered_centavos", value: event.target.value }); } }) } as never),
         createElement(Field, { kind: "money", label: "Pago QR", error: paymentErrors.qr_applied_centavos, control: createElement("input", { ref: qrRef, value: state.payment.qr_applied_centavos, disabled: pending, onChange: (event) => { if (confirming.current) return; setPaymentErrors((old) => ({ ...old, qr_applied_centavos: undefined })); dispatch({ type: "payment_changed", field: "qr_applied_centavos", value: event.target.value }); } }) } as never)),
-      state.feedback && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
+      state.feedback && !(notifications && routineOutcome) && state.feedback !== "Ingresá una cantidad entera mayor que cero." ? createElement(Feedback, { kind: state.confirmation === "error" ? "error" : "success" } as never, state.feedback) : null,
       createElement("div", { "data-ui-sale-actions": true },
         createElement(Action, { variant: "tertiary", disabled: pending, onClick: discardDraft }, "Descartar borrador")),
     checkoutDetail ? createElement(SalesProductDetail, { key: checkoutDetail.product_id, product: checkoutDetail, thumbnails: checkoutDetailThumbnails, loadOriginal: catalogProductImageCommands.salesOriginal, triggerRef: checkoutDetailTriggerRef, onClose: () => setCheckoutDetail(null) }) : null));

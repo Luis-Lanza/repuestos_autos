@@ -1,12 +1,20 @@
 import { createElement as h, useEffect, useRef, useState } from "react";
 
+import { useActionNotifications } from "../visual-system/action-notifications.ts";
 import { licenseCommands } from "../../commands/license.ts";
 import { createActivationFlow, initialActivationState, type ActivationState } from "./activation-flow.ts";
 
 export function ActivationScreen({ onRecovery, onActivated }: { onRecovery: () => void; onActivated: (notice?: string) => void }) {
   const [state, setState] = useState<ActivationState>(initialActivationState);
+  const notifications = useActionNotifications();
+  const onChange = (next: ActivationState) => {
+    if (next.message && (next.outcome === "import-failed" || next.outcome === "import-cancelled")) {
+      notifications?.publish({ severity: next.outcome === "import-failed" ? "error" : "info", message: next.message });
+    }
+    setState(next);
+  };
   const flow = useRef<ReturnType<typeof createActivationFlow> | null>(null);
-  if (!flow.current) flow.current = createActivationFlow(licenseCommands, setState, onActivated);
+  if (!flow.current) flow.current = createActivationFlow(licenseCommands, onChange, onActivated);
   useEffect(() => { void flow.current?.load(); return () => flow.current?.dispose(); }, []);
   const busy = state.outcome === "loading" || state.outcome === "import-pending";
   return h("main", { "aria-labelledby": "activation-heading", "data-ui-activation": true },
@@ -20,7 +28,7 @@ export function ActivationScreen({ onRecovery, onActivated }: { onRecovery: () =
     ) : null,
     state.outcome === "identity-unavailable" ? h("p", { role: "alert" }, state.message) : null,
     state.outcome === "import-pending" ? h("p", { role: "status", "aria-live": "polite" }, "Importando archivo de licencia…") : null,
-    state.message && state.outcome !== "identity-unavailable" && state.outcome !== "import-pending" ? h("p", { role: state.outcome === "import-failed" ? "alert" : "status", "aria-live": "polite" }, state.message) : null,
+    state.message && !(notifications && ["import-failed", "import-cancelled", "import-succeeded"].includes(state.outcome)) && state.outcome !== "identity-unavailable" && state.outcome !== "import-pending" ? h("p", { role: state.outcome === "import-failed" ? "alert" : "status", "aria-live": "polite" }, state.message) : null,
     h("button", { type: "button", disabled: busy || !state.installationCode, onClick: () => void flow.current?.importLicense() }, "Importar archivo de licencia"),
     h("p", null, "También podés continuar en modo de recuperación para consultar la información disponible y crear copias de seguridad."),
     h("button", { type: "button", disabled: state.outcome === "loading", onClick: onRecovery }, "Continuar en modo de recuperación"),

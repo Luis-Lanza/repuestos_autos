@@ -6,6 +6,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { SalesHistoryScreen } from "./history-screen.ts";
 
 const summary = (sale_id: number) => ({
@@ -47,6 +48,41 @@ const deferred = <Value,>() => {
   return { promise, resolve };
 };
 
+test("accepted return notifies before failed refresh and cannot be submitted twice", async () => {
+ let detailCalls = 0; let mutations = 0;
+ const refresh = deferred<unknown>();
+ mockIPC((command, payload) => {
+  if (command === "list_sales_history_command") return { kind: "success", sales: [summary(184)], has_more: false };
+  if (command === "sale_history_detail_command") return ++detailCalls === 1 ? { kind: "success", detail: detail(184) } : refresh.promise;
+  if (command === "create_sale_return_command") {
+   mutations++;
+   return { kind: "success", result: { request_id: payload?.request?.request_id, return_id: 9, sale_id: 184, status: "confirmed", occurred_at: "2026-08-15 09:00:00", lines: [{ sale_line_id: 184, product_id: 4, quantity: 1 }] } };
+  }
+  throw new Error(command);
+ });
+ render(createElement(ActionNotificationProvider, null, createElement(SalesHistoryScreen)));
+ const user = userEvent.setup({ document });
+ await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
+ await user.click(screen.getByRole("button", { name: "Iniciar devolución de artículos" }));
+ await user.click(screen.getByRole("checkbox", { name: "Incluir este artículo" }));
+ await user.type(screen.getByRole("textbox", { name: "Cantidad a devolver" }), "1");
+ await user.click(screen.getByRole("button", { name: "Registrar devolución" }));
+ const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+ assert.ok(await within(host).findByText("Devolución registrada correctamente."));
+ refresh.resolve({ kind: "error", code: "persistence_failure" });
+ const reload = await screen.findByRole("button", { name: "Recargar detalle de venta" });
+ assert.ok(screen.getByText("La corrección ya fue guardada. No se pudo actualizar el detalle; recargalo antes de iniciar otra corrección."));
+ const submit = screen.getByRole("button", { name: "Registrar devolución" }) as HTMLButtonElement;
+ assert.equal(submit.disabled, true);
+ fireEvent.submit(submit.closest("form")!);
+ assert.equal(mutations, 1);
+ assert.equal((reload as HTMLButtonElement).disabled, false);
+ await user.click(within(screen.getByRole("dialog", { name: "Devolución de artículos" })).getByRole("button", { name: "Cerrar" }));
+ assert.equal((screen.getByRole("button", { name: "Iniciar devolución de artículos" }) as HTMLButtonElement).disabled, true);
+ assert.equal((screen.getByRole("button", { name: "Iniciar cancelación de venta" }) as HTMLButtonElement).disabled, true);
+ assert.ok(screen.getByRole("button", { name: "Recargar detalle de venta" }));
+});
+
 test("keeps the newer mounted list when an older load finishes late", async () => {
   const lists = [deferred<unknown>(), deferred<unknown>()];
   let listCall = 0;
@@ -67,6 +103,7 @@ test("keeps the newer mounted list when an older load finishes late", async () =
 
 test("late correction success cannot replace a newer selected sale", async () => {
   const correction = deferred<unknown>();
+  let requestId = "";
   const detailCalls: number[] = [];
   mockIPC((command, payload) => {
     if (command === "list_sales_history_command")
@@ -76,10 +113,10 @@ test("late correction success cannot replace a newer selected sale", async () =>
       detailCalls.push(saleId);
       return { kind: "success", detail: detail(saleId) };
     }
-    if (command === "create_sale_return_command") return correction.promise;
+    if (command === "create_sale_return_command") { requestId = payload?.request?.request_id; return correction.promise; }
     throw new Error(command);
   });
-  render(createElement(SalesHistoryScreen));
+  render(createElement(ActionNotificationProvider, null, createElement(SalesHistoryScreen)));
   const user = userEvent.setup({ document });
   await screen.findByText("Venta #71");
   await user.click(screen.getAllByRole("button", { name: "Ver detalle" })[0]);
@@ -98,7 +135,7 @@ test("late correction success cannot replace a newer selected sale", async () =>
   correction.resolve({
     kind: "success",
     result: {
-      request_id: "late-return",
+      request_id: requestId,
       return_id: 9,
       sale_id: 71,
       status: "confirmed",
@@ -108,6 +145,7 @@ test("late correction success cannot replace a newer selected sale", async () =>
   });
   await waitFor(() => assert.ok(screen.getByText("Venta #72")));
   assert.deepEqual(detailCalls, [71, 72]);
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
 });
 
 test("runs modal return validation, lock, retry, and persisted success evidence", async () => {
@@ -393,7 +431,7 @@ test("stages cancellation preparation in a form modal, then uses the destructive
     }
     throw new Error(command);
   });
-  render(createElement(SalesHistoryScreen));
+  render(createElement(ActionNotificationProvider, null, createElement(SalesHistoryScreen)));
   const user = userEvent.setup({ document });
   await user.click((await screen.findAllByRole("button", { name: "Ver detalle" }))[0]);
   assert.equal(screen.getByRole("main").getAttribute("data-ui-density"), "sparse");
@@ -427,6 +465,9 @@ test("stages cancellation preparation in a form modal, then uses the destructive
   cancellation.resolve({ kind: "success", result: { request_id: requests[0].request_id, cancellation_id: 91, sale_id: 184,
     status: "cancelled", occurred_at: "2026-08-16 11:04:03", reason: "Venta duplicada",
     lines: [{ sale_line_id: 184, product_id: 4, restored_quantity: 0 }] } });
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  assert.ok(await within(host).findByText("Cancelación registrada correctamente."));
+  await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
   refreshed[0].resolve({ kind: "success", detail: sale });
   assert.ok(await screen.findByRole("button", { name: "Recargar detalle de venta" }));
   assert.ok(screen.getByRole("dialog", { name: "Preparar cancelación de venta" }));

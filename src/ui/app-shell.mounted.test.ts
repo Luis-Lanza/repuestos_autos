@@ -179,11 +179,18 @@ test("license import success remains announced after App transitions to active n
   const user = userEvent.setup({ document });
   render(createElement(App));
 
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  const announcement = within(host).getByRole("status");
   await user.click(await screen.findByRole("button", { name: "Importar archivo de licencia" }));
-  const notice = await screen.findByText("Licencia activada correctamente.");
-  assert.equal(notice.getAttribute("role"), "status");
-  assert.equal(notice.getAttribute("aria-live"), "polite");
-  assert.ok(screen.getByRole("navigation", { name: "Navegación principal" }));
+  const notice = await within(host).findByText("Licencia activada correctamente.");
+  assert.equal(notice.closest("[data-ui-action-notice]")?.getAttribute("data-severity"), "success");
+  assert.equal(host.querySelectorAll("[data-ui-action-notice]").length, 1);
+  assert.equal(within(host).getByRole("status"), announcement);
+  assert.equal(announcement.getAttribute("aria-live"), "polite");
+  assert.equal(announcement.getAttribute("aria-atomic"), "true");
+  assert.match(announcement.textContent ?? "", /Licencia activada correctamente\./);
+  const navigation = screen.getByRole("navigation", { name: "Navegación principal" });
+  assert.ok(within(navigation).getByRole("button", { name: "Ventas" }));
   assert.equal(screen.queryByRole("heading", { name: "Activá Repuestos Autos" }), null);
 });
 
@@ -212,8 +219,21 @@ test("unlicensed startup defaults to activation and recovery exposes only safe n
   assert.ok(screen.getByText("La restauración está disponible con una licencia activa."));
   await user.click(screen.getByRole("button", { name: "Elegir destino de la copia" }));
   await waitFor(() => assert.equal(backups, 1));
-  assert.ok(await screen.findByText("backup-recovery.sqlite3"));
-  assert.match((await screen.findByRole("alert")).textContent ?? "", /durabilidad del directorio final/);
+  const backupPanel = screen.getByRole("region", { name: "Copia de seguridad" });
+  assert.ok(await within(backupPanel).findByText("backup-recovery.sqlite3"));
+  const persistentGuidance = await within(backupPanel).findByRole("alert");
+  assert.match(persistentGuidance.textContent ?? "", /durabilidad del directorio final/);
+  const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+  const announcement = within(host).getByRole("alert");
+  assert.equal(announcement.getAttribute("aria-live"), "assertive");
+  assert.match(announcement.textContent ?? "", /durabilidad del directorio final/);
+  assert.equal(within(host).getByText("La copia fue publicada, pero no se pudo confirmar la durabilidad del directorio final.").closest("[data-ui-action-notice]")?.getAttribute("data-severity"), "warning");
+  await user.click(within(host).getByRole("button", { name: "Cerrar notificación: Advertencia" }));
+  assert.equal(host.querySelectorAll("[data-ui-action-notice]").length, 0);
+  assert.equal(within(backupPanel).getByRole("alert"), persistentGuidance);
+  assert.match(persistentGuidance.textContent ?? "", /durabilidad del directorio final/);
+  await user.click(restore);
+  assert.equal(restore.disabled, true);
   assert.equal(restores, 0);
 });
 

@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ActionNotificationProvider } from "../visual-system/action-notifications.ts";
 import { MovementLedgerScreen } from "./movement-ledger-screen.ts";
 
 const movement = { movement_id: 1, occurred_at: "2025-03-02 10:00:00", product_id: 7, product_name: "Filtro actual", product_sku: "FLT-7", movement_type: "stock_entry", quantity_delta: 3, resulting_quantity: null, reason: null, note: null, sale_id: null, sale_line_id: null };
@@ -40,6 +41,48 @@ function assertSharedPdfAction(panel: HTMLElement) {
  const button = actionBar?.querySelector('[data-ui-action="secondary"]');
  assert.equal(button?.textContent, "Exportar PDF");
 }
+test("shared ledger PDF outcomes are accepted once", async () => {
+ let finish!: (value: unknown) => void;
+ const calls = mount(() => page(), new Promise(resolve => { finish = resolve; }));
+ const view = render(createElement(ActionNotificationProvider, null, createElement(MovementLedgerScreen)));
+ await screen.findByRole("table");
+ const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+ const pdf = screen.getByRole("button", { name: "Exportar PDF" });
+ fireEvent.click(pdf); fireEvent.click(pdf);
+ assert.equal(calls.exports.length, 1);
+ await act(async () => { finish({ kind: "success" }); });
+ assert.ok(within(host).getByText("El PDF se generó correctamente."));
+ assert.equal(within(screen.getByRole("main")).queryByText("El PDF se generó correctamente."), null);
+ view.unmount();
+});
+
+test("ledger cancel, resource limit and failure notify while obsolete exports stay silent", async () => {
+ const user = userEvent.setup({ document });
+ mount();
+ const view = render(createElement(ActionNotificationProvider, null, createElement(MovementLedgerScreen)));
+ await screen.findByRole("table");
+ const host = screen.getByRole("region", { name: "Notificaciones de acciones" });
+ for (const [result, message] of [
+  [{ kind: "cancelled" }, "Se canceló la exportación."],
+  [{ kind: "error", code: "resource_limit", message: "bounded" }, "El registro supera los límites de recursos y no se guardó. Ajustá los filtros e intentá de nuevo."],
+  [{ kind: "error", code: "persistence_failure", message: "bounded" }, "No se pudo exportar el registro."],
+ ] as const) {
+  mount(() => page(), result);
+  await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
+  assert.ok(await within(host).findByText(message));
+  await user.click(within(host).getByRole("button", { name: /Cerrar/ }));
+ }
+ for (const unmount of [false, true]) {
+  let finish!: (value: unknown) => void;
+  mount(() => page(), new Promise(resolve => { finish = resolve; }));
+  await user.click(screen.getByRole("button", { name: "Exportar PDF" }));
+  if (unmount) view.rerender(createElement(ActionNotificationProvider));
+  else { await user.click(screen.getByRole("button", { name: "Aplicar filtros" })); await screen.findByRole("table"); }
+  await act(async () => { finish({ kind: "success" }); });
+  assert.equal(document.querySelectorAll('[data-ui-action-notice]').length, 0);
+ }
+});
+
 test("applies shared dates to the gross-profit mode and exposes only its historical PDF action", async () => {
  const movementExports: unknown[] = []; const profitExports: unknown[] = []; const movementRequests: unknown[] = [];
  mockIPC((command, payload) => {
