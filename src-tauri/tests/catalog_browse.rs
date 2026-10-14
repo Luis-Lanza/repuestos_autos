@@ -16,6 +16,83 @@ fn browse(connection: &rusqlite::Connection, stock_filter: ProductStockFilter, p
 }
 
 #[test]
+fn numeric_matching_precedes_counts_and_pagination_in_every_browse_projection() {
+    let mut connection = open_seeded_catalog().unwrap();
+    connection.execute_batch("INSERT INTO attribute_definitions (id, category_id, label, field_type, required) VALUES (9301, 1, 'Width', 'text', 0), (9302, 1, 'Height', 'text', 0), (9303, 1, 'Length', 'number', 0);").unwrap();
+    for (sku, name, values, quantity) in [
+        ("58", "A false positive", ["28", "280", "58"], 8),
+        ("MATCH-B", "B matching", ["28", "28.0", "58"], 1),
+        ("PARTIAL", "C partial", ["28", "model 28", "58"], 8),
+        ("MATCH-D", "D matching", ["+2.8e1", "28", "58"], 8),
+    ] {
+        create_product(&mut connection, CreateProductInput {
+            sku: sku.into(), name: name.into(), category_id: 1,
+            purchase_price_centavos: 100, sale_price_centavos: 200,
+            minimum_sale_price_centavos: 100, low_stock_threshold: None, opening_quantity: quantity,
+            attribute_values: vec![
+                AttributeValueInput { definition_id: 9301, value: values[0].into() },
+                AttributeValueInput { definition_id: 9302, value: values[1].into() },
+                AttributeValueInput { definition_id: 9303, value: values[2].into() },
+            ],
+        }).unwrap();
+    }
+    // Discover fixture IDs through the public browse seam, not write-adapter details.
+    let all = browse(&connection, ProductStockFilter::All, 1, 50);
+    let b = all.products.iter().find(|p| p.sku == "MATCH-B").unwrap().product_id;
+    let d = all.products.iter().find(|p| p.sku == "MATCH-D").unwrap().product_id;
+    connection.execute("UPDATE stock_balances SET quantity = 0 WHERE product_id = ?1", [b]).unwrap();
+    for (number, expected) in [(1, b), (2, d)] {
+        let input = BrowseProductsInput { query: Some("28 28 58".into()), category_id: Some(1), stock_filter: ProductStockFilter::All, activity_filter: ProductActivityFilter::Active, page: number, page_size: 1 };
+        let catalog = browse_active_products(&connection, &SqliteCatalogRepository, &input).unwrap();
+        let inventory = repuestos_autos::application::catalog::browse_active_inventory_products(&connection, &input).unwrap();
+        let sales = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap();
+        for (total, pages, product_ids) in [
+            (catalog.total, catalog.total_pages, catalog.products.iter().map(|p| p.product_id).collect::<Vec<_>>()),
+            (inventory.total, inventory.total_pages, inventory.products.iter().map(|p| p.product_id).collect::<Vec<_>>()),
+            (sales.total, sales.total_pages, sales.products.iter().map(|p| p.product_id).collect::<Vec<_>>()),
+        ] {
+            assert_eq!((total, pages, product_ids), (2, 2, vec![expected]), "page {number}");
+        }
+    }
+    let input = BrowseProductsInput { query: Some("58 28 28".into()), category_id: Some(1), stock_filter: ProductStockFilter::Available, activity_filter: ProductActivityFilter::Active, page: 1, page_size: 20 };
+    let available = browse_active_products(&connection, &SqliteCatalogRepository, &input).unwrap();
+    assert_eq!((available.total, available.products[0].product_id), (1, d));
+    let other_category = BrowseProductsInput { category_id: Some(2), ..input.clone() };
+    assert_eq!(browse_active_products(&connection, &SqliteCatalogRepository, &other_category).unwrap().total, 0);
+    connection.execute("UPDATE products SET active = 0 WHERE id = ?1", [d]).unwrap();
+    assert_eq!(browse_active_products(&connection, &SqliteCatalogRepository, &input).unwrap().total, 0);
+    let archived = BrowseProductsInput { activity_filter: ProductActivityFilter::Archived, ..input.clone() };
+    assert_eq!(browse_active_products(&connection, &SqliteCatalogRepository, &archived).unwrap().products[0].product_id, d);
+    assert_eq!(repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap().total, 1, "Sales retains active-only and existing stock behavior");
+    connection.execute("UPDATE categories SET active = 0 WHERE id = 1", []).unwrap();
+    assert_eq!(repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap().total, 0);
+}
+
+#[test]
+fn browse_keeps_blank_text_and_original_full_sku_access_in_all_projections() {
+    let connection = open_seeded_catalog().unwrap();
+    for (sku, query) in [
+        ("FLT-001", "   "),
+        ("FLT-001", "filt"),
+        ("FLT-001", "FLT-001"),
+        ("28", "28"),
+        ("28.5", "28.5"),
+        ("28 28 58", "28 28 58"),
+        ("28-28-58", "28-28-58"),
+        ("---", "---"),
+    ] {
+        connection.execute("UPDATE products SET sku = ?1 WHERE id = 1", [sku]).unwrap();
+        let input = BrowseProductsInput { query: Some(query.into()), category_id: None, stock_filter: ProductStockFilter::All, activity_filter: ProductActivityFilter::Active, page: 1, page_size: 1 };
+        let catalog = browse_active_products(&connection, &SqliteCatalogRepository, &input).unwrap();
+        let inventory = repuestos_autos::application::catalog::browse_active_inventory_products(&connection, &input).unwrap();
+        let sales = repuestos_autos::application::catalog::browse_active_sale_products(&connection, &input).unwrap();
+        assert_eq!((catalog.total, inventory.total, sales.total), (1, 1, 1), "{query}");
+        assert_eq!((catalog.products[0].product_id, inventory.products[0].product_id, sales.products[0].product_id), (1, 1, 1), "{query}");
+        assert_eq!(catalog.products[0].sku, sku, "SKU spelling is not normalized");
+    }
+}
+
+#[test]
 fn blank_query_returns_the_first_bounded_page_with_metadata() {
     let connection = open_seeded_catalog().expect("a disposable catalog database");
     let page = browse(&connection, ProductStockFilter::All, 1, 1);

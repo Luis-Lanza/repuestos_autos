@@ -58,6 +58,11 @@ The store maintains inventory and sales in multiple category-specific Excel file
 
 - Provide one global search entry point across all active categories and products.
 - Search by SKU, product name, category name, and configured category-specific field values.
+- Keep one input across Catalog, Inventory, and Sales. Classify the original input before splitting punctuation for ordinary text prefix search.
+- A single complete finite numeric term retains SKU token-prefix lookup (`28` matches SKU `39211-28GX0` or `280`, but not `928`) or matches a whole numerically equal attribute value (`28` does not match attribute `280`). SKU matching uses the original text's alphanumeric token prefixes, including dot-decimal SKU lookup; numeric attribute matching keeps decimals atomic. Typed numeric values and whole numeric text/option values participate; mixed attribute values such as `model 28` or `28mm` do not.
+- Multiple whitespace-separated numeric terms require distinct attribute rows, including repeated occurrences: `28 28 58` requires two rows equal to `28` and one equal to `58`. Attribute labels and term order are irrelevant; SKU, name, and category terms cannot supply missing values.
+- Exact full-SKU matching remains an independent alternative, including numeric, separator-bearing, and whitespace-bearing SKUs, using the original spelling. An exact SKU on one product never supplies missing attribute terms on another.
+- Numeric equality uses finite Rust `f64` syntax (dot decimals, signs, and exponents; `28 = 28.0`), without unit or comma-decimal conversion. Apply matching before result limits, totals, and pagination; preserve each browse projection's existing activity/category/stock rules and safe fields.
 - Results show product name, SKU, category, available stock, and current list price.
 - Clearly distinguish low-stock and out-of-stock products.
 

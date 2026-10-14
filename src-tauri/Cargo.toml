@@ -21,7 +21,7 @@ path = "src/bin/bootstrap_demo.rs"
 tauri = { version = "2", default-features = false, features = ["wry", "test"], optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 printpdf = { version = "=0.12.8", default-features = false }
-rusqlite = { version = "0.32", features = ["backup", "bundled"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled", "functions"] }
 sha2 = "0.10"
 argon2 = { version = "0.5.3", features = ["rand"] }
 uuid = { version = "1", features = ["v4"] }

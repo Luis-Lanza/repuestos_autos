@@ -14,6 +14,7 @@ pub(crate) mod bootstrap_demo;
 pub mod access;
 pub mod locations;
 pub mod repository;
+mod search;
 
 pub use bootstrap_demo::{
     bootstrap_demo_catalog, BootstrapDemoError, BootstrapDemoOutcome, BootstrapDemoSummary,
@@ -799,7 +800,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let query = input.query.as_deref().and_then(normalized_search_query);
+    let query = search::browse_predicate(connection, input.query.as_deref())?;
     let stock_clause = match input.stock_filter {
         ProductStockFilter::All => "1 = 1",
         ProductStockFilter::LowStock => "s.quantity BETWEEN 1 AND p.low_stock_threshold",
@@ -812,24 +813,11 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
         ProductActivityFilter::Archived => "p.active = 0 AND c.active = 1",
         ProductActivityFilter::All => "c.active = 1",
     };
-    let (search_clause, category_clause) = if query.is_some() {
-        (
-            "search.content MATCH ?1",
-            if input.category_id.is_some() {
-                "AND p.category_id = ?2"
-            } else {
-                ""
-            },
-        )
+    let search_clause = &query.clause;
+    let category_clause = if input.category_id.is_some() {
+        format!("AND p.category_id = ?{}", query.args.len() + 1)
     } else {
-        (
-            "1 = 1",
-            if input.category_id.is_some() {
-                "AND p.category_id = ?1"
-            } else {
-                ""
-            },
-        )
+        String::new()
     };
     let count_sql = format!(
         "SELECT COUNT(*) FROM catalog_product_search search
@@ -839,10 +827,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
          WHERE {search_clause} {category_clause}
            AND {activity_clause} AND {stock_clause}"
     );
-    let mut count_args: Vec<&dyn rusqlite::ToSql> = Vec::new();
-    if let Some(ref query) = query {
-        count_args.push(query);
-    }
+    let mut count_args: Vec<&dyn rusqlite::ToSql> = query.args.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
     if let Some(ref category_id) = input.category_id {
         count_args.push(category_id);
     }
@@ -854,7 +839,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     let offset = (input.page - 1)
         .checked_mul(input.page_size)
         .ok_or(rusqlite::Error::InvalidQuery)?;
-    let limit_index = 1 + query.is_some() as usize + input.category_id.is_some() as usize;
+    let limit_index = 1 + query.args.len() + input.category_id.is_some() as usize;
     let offset_index = limit_index + 1;
     let products_sql = format!(
         "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
@@ -870,10 +855,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
          ORDER BY lower(p.name), p.id
          LIMIT ?{limit_index} OFFSET ?{offset_index}"
     );
-    let mut product_args: Vec<&dyn rusqlite::ToSql> = Vec::new();
-    if let Some(ref query) = query {
-        product_args.push(query);
-    }
+    let mut product_args: Vec<&dyn rusqlite::ToSql> = query.args.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
     if let Some(ref category_id) = input.category_id {
         product_args.push(category_id);
     }
@@ -966,24 +948,23 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
     if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE || input.category_id.is_some_and(|id| id <= 0) {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let query = input.query.as_deref().and_then(normalized_search_query);
-    let search_clause = if query.is_some() { "search.content MATCH ?1" } else { "1 = 1" };
+    let query = search::browse_predicate(connection, input.query.as_deref())?;
+    let search_clause = &query.clause;
     let category_clause = if input.category_id.is_some() {
-        if query.is_some() { "AND p.category_id = ?2" } else { "AND p.category_id = ?1" }
-    } else { "" };
+        format!("AND p.category_id = ?{}", query.args.len() + 1)
+    } else { String::new() };
     let count_sql = format!(
         "SELECT COUNT(*) FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
          WHERE {search_clause} {category_clause} AND p.active = 1 AND c.active = 1"
     );
-    let mut args: Vec<&dyn rusqlite::ToSql> = Vec::new();
-    if let Some(ref query) = query { args.push(query); }
+    let mut args: Vec<&dyn rusqlite::ToSql> = query.args.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
     if let Some(ref category_id) = input.category_id { args.push(category_id); }
     let total = connection.query_row(&count_sql, rusqlite::params_from_iter(args), |row| row.get::<_, i64>(0))?;
     let total_pages = (total + input.page_size - 1) / input.page_size;
     let offset = (input.page - 1).checked_mul(input.page_size).ok_or(rusqlite::Error::InvalidQuery)?;
-    let limit_index = 1 + query.is_some() as usize + input.category_id.is_some() as usize;
+    let limit_index = 1 + query.args.len() + input.category_id.is_some() as usize;
     let offset_index = limit_index + 1;
     let products_sql = format!(
         "SELECT p.id, p.category_id, p.sku, p.name, c.name, s.quantity,
@@ -995,8 +976,7 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
          WHERE {search_clause} {category_clause} AND p.active = 1 AND c.active = 1
          ORDER BY lower(p.name), p.id LIMIT ?{limit_index} OFFSET ?{offset_index}"
     );
-    let mut args: Vec<&dyn rusqlite::ToSql> = Vec::new();
-    if let Some(ref query) = query { args.push(query); }
+    let mut args: Vec<&dyn rusqlite::ToSql> = query.args.iter().map(|value| value as &dyn rusqlite::ToSql).collect();
     if let Some(ref category_id) = input.category_id { args.push(category_id); }
     args.push(&input.page_size);
     args.push(&offset);
@@ -1599,20 +1579,21 @@ pub fn search_active_sale_products(
     connection: &Connection,
     query: &str,
 ) -> Result<Vec<SaleProductSearchResult>> {
-    let Some(query) = normalized_search_query(query) else {
+    search::register(connection)?;
+    let Some(query) = search::predicate(query) else {
         return Ok(Vec::new());
     };
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id, p.sku, p.name, c.name, s.quantity,
          p.list_price_centavos, p.minimum_unit_price_centavos
          FROM catalog_product_search search
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
-         WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
-         ORDER BY p.name LIMIT 20",
-    )?;
-    let results = statement.query_map([query], |row| Ok(SaleProductSearchResult {
+         WHERE {} AND p.active = 1 AND c.active = 1
+         ORDER BY p.name LIMIT 20", query.clause,
+    ))?;
+    let results = statement.query_map(rusqlite::params_from_iter(&query.args), |row| Ok(SaleProductSearchResult {
         product_id: row.get(0)?, sku: row.get(1)?, name: row.get(2)?,
         category_name: row.get(3)?, available_quantity: row.get(4)?,
         sale_price_centavos: row.get(5)?, minimum_sale_price_centavos: row.get(6)?,
@@ -1624,10 +1605,11 @@ pub fn search_active_products(
     connection: &Connection,
     query: &str,
 ) -> Result<Vec<ProductSearchResult>> {
-    let Some(query) = normalized_search_query(query) else {
+    search::register(connection)?;
+    let Some(query) = search::predicate(query) else {
         return Ok(Vec::new());
     };
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT p.id, p.sku, p.name, c.name, s.quantity,
          p.purchase_price_centavos, p.list_price_centavos,
          p.minimum_unit_price_centavos
@@ -1635,12 +1617,12 @@ pub fn search_active_products(
          JOIN products p ON p.id = search.product_id
          JOIN categories c ON c.id = p.category_id
          JOIN stock_balances s ON s.product_id = p.id
-          WHERE search.content MATCH ?1 AND p.active = 1 AND c.active = 1
+          WHERE {} AND p.active = 1 AND c.active = 1
          ORDER BY p.name
-         LIMIT 20",
-    )?;
+         LIMIT 20", query.clause,
+    ))?;
     let results = statement
-        .query_map([query], |row| {
+        .query_map(rusqlite::params_from_iter(&query.args), |row| {
             Ok(ProductSearchResult {
                 product_id: row.get(0)?,
                 sku: row.get(1)?,
