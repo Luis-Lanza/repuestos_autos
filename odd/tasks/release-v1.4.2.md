@@ -9,7 +9,7 @@ User explicitly requested merge and release and confirmed v1.4.2 unsigned. After
 ## Tasks
 - [x] R1: Fast-forward the verified thumbnail work into master and push; record the existing reviewed work-unit commit and verify remote identity.
 - [x] R2: Prepare release/v1.4.2 with synchronized app versions, scoped release evidence and proportionate checks; commit/push build source for Windows.
-- [ ] R3 (in progress; waiting for Windows): Build the unsigned NSIS installer on Windows, verify a fixed-NTFS backup and in-place 1.4.1 update, check thumbnail parity and data/license/Catalog/Sales/Inventory/Reports, verify backup/restore using synthetic data, then obtain final tag/publication authority.
+- [x] R3: Build the unsigned NSIS installer on Windows, verify a fixed-NTFS backup and in-place 1.4.1 update, check thumbnail parity and data/license/Catalog/Sales/Inventory/Reports, verify backup/restore using synthetic data, then obtain final tag/publication authority.
 
 ## Acceptance and checks
 - Source behavior is existing reviewed commit 5cb0b1b950cd67e9bb20e239ea051985b766ff32 plus version metadata only.
@@ -34,5 +34,13 @@ User explicitly requested merge and release and confirmed v1.4.2 unsigned. After
 
 - Final user authorization: "autoriz", directly answering evidence commit/push, new annotated v1.4.2 tag at 6100c9c, tag push and exact unsigned EXE publication. Fresh preflight confirmed unchanged source artifact hash/size, remote release head b4c0f31 and no existing v1.4.2 tag/release.
 
+## Publication evidence
+- Acceptance evidence committed/pushed as 0459edb.
+- Annotated tag v1.4.2 object ff8363f37b365424b5bea764100f0a13c4d0d6e4 peels to tested source 6100c9ce6ade3210c53a11d06193cb9a066206e4; remote verified unchanged.
+- Independent verifier downloaded actual asset 654169119 from draft release 416624141 (node RE_kwDOUAEpZM4Y1S4N); size 4,392,247 bytes, expected SHA-256 and byte-for-byte cmp all passed. A draft by-tag REST lookup returned 404 and unsupported GraphQL fields were corrected; numeric release lookup and verification succeeded without mutation or duplication.
+- Fresh prepublication checks reconfirmed draft identity, target, exactly one asset, hashes of staged and downloaded bytes, and unchanged remote tag.
+- Stable release published 2026-10-18T18:29:46Z: https://github.com/Luis-Lanza/repuestos_autos/releases/tag/v1.4.2 . Readback confirms draft=false and prerelease=false, exactly one Repuestos.Autos_1.4.2_x64-setup.exe with matching size/digest.
+- No database/backup/restore behavior or customer data changed. Full clean-install/offline/crash/accessibility coverage and customer installation were not performed; manual update and old-backup restore/restart acceptance is human-reported, not exhaustive platform certification.
+
 ## Next step
-Commit/push acceptance evidence, create/push the new annotated tag, upload exact tested installer to a draft, independently download/compare it, then publish only after successful verification. No master integration of release metadata or customer installation is implied.
+Release is published. Optional integration of release metadata/evidence into master remains a separate decision; master already contains the thumbnail fix at bfd5348. No customer installation is implied.
