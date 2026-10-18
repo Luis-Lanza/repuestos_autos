@@ -216,6 +216,14 @@ test("Sales browse modes retain distinct geometry and protect table price and Ad
   assert.match(css, /@media \(max-width: 400px\)[\s\S]*data-ui-sales-commercial-footer\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 });
 
+test("Sales table thumbnail CSS clears the automatic block minimum that clips portrait images", async () => {
+  // Structural CSS contract only; JSDOM does not verify grid layout or image geometry.
+  const css = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+  const imageRule = css.match(/\[data-ui-sales-table-thumbnail\] \[data-ui-product-thumbnail\]\s*\{([^}]*)\}/)?.[1];
+  assert.ok(imageRule, "Sales table thumbnail image rule must exist");
+  assert.match(imageRule, /(?:^|;)\s*min-block-size:\s*0\s*;/, "Sales table images must override the automatic grid-item block minimum");
+});
+
 test("Sales table and gallery details show assigned and unassigned locations without changing rows", () => {
   const props = { presentation: "sales" as const, onQueryChange: () => {}, onCategoryChange: () => {}, onSubmit: (event: { preventDefault(): void }) => event.preventDefault(), onPageChange: () => {} };
   const view = render(createElement(ProductBrowser, { ...props, state: initialProductBrowserState }));
