@@ -25,7 +25,7 @@ Only Sales table thumbnail CSS and its existing ProductBrowser regression-test s
 - Native review review-1fb06bf32ebe609e approved and exact acknowledgement completed (authority burned).
 - Native ASSESS unavailable due to untracked declaration; conservative independent-verifier requirement already satisfied by the completed verification.
 - Native Windows/Tauri check and backup/restore runtime tests not run. Existing narrow-window 40px-column/48px-wrapper mismatch is outside scope and remains unchanged.
-- Delivery: user authorized commit and push of this work unit for Windows testing. The work-unit commit contains this document, the scoped stylesheet change and regression test; identify it with git log on fix/sales-table-thumbnail-containment.
+- Delivery: user authorized commit and push for Windows testing. Work-unit commit: 5cb0b1b950cd67e9bb20e239ea051985b766ff32 (fix(sales): keep portrait table thumbnails fully visible), pushed and independently verified on origin/fix/sales-table-thumbnail-containment.
 
 ## Next step
-Commit and push the authorized work unit on fix/sales-table-thumbnail-containment, then validate the corrected view in Windows. Native build/release and master integration are not part of this delivery.
+Fetch fix/sales-table-thumbnail-containment in Windows and validate the corrected native view. Native build/release and master integration are not part of this delivery.
