@@ -2,6 +2,7 @@ import { createElement, type FormEvent, useEffect, useRef, useState } from "reac
 
 import type { ProductActivityState, ProductBrowserPage, ProductBrowserProduct, ProductStockState, SalesProductOriginalLoader, SalesProductOriginalResponse } from "../../commands/catalog.ts";
 import { Action, Badge, Feedback, Field } from "../visual-system/controls.ts";
+import { SearchableSelect } from "../visual-system/searchable-select.ts";
 
 export type CatalogViewMode = "table" | "gallery";
 const CATALOG_VIEW_MODE_KEY = "catalog.product-browser.view-mode";
@@ -177,10 +178,17 @@ export function ProductBrowser(props: ProductBrowserProps) {
   const catalogPresentation = props.presentation === "catalog";
   const galleryPresentation = catalogPresentation && props.catalogViewMode === "gallery";
   const salesGalleryPresentation = salesPresentation && props.salesViewMode === "gallery";
+  const categorySelect = createElement(SearchableSelect, {
+    label: "Categoría",
+    value: state.category_id === null ? "" : String(state.category_id),
+    options: [{ value: "", label: "Todas las categorías" }, ...(page?.categories ?? []).map((category) => ({ value: String(category.category_id), label: category.name }))],
+    disabled: props.disabled,
+    onChange: (value: string) => { if (!props.disabled) props.onCategoryChange(value ? Number(value) : null); },
+  });
   return createElement("div", { "data-ui-product-browser": salesPresentation ? "sales" : catalogPresentation ? "catalog" : true },
     createElement("form", { onSubmit: props.onSubmit, "aria-busy": state.status === "loading", "data-ui-sale-search": true },
       catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "search" }, createElement(Field, { kind: "search", label: props.searchLabel ?? "Buscar en el catálogo", control: createElement("input", { value: state.query, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onQueryChange(event.target.value); } }) } as never)) : createElement(Field, { kind: "search", label: props.searchLabel ?? "Buscar en el catálogo", control: createElement("input", { value: state.query, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onQueryChange(event.target.value); } }) } as never),
-      catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "category" }, createElement(Field, { kind: "select", label: "Categoría", control: createElement("select", { value: state.category_id ?? "", disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onCategoryChange(event.target.value ? Number(event.target.value) : null); } }, createElement("option", { value: "" }, "Todas las categorías"), (page?.categories ?? []).map((category) => createElement("option", { key: category.category_id, value: category.category_id }, category.name))) } as never)) : createElement(Field, { kind: "select", label: "Categoría", control: createElement("select", { value: state.category_id ?? "", disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onCategoryChange(event.target.value ? Number(event.target.value) : null); } }, createElement("option", { value: "" }, "Todas las categorías"), (page?.categories ?? []).map((category) => createElement("option", { key: category.category_id, value: category.category_id }, category.name))) } as never),
+      catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "category" }, categorySelect) : categorySelect,
       props.showActivity && props.onActivityChange ? catalogPresentation ? createElement("div", { "data-ui-catalog-toolbar-item": "activity" }, createElement(Field, { kind: "select", label: "Actividad", control: createElement("select", { value: state.activity, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onActivityChange?.(event.target.value as ProductActivityState); } }, createElement("option", { value: "all" }, "Todas"), createElement("option", { value: "active" }, "Activos"), createElement("option", { value: "archived" }, "Archivados")) } as never)) : createElement(Field, { kind: "select", label: "Actividad", control: createElement("select", { value: state.activity, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onActivityChange?.(event.target.value as ProductActivityState); } }, createElement("option", { value: "all" }, "Todas"), createElement("option", { value: "active" }, "Activos"), createElement("option", { value: "archived" }, "Archivados")) } as never) : null,
       props.onStockStateChange ? createElement(Field, { kind: "select", label: "Estado del stock", control: createElement("select", { value: state.stock_state, disabled: props.disabled, onChange: (event) => { if (!props.disabled) props.onStockStateChange?.(event.target.value as ProductStockState); } }, createElement("option", { value: "all" }, "Todo el stock"), createElement("option", { value: "available" }, "Disponible"), createElement("option", { value: "low_stock" }, "Stock bajo"), createElement("option", { value: "out_of_stock" }, "Sin stock"), createElement("option", { value: "alerts" }, "Alertas")) } as never) : null,
       catalogPresentation ? createElement("div", { role: "group", "aria-label": "Presentación del catálogo", "data-ui-catalog-toolbar-item": "views", "data-ui-catalog-view-toggle": true },

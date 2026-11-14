@@ -379,7 +379,8 @@ test("reproduces locked-Catalog Sales initialization, search, and category filte
   const catalog = await screen.findByRole("region", { name: "Catálogo de repuestos" });
   assert.ok(await within(catalog).findByText("Filtro aceite"));
   const category = within(catalog).getByRole("combobox", { name: "Categoría" });
-  await user().selectOptions(category, "1");
+  await user().click(category);
+  await user().click(within(catalog).getByRole("option", { name: "Filtros" }));
   await user().click(within(catalog).getByRole("button", { name: "Buscar" }));
   await waitFor(() => assert.equal(calls.filter((call) => (call as { command: string }).command === "browse_products_command").length, 2));
   assert.ok(within(catalog).getByRole("button", { name: "Agregar" }));

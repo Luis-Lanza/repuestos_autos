@@ -178,6 +178,35 @@ label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
 [data-ui-field="checkbox"] [data-ui-field-control] { align-items: center; }
 [data-ui-field-error] { margin: 0; color: var(--color-danger); font-weight: var(--weight-semibold); }
 [data-ui-field] :is(input, select)[aria-invalid="true"] { border: 2px solid var(--color-danger); background: var(--color-danger-surface); }
+[data-ui-field="combobox"] { position: relative; }
+[data-ui-field-control="combobox"] { position: relative; }
+[data-ui-combobox] { position: relative; display: flex; flex: 1; min-inline-size: 0; }
+[data-ui-combobox] > input { flex: 1; min-inline-size: 0; padding-inline: var(--space-3); background: var(--color-surface); }
+[data-ui-combobox-list] {
+  position: absolute;
+  z-index: 40;
+  inset-inline: 0;
+  inset-block-start: calc(100% + var(--space-1));
+  max-block-size: 12rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--elevation-modal);
+}
+[data-ui-combobox-option] { padding: var(--space-2) var(--space-3); cursor: pointer; }
+[data-ui-combobox-option][aria-selected="true"] { font-weight: var(--weight-semibold); }
+[data-ui-combobox-option][data-ui-combobox-option-active="true"] { background: var(--color-surface-subtle); }
+[data-ui-combobox-option]:hover { background: var(--color-surface-subtle); }
+[data-ui-combobox-empty] { padding: var(--space-2) var(--space-3); color: var(--color-text-muted); font-size: var(--type-caption-size); }
+@media (forced-colors: active) {
+  [data-ui-combobox-list] { border-color: CanvasText; background: Canvas; }
+  [data-ui-combobox-option][data-ui-combobox-option-active="true"] { outline: 2px solid Highlight; }
+}
 
 [data-ui-feedback] { border-inline-start: 4px solid var(--color-border-strong); padding: var(--space-3) var(--space-4); }
 [data-ui-feedback="success"] { color: var(--color-success); border-color: var(--color-success-edge); background: var(--color-success-surface); }

@@ -478,7 +478,9 @@ test("renders category and stock filters through the paged inventory browse cont
   const user = userEvent.setup({ document });
   await user.selectOptions(screen.getByRole("combobox", { name: "Estado del stock" }), "out_of_stock");
   await user.click(screen.getByRole("button", { name: "Buscar" }));
-  await user.selectOptions(await screen.findByRole("combobox", { name: "Categoría" }), "1");
+  const category = await screen.findByRole("combobox", { name: "Categoría" });
+  await user.click(category);
+  await user.click(screen.getByRole("option", { name: "Filters" }));
   await user.click(screen.getByRole("button", { name: "Buscar" }));
   assert.deepEqual(calls, [
     { request: { query: null, category_id: null, stock_state: "all", activity: "active", page: 1, page_size: 20 } },
