@@ -800,7 +800,12 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
     if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let query = search::browse_predicate(connection, input.query.as_deref())?;
+    let query = search::browse_predicate(
+        connection,
+        input.query.as_deref(),
+        input.category_id,
+        &input.activity_filter,
+    )?;
     let stock_clause = match input.stock_filter {
         ProductStockFilter::All => "1 = 1",
         ProductStockFilter::LowStock => "s.quantity BETWEEN 1 AND p.low_stock_threshold",
@@ -808,11 +813,7 @@ pub fn browse_active_products<Repository: CatalogBrowseRepository>(
         ProductStockFilter::Available => "s.quantity > p.low_stock_threshold",
         ProductStockFilter::Alerts => "s.quantity BETWEEN 0 AND p.low_stock_threshold",
     };
-    let activity_clause = match input.activity_filter {
-        ProductActivityFilter::Active => "p.active = 1 AND c.active = 1",
-        ProductActivityFilter::Archived => "p.active = 0 AND c.active = 1",
-        ProductActivityFilter::All => "c.active = 1",
-    };
+    let activity_clause = search::activity_clause(&input.activity_filter);
     let search_clause = &query.clause;
     let category_clause = if input.category_id.is_some() {
         format!("AND p.category_id = ?{}", query.args.len() + 1)
@@ -948,7 +949,12 @@ pub fn browse_active_sale_products(connection: &Connection, input: &BrowseProduc
     if input.page < 1 || input.page_size < 1 || input.page_size > MAX_PAGE_SIZE || input.category_id.is_some_and(|id| id <= 0) {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let query = search::browse_predicate(connection, input.query.as_deref())?;
+    let query = search::browse_predicate(
+        connection,
+        input.query.as_deref(),
+        input.category_id,
+        &ProductActivityFilter::Active,
+    )?;
     let search_clause = &query.clause;
     let category_clause = if input.category_id.is_some() {
         format!("AND p.category_id = ?{}", query.args.len() + 1)
@@ -1580,7 +1586,8 @@ pub fn search_active_sale_products(
     query: &str,
 ) -> Result<Vec<SaleProductSearchResult>> {
     search::register(connection)?;
-    let Some(query) = search::predicate(query) else {
+    let Some(query) = search::predicate(connection, query, None, &ProductActivityFilter::Active)?
+    else {
         return Ok(Vec::new());
     };
     let mut statement = connection.prepare(&format!(
@@ -1606,7 +1613,8 @@ pub fn search_active_products(
     query: &str,
 ) -> Result<Vec<ProductSearchResult>> {
     search::register(connection)?;
-    let Some(query) = search::predicate(query) else {
+    let Some(query) = search::predicate(connection, query, None, &ProductActivityFilter::Active)?
+    else {
         return Ok(Vec::new());
     };
     let mut statement = connection.prepare(&format!(

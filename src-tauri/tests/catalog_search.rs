@@ -3,6 +3,41 @@ use rusqlite::params;
 use std::time::{Duration, Instant};
 
 #[test]
+fn exact_sku_preference_hides_similar_ngk_references_in_legacy_searches() {
+    let connection = open_seeded_catalog().unwrap();
+    connection.execute_batch(
+        "UPDATE products SET sku = 'NGK BKR6E-11', name = 'Z exact plug' WHERE id = 1;
+         UPDATE catalog_product_search SET content = 'ngk bkr6e 11' WHERE product_id = 1;
+         INSERT INTO products (id, category_id, sku, name, active, list_price_centavos, minimum_unit_price_centavos)
+         VALUES (9701, 1, 'NGK BKR6EIX-11', 'A similar plug', 1, 2500, 2500);
+         INSERT INTO stock_balances (product_id, quantity) VALUES (9701, 8);
+         INSERT INTO catalog_product_search (rowid, product_id, content)
+         VALUES (9701, 9701, 'ngk bkr6eix 11');"
+    ).unwrap();
+    for ids in [
+        repuestos_autos::catalog::search_active_products(&connection, "NGK BKR6E-11")
+            .unwrap()
+            .iter()
+            .map(|p| p.product_id)
+            .collect::<Vec<_>>(),
+        repuestos_autos::application::catalog::search_active_sale_products(
+            &connection,
+            "NGK BKR6E-11",
+        )
+        .unwrap()
+        .iter()
+        .map(|p| p.product_id)
+        .collect::<Vec<_>>(),
+    ] {
+        assert_eq!(
+            ids,
+            vec![1],
+            "an eligible exact SKU excludes similar references"
+        );
+    }
+}
+
+#[test]
 fn single_numeric_search_keeps_sku_token_prefixes_isolated_from_other_fields() {
     use repuestos_autos::application::catalog::{
         browse_active_inventory_products, browse_active_products, browse_active_sale_products,

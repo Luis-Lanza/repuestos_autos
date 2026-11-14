@@ -47,20 +47,66 @@ pub(super) struct SearchPredicate {
     pub args: Vec<Value>,
 }
 
+pub(super) fn activity_clause(activity: &super::ProductActivityFilter) -> &'static str {
+    match activity {
+        super::ProductActivityFilter::Active => "p.active = 1 AND c.active = 1",
+        super::ProductActivityFilter::Archived => "p.active = 0 AND c.active = 1",
+        super::ProductActivityFilter::All => "c.active = 1",
+    }
+}
+
 pub(super) fn browse_predicate(
     connection: &Connection,
     query: Option<&str>,
+    category_id: Option<i64>,
+    activity: &super::ProductActivityFilter,
 ) -> rusqlite::Result<SearchPredicate> {
     register(connection)?;
     Ok(query
-        .and_then(predicate)
+        .map(|query| predicate(connection, query, category_id, activity))
+        .transpose()?
+        .flatten()
         .unwrap_or_else(|| SearchPredicate {
             clause: "1 = 1".into(),
             args: Vec::new(),
         }))
 }
 
-pub(super) fn predicate(query: &str) -> Option<SearchPredicate> {
+pub(super) fn predicate(
+    connection: &Connection,
+    query: &str,
+    category_id: Option<i64>,
+    activity: &super::ProductActivityFilter,
+) -> rusqlite::Result<Option<SearchPredicate>> {
+    if query.trim().is_empty() {
+        return Ok(None);
+    }
+    // Match caller eligibility, but not stock: stock exclusion must not enable fallback.
+    let exact_exists = connection.query_row(
+        &format!(
+            "SELECT EXISTS(
+                SELECT 1 FROM products p
+                JOIN catalog_product_search search ON search.product_id = p.id
+                JOIN categories c ON c.id = p.category_id
+                JOIN stock_balances s ON s.product_id = p.id
+                WHERE p.sku = ?1 AND (?2 IS NULL OR p.category_id = ?2)
+                  AND {}
+             )",
+            activity_clause(activity)
+        ),
+        rusqlite::params![query, category_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if exact_exists {
+        return Ok(Some(SearchPredicate {
+            clause: "p.sku = ?1".into(),
+            args: vec![Value::Text(query.to_owned())],
+        }));
+    }
+    Ok(fallback_predicate(query))
+}
+
+fn fallback_predicate(query: &str) -> Option<SearchPredicate> {
     if query.trim().is_empty() {
         return None;
     }
